@@ -1,0 +1,39 @@
+package de.aidadventure.web
+
+import de.aidadventure.web.api.AdventureApi
+import de.aidadventure.web.api.TurnMetrics
+import de.aidadventure.web.api.TurnRequestMapper
+import de.aidadventure.web.model.GameMessage
+import de.aidadventure.web.model.GameSession
+import de.aidadventure.web.model.Scenario
+import de.aidadventure.web.persistence.SessionRepository
+
+internal data class CompletedTurn(val session: GameSession, val metrics: TurnMetrics)
+
+internal class TurnSubmission(
+    private val sessions: SessionRepository,
+    private val api: AdventureApi,
+    private val clock: () -> Long = ::now,
+) {
+    suspend fun submit(
+        session: GameSession,
+        scenario: Scenario,
+        playerAction: String,
+        onStarted: (GameSession) -> Unit,
+    ): CompletedTurn {
+        val started = session.copy(
+            messages = session.messages + GameMessage("player", playerAction, clock()),
+            updatedAt = clock(),
+        )
+        onStarted(started)
+        sessions.save(started)
+
+        val response = api.play(TurnRequestMapper.map(session, scenario, playerAction))
+        val completed = started.copy(
+            messages = started.messages + GameMessage(response.message.role, response.message.content, clock()),
+            updatedAt = clock(),
+        )
+        sessions.save(completed)
+        return CompletedTurn(completed, response.metrics)
+    }
+}

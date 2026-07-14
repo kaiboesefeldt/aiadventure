@@ -3,8 +3,6 @@ package de.aidadventure.web
 import de.aidadventure.web.api.AdventureApi
 import de.aidadventure.web.api.AdventureApiClient
 import de.aidadventure.web.api.TurnMetrics
-import de.aidadventure.web.api.TurnRequestMapper
-import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
 import de.aidadventure.web.persistence.AdventureDatabase
@@ -73,7 +71,7 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
     var scenarios by useState(props.initialScenarios)
     var importError by useState<String?>(null)
     var models by useState<List<String>>(emptyList())
-    var modelError by useState<String?>(null)
+    var modelLoadError by useState<String?>(null)
 
     fun refreshScenarios() {
         scope.launch { scenarios = props.scenarioRepository.list() }
@@ -82,11 +80,11 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
     fun openScenario(scenario: Scenario) {
         view = View.Detail(scenario)
         models = emptyList()
-        modelError = null
+        modelLoadError = null
         scope.launch {
             runCatching { props.api.models() }
                 .onSuccess { models = it }
-                .onFailure { modelError = clientMessage(it) }
+                .onFailure { modelLoadError = clientMessage(it) }
         }
     }
 
@@ -117,12 +115,12 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                 onRefresh = ::refreshScenarios,
             )
 
-            is View.Detail -> detailView(
-                scenario = current.scenario,
-                models = models,
-                modelError = modelError,
-                sessions = { props.sessionRepository.list().filter { it.scenarioId == current.scenario.id } },
-                onBack = { view = View.Library },
+            is View.Detail -> DetailView.create {
+                scenario = current.scenario
+                this.models = models
+                modelError = modelLoadError
+                sessions = { props.sessionRepository.list().filter { it.scenarioId == current.scenario.id } }
+                onBack = { view = View.Library }
                 onCreate = { model ->
                     scope.launch {
                         val time = now()
@@ -138,19 +136,19 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                         props.sessionRepository.save(session)
                         view = View.Play(current.scenario, session)
                     }
-                },
-                onResume = { session -> view = View.Play(current.scenario, session) },
-                onReloadModels = { openScenario(current.scenario) },
-            )
+                }
+                onResume = { session -> view = View.Play(current.scenario, session) }
+                onReloadModels = { openScenario(current.scenario) }
+            }
 
-            is View.Play -> playView(
-                scenario = current.scenario,
-                session = current.session,
-                api = props.api,
-                sessions = props.sessionRepository,
-                onBack = { view = View.Detail(current.scenario) },
-                onSessionChanged = { session -> view = View.Play(current.scenario, session) },
-            )
+            is View.Play -> PlayView.create {
+                scenario = current.scenario
+                session = current.session
+                api = props.api
+                sessions = props.sessionRepository
+                onBack = { view = View.Detail(current.scenario) }
+                onSessionChanged = { session -> view = View.Play(current.scenario, session) }
+            }
         }
     }
 }
@@ -184,65 +182,69 @@ private fun ChildrenBuilder.libraryView(
     }
 }
 
-private fun ChildrenBuilder.detailView(
-    scenario: Scenario,
-    models: List<String>,
-    modelError: String?,
-    sessions: suspend () -> List<GameSession>,
-    onBack: () -> Unit,
-    onCreate: (String) -> Unit,
-    onResume: (GameSession) -> Unit,
-    onReloadModels: () -> Unit,
-) {
+private external interface DetailViewProps : Props {
+    var scenario: Scenario
+    var models: List<String>
+    var modelError: String?
+    var sessions: suspend () -> List<GameSession>
+    var onBack: () -> Unit
+    var onCreate: (String) -> Unit
+    var onResume: (GameSession) -> Unit
+    var onReloadModels: () -> Unit
+}
+
+private val DetailView = FC<DetailViewProps> { props ->
     var loadedSessions by useState<List<GameSession>>(emptyList())
     var sessionsLoaded by useState(false)
     var sessionError by useState<String?>(null)
     fun loadSessions() = scope.launch {
         sessionsLoaded = true
-        runCatching { sessions() }.onSuccess { loadedSessions = it }.onFailure { sessionError = clientMessage(it) }
+        runCatching { props.sessions() }.onSuccess { loadedSessions = it }.onFailure { sessionError = clientMessage(it) }
     }
     if (!sessionsLoaded && sessionError == null) loadSessions()
 
     ReactHTML.section {
-        ReactHTML.button { onClick = { onBack() }; +"Back to library" }
-        ReactHTML.h2 { +scenario.name }
+        ReactHTML.button { onClick = { props.onBack() }; +"Back to library" }
+        ReactHTML.h2 { +props.scenario.name }
         ReactHTML.h3 { +"Choose a model for a new session" }
-        modelError?.let { ReactHTML.p { +it } }
-        ReactHTML.button { onClick = { onReloadModels() }; +"Reload models" }
+        props.modelError?.let { ReactHTML.p { +it } }
+        ReactHTML.button { onClick = { props.onReloadModels() }; +"Reload models" }
         ReactHTML.ul {
-            models.forEach { model ->
-                ReactHTML.li { ReactHTML.button { onClick = { onCreate(model) }; +"Start with $model" } }
+            props.models.forEach { model ->
+                ReactHTML.li { ReactHTML.button { onClick = { props.onCreate(model) }; +"Start with $model" } }
             }
         }
         ReactHTML.h3 { +"Saved sessions" }
         sessionError?.let { ReactHTML.p { +it } }
         ReactHTML.ul {
             loadedSessions.forEach { session ->
-                ReactHTML.li { ReactHTML.button { onClick = { onResume(session) }; +session.title } }
+                ReactHTML.li { ReactHTML.button { onClick = { props.onResume(session) }; +session.title } }
             }
         }
     }
 }
 
-private fun ChildrenBuilder.playView(
-    scenario: Scenario,
-    session: GameSession,
-    api: AdventureApi,
-    sessions: SessionRepository,
-    onBack: () -> Unit,
-    onSessionChanged: (GameSession) -> Unit,
-) {
+private external interface PlayViewProps : Props {
+    var scenario: Scenario
+    var session: GameSession
+    var api: AdventureApi
+    var sessions: SessionRepository
+    var onBack: () -> Unit
+    var onSessionChanged: (GameSession) -> Unit
+}
+
+private val PlayView = FC<PlayViewProps> { props ->
     var action by useState("")
     var pending by useState(false)
     var error by useState<String?>(null)
     var metrics by useState<TurnMetrics?>(null)
 
     ReactHTML.section {
-        ReactHTML.button { onClick = { onBack() }; +"Back to sessions" }
-        ReactHTML.h2 { +session.title }
-        ReactHTML.p { +"Model: ${session.modelId}" }
+        ReactHTML.button { onClick = { props.onBack() }; +"Back to sessions" }
+        ReactHTML.h2 { +props.session.title }
+        ReactHTML.p { +"Model: ${props.session.modelId}" }
         ReactHTML.div {
-            session.messages.forEach { message ->
+            props.session.messages.forEach { message ->
                 ReactHTML.p { +"${message.role}: ${message.content}" }
             }
         }
@@ -262,24 +264,20 @@ private fun ChildrenBuilder.playView(
                     error = null
                     action = ""
                     scope.launch {
-                    val started = session.copy(
-                        messages = session.messages + GameMessage("player", playerAction, now()),
-                        updatedAt = now(),
-                    )
-                    sessions.save(started)
-                    onSessionChanged(started)
-                    runCatching { api.play(TurnRequestMapper.map(session, scenario, playerAction)) }
-                        .onSuccess { response ->
-                            val completed = started.copy(
-                                messages = started.messages + GameMessage(response.message.role, response.message.content, now()),
-                                updatedAt = now(),
+                        try {
+                            val completed = TurnSubmission(props.sessions, props.api).submit(
+                                session = props.session,
+                                scenario = props.scenario,
+                                playerAction = playerAction,
+                                onStarted = props.onSessionChanged,
                             )
-                            sessions.save(completed)
-                            metrics = response.metrics
-                            onSessionChanged(completed)
+                            metrics = completed.metrics
+                            props.onSessionChanged(completed.session)
+                        } catch (cause: Throwable) {
+                            error = clientMessage(cause)
+                        } finally {
+                            pending = false
                         }
-                        .onFailure { error = clientMessage(it) }
-                        pending = false
                     }
                 }
             }
@@ -299,4 +297,4 @@ private fun ChildrenBuilder.renderMetrics(metrics: TurnMetrics) {
 
 private fun clientMessage(cause: Throwable): String = cause.message ?: "Something went wrong. Please try again."
 
-private fun now(): Long = (js("Date.now()") as Double).toLong()
+internal fun now(): Long = (js("Date.now()") as Double).toLong()
