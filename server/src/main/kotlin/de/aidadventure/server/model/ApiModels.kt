@@ -9,11 +9,16 @@ data class ChatEntry(
 )
 
 @Serializable
+enum class ModelProvider { OLLAMA, LLAMA_CPP }
+
+@Serializable
 data class TurnRequest(
     val modelId: String,
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val playerAction: String,
+    val provider: ModelProvider = ModelProvider.OLLAMA,
+    val llamaCppPort: Int? = null,
 )
 
 @Serializable
