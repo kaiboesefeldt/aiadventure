@@ -3,19 +3,16 @@ package de.aidadventure.web.api
 import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
+import kotlinx.browser.window
+import kotlinx.coroutines.await
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.js.Js
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsChannel
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
-import io.ktor.utils.io.readUTF8Line
+import kotlin.js.Promise
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -37,24 +34,34 @@ class AdventureApiClient(
     }
 
     override suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics {
-        val response = client.post("$normalizedBaseUrl/api/turn") {
-            contentType(ContentType.Application.Json)
-            setBody(request)
-        }.requireSuccess()
+        val response = requireBrowserSuccess(browserFetchTurn(request))
+        val reader = response.body?.getReader() ?: throw AdventureApiException("The model response ended unexpectedly.")
+        val textDecoder = js("new TextDecoder()")
 
         val decoder = SseFrameDecoder()
-        val channel = response.bodyAsChannel()
         while (true) {
-            val line = channel.readUTF8Line() ?: break
-            for (frame in decoder.push("$line\n")) {
-                when (frame.event) {
-                    "token" -> onToken(streamJson.decodeFromString<StreamToken>(frame.data).text)
-                    "done" -> return streamJson.decodeFromString<StreamDone>(frame.data).metrics
-                    "error" -> throw AdventureApiException(streamJson.decodeFromString<StreamError>(frame.data).message)
-                }
-            }
+            val result = reader.read().unsafeCast<Promise<dynamic>>().await()
+            if (result.done.unsafeCast<Boolean>()) break
+            processTurnStreamChunk(decoder, decodeText(textDecoder, result.value, stream = true), onToken)?.let { return it }
         }
+        processTurnStreamChunk(decoder, decodeText(textDecoder, null, stream = false), onToken)?.let { return it }
         throw AdventureApiException("The model response ended unexpectedly.")
+    }
+
+    private suspend fun browserFetchTurn(request: TurnRequest): dynamic {
+        val options = js("({})")
+        options.method = "POST"
+        options.headers = js("({ 'Content-Type': 'application/json' })")
+        options.body = streamJson.encodeToString(request)
+        return window.fetch("$normalizedBaseUrl/api/turn", options).await()
+    }
+
+    private suspend fun requireBrowserSuccess(response: dynamic): dynamic {
+        if (response.ok.unsafeCast<Boolean>()) return response
+        val message = runCatching {
+            streamJson.decodeFromString<ApiError>(response.text().unsafeCast<Promise<String>>().await()).message
+        }.getOrNull() ?: "The adventure service is unavailable."
+        throw AdventureApiException(message)
     }
 
     private suspend fun io.ktor.client.statement.HttpResponse.requireSuccess(): io.ktor.client.statement.HttpResponse {
@@ -68,6 +75,27 @@ class AdventureApiClient(
     companion object {
         const val DEFAULT_BASE_URL = "http://localhost:8080"
     }
+}
+
+internal fun processTurnStreamChunk(
+    decoder: SseFrameDecoder,
+    chunk: String,
+    onToken: (String) -> Unit,
+): TurnMetrics? {
+    for (frame in decoder.push(chunk)) {
+        when (frame.event) {
+            "token" -> onToken(streamJson.decodeFromString<StreamToken>(frame.data).text)
+            "done" -> return streamJson.decodeFromString<StreamDone>(frame.data).metrics
+            "error" -> throw AdventureApiException(streamJson.decodeFromString<StreamError>(frame.data).message)
+        }
+    }
+    return null
+}
+
+private fun decodeText(decoder: dynamic, bytes: dynamic, stream: Boolean): String {
+    val options = js("({})")
+    options.stream = stream
+    return decoder.decode(bytes, options).unsafeCast<String>()
 }
 
 class AdventureApiException(message: String) : Exception(message)

@@ -239,13 +239,15 @@ private val PlayView = FC<PlayViewProps> { props ->
     var pending by useState(false)
     var error by useState<String?>(null)
     var metrics by useState<TurnMetrics?>(null)
+    var streamedSession by useState<GameSession?>(null)
+    val displayedSession = sessionForDisplay(props.session, streamedSession)
 
     ReactHTML.section {
         ReactHTML.button { onClick = { props.onBack() }; +"Back to sessions" }
-        ReactHTML.h2 { +props.session.title }
-        ReactHTML.p { +"Model: ${props.session.modelId}" }
+        ReactHTML.h2 { +displayedSession.title }
+        ReactHTML.p { +"Model: ${displayedSession.modelId}" }
         ReactHTML.div {
-            props.session.messages.forEach { message ->
+            displayedSession.messages.forEach { message ->
                 ReactHTML.p { +"${message.role}: ${message.content}" }
             }
         }
@@ -270,12 +272,15 @@ private val PlayView = FC<PlayViewProps> { props ->
                                 session = props.session,
                                 scenario = props.scenario,
                                 playerAction = playerAction,
-                                onStarted = props.onSessionChanged,
+                                onStarted = { session ->
+                                    flushStreamUpdate { streamedSession = session }
+                                },
                                 onStreamed = { session ->
-                                    flushStreamUpdate { props.onSessionChanged(session) }
+                                    flushStreamUpdate { streamedSession = session }
                                 },
                             )
                             metrics = completed.metrics
+                            flushStreamUpdate { streamedSession = completed.session }
                             props.onSessionChanged(completed.session)
                         } catch (cause: Throwable) {
                             error = clientMessage(cause)
@@ -304,5 +309,7 @@ private fun clientMessage(cause: Throwable): String = cause.message ?: "Somethin
 internal fun flushStreamUpdate(update: () -> Unit) {
     flushSync(update)
 }
+
+internal fun sessionForDisplay(persisted: GameSession, streamed: GameSession?): GameSession = streamed ?: persisted
 
 internal fun now(): Long = (js("Date.now()") as Double).toLong()
