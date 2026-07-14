@@ -132,6 +132,55 @@ class LlamaCppGatewayTest {
     }
 
     @Test
+    fun `cancelling the collector interrupts an upstream request before it responds`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
+        val executor = Executors.newSingleThreadExecutor()
+        val requestReceived = CountDownLatch(1)
+        val releaseResponse = CountDownLatch(1)
+        server.executor = executor
+        server.createContext("/v1/chat/completions") { exchange ->
+            exchange.requestBody.close()
+            requestReceived.countDown()
+            releaseResponse.await()
+            exchange.sendResponseHeaders(200, 0)
+            exchange.responseBody.close()
+        }
+        server.start()
+
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        var collection: Job? = null
+        try {
+            val gateway = LlamaCppGateway(
+                httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
+                promptFactory = PromptFactory(),
+            )
+            val request = TurnRequest(
+                modelId = "local-model",
+                scenarioMarkdown = "# Forest",
+                history = emptyList(),
+                playerAction = "Follow the path",
+                provider = ModelProvider.LLAMA_CPP,
+                llamaCppPort = server.address.port,
+            )
+
+            collection = scope.launch {
+                gateway.stream(request).toList()
+            }
+            assertTrue(requestReceived.await(2, TimeUnit.SECONDS))
+            collection.cancel()
+            withTimeout(2_000) {
+                collection.join()
+            }
+        } finally {
+            releaseResponse.countDown()
+            collection?.cancelAndJoin()
+            scope.cancel()
+            server.stop(0)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
     fun `discovers local models and streams OpenAI completion tokens in prompt order`() = runBlocking {
         val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
         val executor = Executors.newSingleThreadExecutor()

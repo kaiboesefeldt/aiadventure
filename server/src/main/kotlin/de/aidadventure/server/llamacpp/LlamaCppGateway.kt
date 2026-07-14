@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -59,15 +60,17 @@ class LlamaCppGateway(
             val responseBody = AtomicReference<InputStream?>()
             val reader = launch(Dispatchers.IO) {
                 try {
-                    val response = httpClient.send(
-                        HttpRequest.newBuilder(endpoint(port, "/v1/chat/completions"))
-                            .timeout(requestTimeout)
-                            .header("Accept", "text/event-stream")
-                            .header("Content-Type", "application/json")
-                            .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(payload)))
-                            .build(),
-                        HttpResponse.BodyHandlers.ofInputStream(),
-                    )
+                    val response = runInterruptible {
+                        httpClient.send(
+                            HttpRequest.newBuilder(endpoint(port, "/v1/chat/completions"))
+                                .timeout(requestTimeout)
+                                .header("Accept", "text/event-stream")
+                                .header("Content-Type", "application/json")
+                                .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(payload)))
+                                .build(),
+                            HttpResponse.BodyHandlers.ofInputStream(),
+                        )
+                    }
                     responseBody.set(response.body())
                     if (response.statusCode() !in 200..299) {
                         close(IllegalStateException("llama.cpp chat completion failed: HTTP ${response.statusCode()}"))
