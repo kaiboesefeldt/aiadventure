@@ -12,9 +12,20 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.http.HttpClient
 import java.time.Duration
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
@@ -22,8 +33,104 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class LlamaCppGatewayTest {
+    @Test
+    fun `fails when the upstream stream ends before DONE`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
+        val executor = Executors.newSingleThreadExecutor()
+        server.executor = executor
+        server.createContext("/v1/chat/completions") { exchange ->
+            exchange.requestBody.close()
+            exchange.responseHeaders.add("Content-Type", "text/event-stream")
+            exchange.sendResponseHeaders(200, 0)
+            exchange.responseBody.bufferedWriter().use { writer ->
+                writer.write("data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n")
+                writer.flush()
+            }
+        }
+        server.start()
+
+        try {
+            val gateway = LlamaCppGateway(
+                httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
+                promptFactory = PromptFactory(),
+            )
+            val request = TurnRequest(
+                modelId = "local-model",
+                scenarioMarkdown = "# Forest",
+                history = emptyList(),
+                playerAction = "Follow the path",
+                provider = ModelProvider.LLAMA_CPP,
+                llamaCppPort = server.address.port,
+            )
+
+            val failure = assertFailsWith<IllegalStateException> {
+                gateway.stream(request).toList()
+            }
+            assertEquals("llama.cpp chat completion ended before [DONE].", failure.message)
+        } finally {
+            server.stop(0)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `cancelling the collector stops an open upstream response`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
+        val executor = Executors.newSingleThreadExecutor()
+        val firstEventWritten = CountDownLatch(1)
+        val releaseResponse = CountDownLatch(1)
+        server.executor = executor
+        server.createContext("/v1/chat/completions") { exchange ->
+            exchange.requestBody.close()
+            exchange.responseHeaders.add("Content-Type", "text/event-stream")
+            exchange.sendResponseHeaders(200, 0)
+            exchange.responseBody.bufferedWriter().use { writer ->
+                writer.write("data: {\"choices\":[{\"delta\":{\"content\":\"first\"}}]}\n\n")
+                writer.flush()
+                firstEventWritten.countDown()
+                releaseResponse.await()
+                writer.write("data: [DONE]\n\n")
+                writer.flush()
+            }
+        }
+        server.start()
+
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        var collection: Job? = null
+        try {
+            val gateway = LlamaCppGateway(
+                httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
+                promptFactory = PromptFactory(),
+            )
+            val request = TurnRequest(
+                modelId = "local-model",
+                scenarioMarkdown = "# Forest",
+                history = emptyList(),
+                playerAction = "Follow the path",
+                provider = ModelProvider.LLAMA_CPP,
+                llamaCppPort = server.address.port,
+            )
+
+            collection = scope.launch {
+                gateway.stream(request).take(1).toList()
+            }
+            assertTrue(firstEventWritten.await(2, TimeUnit.SECONDS))
+            withTimeout(2_000) {
+                collection.join()
+            }
+        } finally {
+            releaseResponse.countDown()
+            collection?.cancelAndJoin()
+            scope.cancel()
+            server.stop(0)
+            executor.shutdownNow()
+        }
+    }
+
     @Test
     fun `discovers local models and streams OpenAI completion tokens in prompt order`() = runBlocking {
         val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
