@@ -21,6 +21,7 @@ import react.ChildrenBuilder
 import react.Props
 import react.create
 import react.dom.client.createRoot
+import react.dom.flushSync
 import react.dom.html.ReactHTML
 import react.useState
 import web.dom.document
@@ -270,7 +271,9 @@ private val PlayView = FC<PlayViewProps> { props ->
                                 scenario = props.scenario,
                                 playerAction = playerAction,
                                 onStarted = props.onSessionChanged,
-                                onStreamed = props.onSessionChanged,
+                                onStreamed = { session ->
+                                    flushStreamUpdate { props.onSessionChanged(session) }
+                                },
                             )
                             metrics = completed.metrics
                             props.onSessionChanged(completed.session)
@@ -297,5 +300,9 @@ private fun ChildrenBuilder.renderMetrics(metrics: TurnMetrics) {
 }
 
 private fun clientMessage(cause: Throwable): String = cause.message ?: "Something went wrong. Please try again."
+
+internal fun flushStreamUpdate(update: () -> Unit) {
+    flushSync(update)
+}
 
 internal fun now(): Long = (js("Date.now()") as Double).toLong()
