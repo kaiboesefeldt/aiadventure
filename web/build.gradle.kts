@@ -15,6 +15,7 @@ kotlin {
 
     sourceSets {
         val main by getting {
+            kotlin.srcDir("src/jsMain/kotlin")
             dependencies {
                 implementation("org.jetbrains.kotlin-wrappers:kotlin-react:2025.12.2-19.2.1")
                 implementation("org.jetbrains.kotlin-wrappers:kotlin-react-dom:2025.12.2-19.2.1")
@@ -26,6 +27,7 @@ kotlin {
             }
         }
         val test by getting {
+            kotlin.srcDir("src/jsTest/kotlin")
             dependencies {
                 implementation(kotlin("test"))
             }
