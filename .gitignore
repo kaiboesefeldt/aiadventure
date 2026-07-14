@@ -5,6 +5,7 @@ build/
 kotlin-js-store/
 .kotlin/
 .worktrees/
+.superpowers/
 .yarn-cache/
 .env
 .env.*
