@@ -1,9 +1,12 @@
 package de.aidadventure.server
 
 import de.aidadventure.server.model.TurnMetrics
+import de.aidadventure.server.model.ModelProvider
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
+import de.aidadventure.server.llamacpp.LlamaCppGateway
 import de.aidadventure.server.ollama.OllamaGateway
+import com.sun.net.httpserver.HttpServer
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.post
@@ -17,6 +20,9 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.nio.charset.StandardCharsets
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -82,6 +88,46 @@ class ApplicationTest {
     }
 
     @Test
+    fun `llama models returns model names from the selected local endpoint`() = testApplication {
+        llamaCppServer().use { llama ->
+            application { adventureModule(FakeGateway(), llamaCppGateway = LlamaCppGateway()) }
+
+            val response = client.get("/api/llama/models?port=${llama.port}")
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals("{\"models\":[\"local-model\"]}", response.bodyAsText())
+            assertEquals(1, llama.modelDiscoveryCalls)
+        }
+    }
+
+    @Test
+    fun `llama models rejects blank and out of range ports without discovery`() = testApplication {
+        llamaCppServer().use { llama ->
+            application { adventureModule(FakeGateway(), llamaCppGateway = LlamaCppGateway()) }
+
+            listOf("", "0", "65536").forEach { port ->
+                val response = client.get("/api/llama/models?port=$port")
+                assertEquals(HttpStatusCode.BadRequest, response.status)
+            }
+
+            assertEquals(0, llama.modelDiscoveryCalls)
+        }
+    }
+
+    @Test
+    fun `llama models maps unavailable discovery to service unavailable`() = testApplication {
+        llamaCppServer(modelsStatus = HttpStatusCode.ServiceUnavailable.value).use { llama ->
+            application { adventureModule(FakeGateway(), llamaCppGateway = LlamaCppGateway()) }
+
+            val response = client.get("/api/llama/models?port=${llama.port}")
+
+            assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+            assertEquals("{\"code\":\"llama_cpp_unavailable\",\"message\":\"The model service is unavailable.\"}", response.bodyAsText())
+            assertEquals(1, llama.modelDiscoveryCalls)
+        }
+    }
+
+    @Test
     fun `turn rejects blank scenario without calling gateway`() = testApplication {
         val gateway = FakeGateway()
         application { adventureModule(gateway) }
@@ -137,6 +183,64 @@ class ApplicationTest {
         }
 
         assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+    }
+
+    @Test
+    fun `llama turn rejects missing and out of range ports before model discovery`() = testApplication {
+        application { adventureModule(FakeGateway()) }
+        configureJsonClient()
+
+        listOf<Int?>(null, 0, 65536).forEach { port ->
+            val response = client.post("/api/turn") {
+                contentType(ContentType.Application.Json)
+                setBody(TurnRequest("local-model", "# Scenario", emptyList(), "look", ModelProvider.LLAMA_CPP, port))
+            }
+
+            assertEquals(HttpStatusCode.BadRequest, response.status)
+        }
+    }
+
+    @Test
+    fun `turn validates and streams through llama cpp gateway`() = testApplication {
+        llamaCppServer().use { llama ->
+            application { adventureModule(FakeGateway(), llamaCppGateway = LlamaCppGateway()) }
+            configureJsonClient()
+
+            val response = client.post("/api/turn") {
+                contentType(ContentType.Application.Json)
+                setBody(TurnRequest("local-model", "# Scenario", emptyList(), "look", ModelProvider.LLAMA_CPP, llama.port))
+            }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(
+                ": connected\n\n" +
+                    "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":null,\"cacheTokens\":null}}\n\n",
+                response.bodyAsText(),
+            )
+            assertEquals(1, llama.modelDiscoveryCalls)
+            assertEquals(1, llama.streamCalls)
+        }
+    }
+
+    @Test
+    fun `llama turn streams a provider-safe error after a gateway failure`() = testApplication {
+        llamaCppServer(streamStatus = HttpStatusCode.ServiceUnavailable.value).use { llama ->
+            application { adventureModule(FakeGateway(), llamaCppGateway = LlamaCppGateway()) }
+            configureJsonClient()
+
+            val response = client.post("/api/turn") {
+                contentType(ContentType.Application.Json)
+                setBody(TurnRequest("local-model", "# Scenario", emptyList(), "look", ModelProvider.LLAMA_CPP, llama.port))
+            }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(
+                ": connected\n\n" +
+                    "event: error\ndata: {\"code\":\"llama_cpp_unavailable\",\"message\":\"The model service is unavailable.\"}\n\n",
+                response.bodyAsText(),
+            )
+            assertEquals(1, llama.streamCalls)
+        }
     }
 
     @Test
@@ -260,6 +364,53 @@ class ApplicationTest {
                 TurnStreamEvent.Token("door opens."),
                 TurnStreamEvent.Done(TurnMetrics(null, 12, null)),
             )
+        }
+    }
+
+    private fun llamaCppServer(
+        modelsStatus: Int = HttpStatusCode.OK.value,
+        streamStatus: Int = HttpStatusCode.OK.value,
+    ): FakeLlamaCppServer = FakeLlamaCppServer(modelsStatus, streamStatus).also { it.start() }
+
+    private class FakeLlamaCppServer(
+        private val modelsStatus: Int,
+        private val streamStatus: Int,
+    ) : AutoCloseable {
+        private val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
+
+        var modelDiscoveryCalls = 0
+            private set
+        var streamCalls = 0
+            private set
+
+        val port: Int get() = server.address.port
+
+        init {
+            server.createContext("/v1/models") { exchange ->
+                modelDiscoveryCalls++
+                exchange.respond(modelsStatus, if (modelsStatus in 200..299) "{\"data\":[{\"id\":\"local-model\"}]}" else "{}")
+            }
+            server.createContext("/v1/chat/completions") { exchange ->
+                streamCalls++
+                if (streamStatus !in 200..299) {
+                    exchange.respond(streamStatus, "{}")
+                } else {
+                    exchange.responseHeaders.add("Content-Type", "text/event-stream")
+                    exchange.sendResponseHeaders(HttpStatusCode.OK.value, 0)
+                    exchange.responseBody.use { body -> body.write("data: [DONE]\n\n".toByteArray(StandardCharsets.UTF_8)) }
+                }
+            }
+        }
+
+        fun start() = server.start()
+
+        override fun close() = server.stop(0)
+
+        private fun com.sun.net.httpserver.HttpExchange.respond(status: Int, body: String) {
+            val bytes = body.toByteArray(StandardCharsets.UTF_8)
+            responseHeaders.add("Content-Type", "application/json")
+            sendResponseHeaders(status, bytes.size.toLong())
+            responseBody.use { it.write(bytes) }
         }
     }
 
