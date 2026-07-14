@@ -5,16 +5,25 @@ A local-LLM interactive adventure application with Ollama and OpenAI-compatible 
 ## Prerequisites
 
 - Java (a JVM capable of producing Java 21 bytecode)
-- [Ollama](https://ollama.com/) with a local model
-- Optional: a local `llama-server` from [llama.cpp](https://github.com/ggml-org/llama.cpp)
+- One local model provider: [Ollama](https://ollama.com/) with a local model, or a local
+  `llama-server` from [llama.cpp](https://github.com/ggml-org/llama.cpp)
 
 ## Start
 
-Start Ollama and ensure a model is available:
+Start one provider before starting the app.
+
+For Ollama, start the service and ensure a model is available:
 
 ```bash
 ollama serve
 ollama pull example-model
+```
+
+For llama.cpp, start its OpenAI-compatible server on loopback port `8081` (the
+application default):
+
+```bash
+llama-server --host 127.0.0.1 --port 8081 --model /absolute/path/to/model.gguf
 ```
 
 Start the API and browser client in separate terminals:
@@ -33,13 +42,7 @@ your LAN. Do not use that setting on an untrusted network.
 
 ### Connect to llama.cpp
 
-The llama.cpp provider is optional and uses an OpenAI-compatible local
-`llama-server`. Start it on loopback port `8081` (the application's default) before
-connecting from the browser:
-
-```bash
-llama-server --host 127.0.0.1 --port 8081 --model /absolute/path/to/model.gguf
-```
+The llama.cpp provider uses the OpenAI-compatible local `llama-server` started above.
 
 With the API and browser client commands above running, import or open a scenario and
 use the **llama.cpp** connection control in its detail view. Enter `8081` unless the

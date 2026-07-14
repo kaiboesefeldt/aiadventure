@@ -318,6 +318,28 @@ class LlamaCppGatewayTest {
     }
 
     @Test
+    fun `rejects a blank first discovered model ID`() {
+        val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
+        val executor = Executors.newSingleThreadExecutor()
+        server.executor = executor
+        server.createContext("/v1/models") { exchange ->
+            exchange.respondJson("{\"data\":[{\"id\":\"  \\t\"},{\"id\":\"later-model\"}]}")
+        }
+        server.start()
+
+        try {
+            val failure = assertFailsWith<IllegalStateException> {
+                LlamaCppGateway(promptFactory = PromptFactory()).availableModels(server.address.port)
+            }
+
+            assertEquals("llama.cpp model discovery returned a blank model ID.", failure.message)
+        } finally {
+            server.stop(0)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
     fun `discovers local models and streams OpenAI completion tokens in prompt order`() = runBlocking {
         val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
         val executor = Executors.newSingleThreadExecutor()

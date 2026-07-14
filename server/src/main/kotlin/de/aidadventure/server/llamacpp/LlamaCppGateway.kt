@@ -43,9 +43,11 @@ class LlamaCppGateway(
         )
         check(response.statusCode() in 200..299) { "llama.cpp model discovery failed: HTTP ${response.statusCode()}" }
 
-        return json.decodeFromString<ModelsResponse>(response.body()).data
-            .map { it.id }
-            .also { check(it.isNotEmpty()) { "llama.cpp model discovery returned no models." } }
+        val firstModel = json.decodeFromString<ModelsResponse>(response.body()).data.firstOrNull()
+            ?: throw IllegalStateException("llama.cpp model discovery returned no models.")
+        val modelId = firstModel.id
+        check(modelId.isNotBlank()) { "llama.cpp model discovery returned a blank model ID." }
+        return listOf(modelId)
     }
 
     fun stream(request: TurnRequest): Flow<TurnStreamEvent> {
