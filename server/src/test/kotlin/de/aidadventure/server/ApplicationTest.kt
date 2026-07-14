@@ -6,13 +6,10 @@ import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.ollama.OllamaGateway
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
-import io.ktor.client.request.header
-import io.ktor.client.request.options
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
@@ -23,6 +20,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class ApplicationTest {
     @Test
@@ -36,6 +34,34 @@ class ApplicationTest {
     }
 
     @Test
+    fun `root serves the packaged browser entry document`() = testApplication {
+        application { adventureModule(FakeGateway()) }
+
+        val response = client.get("/")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().contains("<div id=\"root\"></div>"))
+    }
+
+    @Test
+    fun `packaged browser bundle is served as a static asset`() = testApplication {
+        application { adventureModule(FakeGateway()) }
+
+        val response = client.get("/web.js")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+    }
+
+    @Test
+    fun `missing static assets return not found`() = testApplication {
+        application { adventureModule(FakeGateway()) }
+
+        val response = client.get("/missing-asset.js")
+
+        assertEquals(HttpStatusCode.NotFound, response.status)
+    }
+
+    @Test
     fun `models returns fake gateway model names`() = testApplication {
         application { adventureModule(FakeGateway(models = listOf("small"))) }
 
@@ -43,33 +69,6 @@ class ApplicationTest {
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("{\"models\":[\"small\"]}", response.bodyAsText())
-    }
-
-    @Test
-    fun `cors accepts the fixed browser development origin`() = testApplication {
-        application { adventureModule(FakeGateway()) }
-
-        val response = client.get("/api/models") {
-            header("Origin", "http://localhost:8088")
-        }
-
-        assertEquals(HttpStatusCode.OK, response.status)
-        assertEquals("http://localhost:8088", response.headers["Access-Control-Allow-Origin"])
-    }
-
-    @Test
-    fun `cors permits a JSON turn request from the browser development origin`() = testApplication {
-        application { adventureModule(FakeGateway()) }
-
-        val response = client.options("/api/turn") {
-            header("Origin", "http://localhost:8088")
-            header("Access-Control-Request-Method", "POST")
-            header("Access-Control-Request-Headers", "content-type")
-        }
-
-        assertEquals(HttpStatusCode.OK, response.status)
-        assertEquals("http://localhost:8088", response.headers["Access-Control-Allow-Origin"])
-        assertEquals(HttpHeaders.ContentType, response.headers["Access-Control-Allow-Headers"])
     }
 
     @Test

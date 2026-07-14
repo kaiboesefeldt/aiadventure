@@ -15,7 +15,6 @@ dependencies {
     implementation("io.ktor:ktor-server-core:3.4.1")
     implementation("io.ktor:ktor-server-netty:3.4.1")
     implementation("io.ktor:ktor-server-content-negotiation:3.4.1")
-    implementation("io.ktor:ktor-server-cors:3.4.1")
     implementation("io.ktor:ktor-server-call-id:3.4.1")
     implementation("io.ktor:ktor-server-status-pages:3.4.1")
     implementation("io.ktor:ktor-serialization-kotlinx-json:3.4.1")
@@ -39,4 +38,14 @@ tasks.withType<JavaCompile>().configureEach {
 
 application {
     mainClass.set("de.aidadventure.server.ApplicationKt")
+}
+
+tasks.processResources {
+    dependsOn(":web:browserProductionWebpack")
+    from(project(":web").layout.buildDirectory.dir("processedResources/js/main")) {
+        into("ui")
+    }
+    from(project(":web").layout.buildDirectory.dir("kotlin-webpack/js/productionExecutable")) {
+        into("ui")
+    }
 }

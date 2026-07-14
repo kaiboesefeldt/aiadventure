@@ -19,12 +19,13 @@ import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.callid.CallId
 import io.ktor.server.plugins.callid.callId
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondResource
 import io.ktor.server.response.respondTextWriter
+import io.ktor.server.http.content.staticResources
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
@@ -71,10 +72,6 @@ fun Application.adventureModule(
         header(HttpHeaders.XRequestId)
         generate { UUID.randomUUID().toString() }
         verify { it.isNotBlank() }
-    }
-    install(CORS) {
-        allowHost("localhost:8088", schemes = listOf("http"))
-        allowHeader(HttpHeaders.ContentType)
     }
     install(StatusPages) {
         exception<BadRequestException> { call, _ ->
@@ -132,6 +129,10 @@ fun Application.adventureModule(
                 }
             }
         }
+        get("/") {
+            call.respondResource("ui/index.html")
+        }
+        staticResources("/", "ui", index = null)
     }
 }
 
