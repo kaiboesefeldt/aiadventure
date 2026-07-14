@@ -10,16 +10,26 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.utils.io.readUTF8Line
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 interface AdventureApi {
     suspend fun models(): List<String>
-    suspend fun play(request: TurnRequest): TurnResponse
+    suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics {
+        throw AdventureApiException("Streaming turns are unavailable.")
+    }
+
+    suspend fun play(request: TurnRequest): TurnResponse {
+        val message = StringBuilder()
+        val metrics = play(request) { token -> message.append(token) }
+        return TurnResponse(ChatEntry("game-master", message.toString()), metrics)
+    }
 }
 
 class AdventureApiClient(
@@ -34,12 +44,25 @@ class AdventureApiClient(
         return response.requireSuccess().body<ModelsResponse>().models
     }
 
-    override suspend fun play(request: TurnRequest): TurnResponse {
+    override suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics {
         val response = client.post("$normalizedBaseUrl/api/turn") {
             contentType(ContentType.Application.Json)
             setBody(request)
+        }.requireSuccess()
+
+        val decoder = SseFrameDecoder()
+        val channel = response.bodyAsChannel()
+        while (true) {
+            val line = channel.readUTF8Line() ?: break
+            for (frame in decoder.push("$line\n")) {
+                when (frame.event) {
+                    "token" -> onToken(streamJson.decodeFromString<StreamToken>(frame.data).text)
+                    "done" -> return streamJson.decodeFromString<StreamDone>(frame.data).metrics
+                    "error" -> throw AdventureApiException(streamJson.decodeFromString<StreamError>(frame.data).message)
+                }
+            }
         }
-        return response.requireSuccess().body()
+        throw AdventureApiException("The model response ended unexpectedly.")
     }
 
     private suspend fun io.ktor.client.statement.HttpResponse.requireSuccess(): io.ktor.client.statement.HttpResponse {
@@ -56,6 +79,35 @@ class AdventureApiClient(
 }
 
 class AdventureApiException(message: String) : Exception(message)
+
+data class SseFrame(val event: String, val data: String)
+
+class SseFrameDecoder {
+    private var buffer = ""
+
+    fun push(chunk: String): List<SseFrame> {
+        buffer = (buffer + chunk).replace("\r\n", "\n")
+        val frames = mutableListOf<SseFrame>()
+
+        while (true) {
+            val frameEnd = buffer.indexOf("\n\n")
+            if (frameEnd < 0) return frames
+
+            val frameText = buffer.substring(0, frameEnd)
+            buffer = buffer.substring(frameEnd + 2)
+
+            val event = frameText.lineSequence()
+                .firstOrNull { it.startsWith("event:") }
+                ?.removePrefix("event:")
+                ?.trimStart()
+            val data = frameText.lineSequence()
+                .firstOrNull { it.startsWith("data:") }
+                ?.removePrefix("data:")
+                ?.trimStart()
+            if (event != null && data != null) frames += SseFrame(event, data)
+        }
+    }
+}
 
 object TurnRequestMapper {
     fun map(session: GameSession, scenario: Scenario, playerAction: String): TurnRequest = TurnRequest(
@@ -88,7 +140,18 @@ data class TurnMetrics(
 )
 
 @Serializable
+private data class StreamToken(val text: String)
+
+@Serializable
+private data class StreamDone(val metrics: TurnMetrics)
+
+@Serializable
+private data class StreamError(val code: String, val message: String)
+
+@Serializable
 private data class ModelsResponse(val models: List<String>)
 
 @Serializable
 private data class ApiError(val code: String, val message: String)
+
+private val streamJson = Json { ignoreUnknownKeys = true }
