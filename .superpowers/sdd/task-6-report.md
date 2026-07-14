@@ -28,13 +28,13 @@ changed.
 ```text
 ./gradlew check
 BUILD SUCCESSFUL in 10s
-27 actionable tasks: 5 executed, 22 up-to-date
+27 actionable tasks: 3 executed, 24 up-to-date
 ```
 
-The successful check included the server JVM test task, Kotlin/JS test
-compilation, browser test task, and production browser webpack task. It emitted
-the existing Kotlin `kotlin-js` deprecation warning only; no Yarn contention or
-test failure occurred.
+The captured output shows the server JVM test task, Kotlin/JS test compilation,
+browser test task, and production browser webpack task completing successfully.
+It also shows the existing Kotlin `kotlin-js` deprecation warning and webpack
+asset-size warnings; no test failure occurred.
 
 ## Local runtime verification
 
@@ -59,6 +59,9 @@ environmental limitation, not a code or test failure.
 ## Final audit
 
 ```text
+git status --short
+# empty output
+
 git diff --check
 # no output
 
