@@ -24,6 +24,7 @@ import react.dom.client.createRoot
 import react.dom.flushSync
 import react.dom.html.ReactHTML
 import react.useState
+import web.cssom.ClassName
 import web.dom.document
 import web.file.File
 import web.html.HTMLInputElement
@@ -242,6 +243,37 @@ private val PlayView = FC<PlayViewProps> { props ->
     var streamedSession by useState<GameSession?>(null)
     val displayedSession = sessionForDisplay(props.session, streamedSession)
 
+    fun submitAction() {
+        val playerAction = action.trim()
+        if (playerAction.isNotBlank() && !pending) {
+            pending = true
+            error = null
+            action = ""
+            scope.launch {
+                try {
+                    val completed = TurnSubmission(props.sessions, props.api).submit(
+                        session = props.session,
+                        scenario = props.scenario,
+                        playerAction = playerAction,
+                        onStarted = { session ->
+                            flushStreamUpdate { streamedSession = session }
+                        },
+                        onStreamed = { session ->
+                            flushStreamUpdate { streamedSession = session }
+                        },
+                    )
+                    metrics = completed.metrics
+                    flushStreamUpdate { streamedSession = completed.session }
+                    props.onSessionChanged(completed.session)
+                } catch (cause: Throwable) {
+                    error = clientMessage(cause)
+                } finally {
+                    pending = false
+                }
+            }
+        }
+    }
+
     ReactHTML.section {
         ReactHTML.button { onClick = { props.onBack() }; +"Back to sessions" }
         ReactHTML.h2 { +displayedSession.title }
@@ -254,42 +286,23 @@ private val PlayView = FC<PlayViewProps> { props ->
         metrics?.let { renderMetrics(it) }
         error?.let { ReactHTML.p { +it } }
         ReactHTML.textarea {
+            id = "player-action".unsafeCast<web.dom.ElementId>()
+            className = ClassName("action-input")
             value = action
             disabled = pending
+            placeholder = "What do you do?"
             onChange = { event -> action = event.target.unsafeCast<HTMLTextAreaElement>().value }
+            onKeyDown = { event ->
+                val composing = event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>()
+                if (shouldSubmitOnEnter(event.key, event.shiftKey, composing, pending, action)) {
+                    event.preventDefault()
+                    submitAction()
+                }
+            }
         }
         ReactHTML.button {
             disabled = pending || action.isBlank()
-            onClick = {
-                val playerAction = action.trim()
-                if (playerAction.isNotBlank() && !pending) {
-                    pending = true
-                    error = null
-                    action = ""
-                    scope.launch {
-                        try {
-                            val completed = TurnSubmission(props.sessions, props.api).submit(
-                                session = props.session,
-                                scenario = props.scenario,
-                                playerAction = playerAction,
-                                onStarted = { session ->
-                                    flushStreamUpdate { streamedSession = session }
-                                },
-                                onStreamed = { session ->
-                                    flushStreamUpdate { streamedSession = session }
-                                },
-                            )
-                            metrics = completed.metrics
-                            flushStreamUpdate { streamedSession = completed.session }
-                            props.onSessionChanged(completed.session)
-                        } catch (cause: Throwable) {
-                            error = clientMessage(cause)
-                        } finally {
-                            pending = false
-                        }
-                    }
-                }
-            }
+            onClick = { submitAction() }
             +(if (pending) "Sending…" else "Send")
         }
     }
@@ -311,5 +324,13 @@ internal fun flushStreamUpdate(update: () -> Unit) {
 }
 
 internal fun sessionForDisplay(persisted: GameSession, streamed: GameSession?): GameSession = streamed ?: persisted
+
+internal fun shouldSubmitOnEnter(
+    key: String,
+    shiftKey: Boolean,
+    isComposing: Boolean,
+    pending: Boolean,
+    action: String,
+): Boolean = key == "Enter" && !shiftKey && !isComposing && !pending && action.isNotBlank()
 
 internal fun now(): Long = (js("Date.now()") as Double).toLong()
