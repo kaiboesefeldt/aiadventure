@@ -73,7 +73,7 @@ class AdventureApiClient(
     private val normalizedBaseUrl = baseUrl.removeSuffix("/")
 
     companion object {
-        const val DEFAULT_BASE_URL = "http://localhost:8080"
+        const val DEFAULT_BASE_URL = ""
     }
 }
 
