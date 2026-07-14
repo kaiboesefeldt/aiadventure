@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.ServerSocket
 import java.nio.charset.StandardCharsets
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -128,6 +129,16 @@ class ApplicationTest {
     }
 
     @Test
+    fun `llama models maps a refused connection to service unavailable`() = testApplication {
+        application { adventureModule(FakeGateway(), llamaCppGateway = LlamaCppGateway()) }
+
+        val response = client.get("/api/llama/models?port=${refusedLoopbackPort()}")
+
+        assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+        assertEquals("{\"code\":\"llama_cpp_unavailable\",\"message\":\"The model service is unavailable.\"}", response.bodyAsText())
+    }
+
+    @Test
     fun `turn rejects blank scenario without calling gateway`() = testApplication {
         val gateway = FakeGateway()
         application { adventureModule(gateway) }
@@ -197,6 +208,37 @@ class ApplicationTest {
             }
 
             assertEquals(HttpStatusCode.BadRequest, response.status)
+        }
+    }
+
+    @Test
+    fun `llama turn maps a refused model discovery connection to service unavailable`() = testApplication {
+        application { adventureModule(FakeGateway(), llamaCppGateway = LlamaCppGateway()) }
+        configureJsonClient()
+
+        val response = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(TurnRequest("local-model", "# Scenario", emptyList(), "look", ModelProvider.LLAMA_CPP, refusedLoopbackPort()))
+        }
+
+        assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+        assertEquals("{\"code\":\"llama_cpp_unavailable\",\"message\":\"The model service is unavailable.\"}", response.bodyAsText())
+    }
+
+    @Test
+    fun `llama turn rejects an unknown model before streaming`() = testApplication {
+        llamaCppServer().use { llama ->
+            application { adventureModule(FakeGateway(), llamaCppGateway = LlamaCppGateway()) }
+            configureJsonClient()
+
+            val response = client.post("/api/turn") {
+                contentType(ContentType.Application.Json)
+                setBody(TurnRequest("unknown-model", "# Scenario", emptyList(), "look", ModelProvider.LLAMA_CPP, llama.port))
+            }
+
+            assertEquals(HttpStatusCode.NotFound, response.status)
+            assertEquals(1, llama.modelDiscoveryCalls)
+            assertEquals(0, llama.streamCalls)
         }
     }
 
@@ -371,6 +413,8 @@ class ApplicationTest {
         modelsStatus: Int = HttpStatusCode.OK.value,
         streamStatus: Int = HttpStatusCode.OK.value,
     ): FakeLlamaCppServer = FakeLlamaCppServer(modelsStatus, streamStatus).also { it.start() }
+
+    private fun refusedLoopbackPort(): Int = ServerSocket(0, 0, InetAddress.getLoopbackAddress()).use { it.localPort }
 
     private class FakeLlamaCppServer(
         private val modelsStatus: Int,

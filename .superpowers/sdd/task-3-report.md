@@ -46,3 +46,48 @@ The generated JUnit results contain 40 tests across the server module, including
 ## Process cleanup
 
 No long-running server or browser process was started. Test-local HTTP servers close through their test scopes. A final listener audit found no listeners on ports 8080, 8081, or 8088.
+
+## Task 3 review follow-up (2026-07-15)
+
+### Review findings fixed
+
+- `GET /api/llama/models` now maps `java.io.IOException` from llama.cpp discovery (including a refused loopback connection) to the existing client-safe `503 llama_cpp_unavailable` response.
+- `POST /api/turn` maps the same discovery failure during llama.cpp model validation to `503 llama_cpp_unavailable` before attempting to open an SSE stream.
+- Logs still contain only request ID, operation, result, and exception class; no response body or request content is logged.
+- `ApplicationTest` covers refused discovery for both routes and verifies an unknown llama.cpp model returns `404` with zero provider stream calls.
+
+### TDD evidence
+
+Red phase:
+
+```text
+./gradlew :server:test --tests de.aidadventure.server.ApplicationTest \
+  -x kotlinNpmInstall -x kotlinStoreYarnLock -x :server:processResources --console=plain
+
+24 tests completed, 2 failed
+ApplicationTest > llama turn maps a refused model discovery connection to service unavailable FAILED
+ApplicationTest > llama models maps a refused connection to service unavailable FAILED
+BUILD FAILED
+```
+
+Green phase:
+
+```text
+./gradlew :server:test --tests de.aidadventure.server.ApplicationTest \
+  -x kotlinNpmInstall -x kotlinStoreYarnLock -x :server:processResources --console=plain \
+  && git diff --check
+
+BUILD SUCCESSFUL in 3s
+```
+
+Full server verification:
+
+```text
+./gradlew :server:test \
+  -x kotlinNpmInstall -x kotlinStoreYarnLock -x :server:processResources --console=plain \
+  && git diff --check
+
+BUILD SUCCESSFUL in 3s
+```
+
+The generated JUnit XML reports 43 server tests with zero failures, errors, or skips, including all 24 `ApplicationTest` cases.

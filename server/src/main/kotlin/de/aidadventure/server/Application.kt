@@ -39,6 +39,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.flow.Flow
+import java.io.IOException
 import java.io.Writer
 import org.koin.dsl.module
 import org.koin.ktor.ext.get
@@ -116,6 +117,9 @@ fun Application.adventureModule(
             } catch (failure: RuntimeException) {
                 logger.warn("requestId={} operation=llama_models result=llama_cpp_unavailable cause={}", call.callId, failure.javaClass.simpleName)
                 call.respond(HttpStatusCode.ServiceUnavailable, ApiError("llama_cpp_unavailable", "The model service is unavailable."))
+            } catch (failure: IOException) {
+                logger.warn("requestId={} operation=llama_models result=llama_cpp_unavailable cause={}", call.callId, failure.javaClass.simpleName)
+                call.respond(HttpStatusCode.ServiceUnavailable, ApiError("llama_cpp_unavailable", "The model service is unavailable."))
             }
         }
         post("/api/turn") {
@@ -152,6 +156,10 @@ fun Application.adventureModule(
                             unavailableCode = "llama_cpp_unavailable",
                         )
                     } catch (failure: RuntimeException) {
+                        logger.warn("requestId={} operation=model_validation result=llama_cpp_unavailable cause={}", call.callId, failure.javaClass.simpleName)
+                        call.respond(HttpStatusCode.ServiceUnavailable, ApiError("llama_cpp_unavailable", "The model service is unavailable."))
+                        return@post
+                    } catch (failure: IOException) {
                         logger.warn("requestId={} operation=model_validation result=llama_cpp_unavailable cause={}", call.callId, failure.javaClass.simpleName)
                         call.respond(HttpStatusCode.ServiceUnavailable, ApiError("llama_cpp_unavailable", "The model service is unavailable."))
                         return@post
