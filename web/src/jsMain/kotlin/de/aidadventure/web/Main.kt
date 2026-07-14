@@ -91,7 +91,11 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
     }
 
     ReactHTML.main {
-        ReactHTML.h1 { +"AI Adventure" }
+        className = ClassName("app-shell")
+        ReactHTML.h1 {
+            className = ClassName("app-title")
+            +"AI Adventure"
+        }
         when (val current = view) {
             View.Library -> libraryView(
                 scenarios = scenarios,
@@ -163,7 +167,11 @@ private fun ChildrenBuilder.libraryView(
     onRefresh: () -> Unit,
 ) {
     ReactHTML.section {
-        ReactHTML.h2 { +"Your scenarios" }
+        className = ClassName("view-card")
+        ReactHTML.h2 {
+            className = ClassName("view-title")
+            +"Your scenarios"
+        }
         ReactHTML.input {
             type = "file".unsafeCast<web.html.InputType>()
             accept = ".md,.markdown,text/markdown"
@@ -171,13 +179,37 @@ private fun ChildrenBuilder.libraryView(
                 event.target.unsafeCast<HTMLInputElement>().files?.item(0)?.let(onImport)
             }
         }
-        importError?.let { ReactHTML.p { +it } }
-        ReactHTML.button { onClick = { onRefresh() }; +"Refresh library" }
-        if (scenarios.isEmpty()) ReactHTML.p { +"Import a Markdown scenario to begin." }
-        ReactHTML.ul {
+        importError?.let {
+            ReactHTML.p {
+                className = ClassName("status-error")
+                +it
+            }
+        }
+        ReactHTML.button {
+            className = ClassName("secondary-button")
+            onClick = { onRefresh() }
+            +"Refresh library"
+        }
+        if (scenarios.isEmpty()) {
+            ReactHTML.p {
+                className = ClassName("empty-state")
+                +"Import a Markdown scenario to begin."
+            }
+        }
+        ReactHTML.div {
+            className = ClassName("stack")
             scenarios.forEach { scenario ->
-                ReactHTML.li {
-                    ReactHTML.button { onClick = { onOpen(scenario) }; +scenario.name }
+                ReactHTML.button {
+                    className = ClassName("action-row")
+                    onClick = { onOpen(scenario) }
+                    ReactHTML.span {
+                        className = ClassName("action-row-title")
+                        +scenario.name
+                    }
+                    ReactHTML.span {
+                        className = ClassName("action-row-meta")
+                        +"Imported scenario"
+                    }
                 }
             }
         }
@@ -206,21 +238,72 @@ private val DetailView = FC<DetailViewProps> { props ->
     if (!sessionsLoaded && sessionError == null) loadSessions()
 
     ReactHTML.section {
-        ReactHTML.button { onClick = { props.onBack() }; +"Back to library" }
-        ReactHTML.h2 { +props.scenario.name }
-        ReactHTML.h3 { +"Choose a model for a new session" }
-        props.modelError?.let { ReactHTML.p { +it } }
-        ReactHTML.button { onClick = { props.onReloadModels() }; +"Reload models" }
-        ReactHTML.ul {
-            props.models.forEach { model ->
-                ReactHTML.li { ReactHTML.button { onClick = { props.onCreate(model) }; +"Start with $model" } }
+        className = ClassName("view-card")
+        ReactHTML.div {
+            className = ClassName("view-header")
+            ReactHTML.button {
+                className = ClassName("secondary-button")
+                onClick = { props.onBack() }
+                +"Back to library"
+            }
+            ReactHTML.h2 {
+                className = ClassName("view-title")
+                +props.scenario.name
             }
         }
-        ReactHTML.h3 { +"Saved sessions" }
-        sessionError?.let { ReactHTML.p { +it } }
-        ReactHTML.ul {
+        ReactHTML.h3 {
+            className = ClassName("section-title")
+            +"Choose a model for a new session"
+        }
+        props.modelError?.let {
+            ReactHTML.p {
+                className = ClassName("status-error")
+                +it
+            }
+        }
+        ReactHTML.button {
+            className = ClassName("secondary-button")
+            onClick = { props.onReloadModels() }
+            +"Reload models"
+        }
+        ReactHTML.div {
+            className = ClassName("stack")
+            props.models.forEach { model ->
+                ReactHTML.button {
+                    className = ClassName("action-row primary-button")
+                    onClick = { props.onCreate(model) }
+                    ReactHTML.span {
+                        className = ClassName("action-row-title")
+                        +"Start with $model"
+                    }
+                }
+            }
+        }
+        ReactHTML.h3 {
+            className = ClassName("section-title")
+            +"Saved sessions"
+        }
+        sessionError?.let {
+            ReactHTML.p {
+                className = ClassName("status-error")
+                +it
+            }
+        }
+        ReactHTML.div {
+            className = ClassName("stack")
             loadedSessions.forEach { session ->
-                ReactHTML.li { ReactHTML.button { onClick = { props.onResume(session) }; +session.title } }
+                ReactHTML.button {
+                    className = ClassName("action-row")
+                    onClick = { props.onResume(session) }
+                    ReactHTML.span {
+                        className = ClassName("action-row-title")
+                        +session.title
+                    }
+                    ReactHTML.span {
+                        className = ClassName("action-row-meta")
+                        +"${session.modelId} · ${session.messages.size} messages"
+                    }
+                }
             }
         }
     }
@@ -275,39 +358,79 @@ private val PlayView = FC<PlayViewProps> { props ->
     }
 
     ReactHTML.section {
-        ReactHTML.button { onClick = { props.onBack() }; +"Back to sessions" }
-        ReactHTML.h2 { +displayedSession.title }
-        ReactHTML.p { +"Model: ${displayedSession.modelId}" }
+        className = ClassName("view-card")
         ReactHTML.div {
-            displayedSession.messages.forEach { message ->
-                ReactHTML.p { +"${message.role}: ${message.content}" }
+            className = ClassName("view-header")
+            ReactHTML.button {
+                className = ClassName("secondary-button")
+                onClick = { props.onBack() }
+                +"Back to sessions"
+            }
+            ReactHTML.h2 {
+                className = ClassName("view-title")
+                +displayedSession.title
             }
         }
-        metrics?.let { renderMetrics(it) }
-        error?.let { ReactHTML.p { +it } }
-        ReactHTML.label {
-            htmlFor = "player-action".unsafeCast<web.dom.ElementId>()
-            +"Your action"
+        ReactHTML.p {
+            className = ClassName("metadata")
+            +"Model: ${displayedSession.modelId}"
         }
-        ReactHTML.textarea {
-            id = "player-action".unsafeCast<web.dom.ElementId>()
-            className = ClassName("action-input")
-            value = action
-            disabled = pending
-            placeholder = "What do you do?"
-            onChange = { event -> action = event.target.unsafeCast<HTMLTextAreaElement>().value }
-            onKeyDown = { event ->
-                val composing = event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>()
-                if (shouldSubmitOnEnter(event.key, event.shiftKey, composing, pending, action)) {
-                    event.preventDefault()
-                    submitAction()
+        ReactHTML.div {
+            className = ClassName("transcript")
+            displayedSession.messages.forEach { message ->
+                val player = message.role in setOf("player", "user")
+                ReactHTML.article {
+                    className = ClassName(if (player) "message message--player" else "message message--game-master")
+                    ReactHTML.span {
+                        className = ClassName("message-speaker")
+                        +(if (player) "You" else "Game master")
+                    }
+                    ReactHTML.p {
+                        className = ClassName("message-content")
+                        +message.content
+                    }
                 }
             }
         }
-        ReactHTML.button {
-            disabled = pending || action.isBlank()
-            onClick = { submitAction() }
-            +(if (pending) "Sending…" else "Send")
+        metrics?.let { renderMetrics(it) }
+        error?.let {
+            ReactHTML.p {
+                className = ClassName("status-error")
+                +it
+            }
+        }
+        ReactHTML.div {
+            className = ClassName("action-form")
+            ReactHTML.label {
+                className = ClassName("action-label")
+                htmlFor = "player-action".unsafeCast<web.dom.ElementId>()
+                +"Your action"
+            }
+            ReactHTML.p {
+                className = ClassName("input-hint")
+                +"Enter sends · Shift+Enter adds a new line"
+            }
+            ReactHTML.textarea {
+                id = "player-action".unsafeCast<web.dom.ElementId>()
+                className = ClassName("action-input")
+                value = action
+                disabled = pending
+                placeholder = "What do you do?"
+                onChange = { event -> action = event.target.unsafeCast<HTMLTextAreaElement>().value }
+                onKeyDown = { event ->
+                    val composing = event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>()
+                    if (shouldSubmitOnEnter(event.key, event.shiftKey, composing, pending, action)) {
+                        event.preventDefault()
+                        submitAction()
+                    }
+                }
+            }
+            ReactHTML.button {
+                className = ClassName("primary-button")
+                disabled = pending || action.isBlank()
+                onClick = { submitAction() }
+                +(if (pending) "Sending…" else "Send")
+            }
         }
     }
 }
@@ -318,7 +441,12 @@ private fun ChildrenBuilder.renderMetrics(metrics: TurnMetrics) {
         metrics.promptTokens?.let { "prompt tokens: $it" },
         metrics.cacheTokens?.let { "cache tokens: $it" },
     )
-    if (parts.isNotEmpty()) ReactHTML.p { +parts.joinToString(" · ") }
+    if (parts.isNotEmpty()) {
+        ReactHTML.p {
+            className = ClassName("metadata")
+            +parts.joinToString(" · ")
+        }
+    }
 }
 
 private fun clientMessage(cause: Throwable): String = cause.message ?: "Something went wrong. Please try again."
