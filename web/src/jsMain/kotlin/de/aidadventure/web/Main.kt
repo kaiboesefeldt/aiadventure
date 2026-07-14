@@ -285,6 +285,10 @@ private val PlayView = FC<PlayViewProps> { props ->
         }
         metrics?.let { renderMetrics(it) }
         error?.let { ReactHTML.p { +it } }
+        ReactHTML.label {
+            htmlFor = "player-action".unsafeCast<web.dom.ElementId>()
+            +"Your action"
+        }
         ReactHTML.textarea {
             id = "player-action".unsafeCast<web.dom.ElementId>()
             className = ClassName("action-input")
