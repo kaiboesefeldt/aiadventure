@@ -20,6 +20,12 @@ interface OllamaGateway {
     fun play(request: TurnRequest): TurnResponse
 }
 
+internal fun defaultRequestParameters(keepAliveSeconds: Int): OllamaChatRequestParameters =
+    OllamaChatRequestParameters.builder()
+        .keepAlive(keepAliveSeconds)
+        .think(false)
+        .build()
+
 class LangChain4jOllamaGateway(
     private val promptFactory: PromptFactory = PromptFactory(),
     private val baseUrl: String = System.getenv("OLLAMA_BASE_URL") ?: DEFAULT_BASE_URL,
@@ -42,9 +48,7 @@ class LangChain4jOllamaGateway(
         val response = OllamaChatModel.builder()
             .baseUrl(normalizedBaseUrl)
             .modelName(request.modelId)
-            .defaultRequestParameters(
-                OllamaChatRequestParameters.builder().keepAlive(keepAliveSeconds).build(),
-            )
+            .defaultRequestParameters(defaultRequestParameters(keepAliveSeconds))
             .build()
             .chat(promptFactory.build(request))
 
