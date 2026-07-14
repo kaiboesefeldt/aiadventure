@@ -15,10 +15,11 @@ resources, and therefore includes the browser files in the server runtime
 classpath.  This keeps the runnable server artifact self-contained and avoids a
 runtime dependency on a sibling build directory or a second process.
 
-Ktor serves those classpath resources at `/`.  The existing `/api/health`,
-`/api/models`, and `/api/turn` routes remain unchanged and are registered before
-the static UI route.  The UI entry document is returned for `/`; browser assets
-are returned from the same resource bundle.  Missing static assets remain 404
+Ktor serves the UI entry document explicitly at `/` and the remaining classpath
+resources from the same bundle at `/`, with static-resource index fallback
+disabled.  The existing `/api/health`, `/api/models`, and `/api/turn` routes
+remain unchanged and are registered before the static UI route.  Browser assets
+are returned from the resource bundle; missing static assets remain 404
 responses and never fall through to an API handler.
 
 ## User Workflow
