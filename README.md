@@ -71,6 +71,7 @@ history, then the new player action.
 The UI displays whichever optional metrics the server supplies. The current
 LangChain4j/Ollama gateway exposes input-token usage when available, but does
 not receive total-duration or prompt-cache-token values from that integration;
-those fields therefore remain absent. Do not infer a prompt-cache hit from the
-presence of a second turn. Verifying cache-token reuse requires an Ollama
-adapter that exposes cache metrics (or separate Ollama request instrumentation).
+those fields therefore remain `null` in the API response and are not displayed
+by the UI. Do not infer a prompt-cache hit from the presence of a second turn.
+Verifying cache-token reuse requires an Ollama adapter that exposes cache
+metrics (or separate Ollama request instrumentation).
