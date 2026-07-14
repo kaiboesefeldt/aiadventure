@@ -1,0 +1,78 @@
+# Task 6 Report: llama.cpp end-to-end documentation and verification
+
+## Status
+
+Updated the README with the llama.cpp startup and connection flow, then
+completed the required automated verification. No production source files were
+changed.
+
+## Documentation
+
+- Documents the exact loopback startup command:
+
+  ```bash
+  llama-server --host 127.0.0.1 --port 8081 --model /absolute/path/to/model.gguf
+  ```
+
+- Corrects application startup to use `./gradlew :server:run` and
+  `./gradlew :web:browserDevelopmentRun` in separate terminals, with the
+  browser client at `http://127.0.0.1:8088/`.
+- Explains that the first **Check llama.cpp** click discovers a model and
+  disables the port, while the second, model-named button click creates and
+  starts the session.
+- Explains that reopening a stored llama.cpp session returns to the detail view
+  with its stored port editable before reconnecting.
+
+## Automated verification
+
+```text
+./gradlew check
+BUILD SUCCESSFUL in 10s
+27 actionable tasks: 5 executed, 22 up-to-date
+```
+
+The successful check included the server JVM test task, Kotlin/JS test
+compilation, browser test task, and production browser webpack task. It emitted
+the existing Kotlin `kotlin-js` deprecation warning only; no Yarn contention or
+test failure occurred.
+
+## Local runtime verification
+
+Started the application processes only for this verification:
+
+```text
+./gradlew :server:run
+curl -fsS http://127.0.0.1:8080/api/health
+{"status":"ok"}
+
+./gradlew :web:browserDevelopmentRun
+curl -fsSI http://127.0.0.1:8088/
+HTTP/1.1 200 OK
+```
+
+No `llama-server` was available on `127.0.0.1:8081`: a direct
+`GET /v1/models` probe was refused and no listener existed on that port. The
+conditional `GET /api/llama/models?port=8081` discovery check and the
+llama.cpp-dependent browser flow therefore could not be run. This is an
+environmental limitation, not a code or test failure.
+
+## Final audit
+
+```text
+git diff --check
+# no output
+
+ss -ltnpe | rg ':8080|:8081|:8088' || true
+# no output
+```
+
+Both verification servers were stopped with Ctrl-C. `./gradlew --stop` then
+stopped the Gradle daemon started during verification. No agent-started listener
+remains on ports 8080, 8081, or 8088.
+
+## Concern
+
+The only unperformed validation is the real llama.cpp discovery, two-click
+session start, action streaming, and editable-port resume sequence. Run it once
+with a local `llama-server` on `127.0.0.1:8081`; the README now provides the
+exact startup and browser steps.
