@@ -153,9 +153,9 @@ class ApplicationTest {
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals(ContentType.Text.EventStream, response.contentType()?.withoutParameters())
         assertEquals(
-            "event: token\\ndata: {\"text\":\"The \"}\\n\\n" +
-                "event: token\\ndata: {\"text\":\"door opens.\"}\\n\\n" +
-                "event: done\\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":12,\"cacheTokens\":null}}\\n\\n",
+            "event: token\ndata: {\"text\":\"The \"}\n\n" +
+                "event: token\ndata: {\"text\":\"door opens.\"}\n\n" +
+                "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":12,\"cacheTokens\":null}}\n\n",
             response.bodyAsText(),
         )
     }
@@ -172,8 +172,8 @@ class ApplicationTest {
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals(
-            "event: token\\ndata: {\"text\":\"The \"}\\n\\n" +
-                "event: error\\ndata: {\"code\":\"ollama_unavailable\",\"message\":\"The model service is unavailable.\"}\\n\\n",
+            "event: token\ndata: {\"text\":\"The \"}\n\n" +
+                "event: error\ndata: {\"code\":\"ollama_unavailable\",\"message\":\"The model service is unavailable.\"}\n\n",
             response.bodyAsText(),
         )
     }

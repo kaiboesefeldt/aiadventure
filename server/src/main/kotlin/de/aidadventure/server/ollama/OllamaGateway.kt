@@ -12,6 +12,7 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import de.aidadventure.server.model.TurnStreamEvent
@@ -56,11 +57,11 @@ class LangChain4jOllamaGateway(
             .build()
             .chat(promptFactory.build(request), object : StreamingChatResponseHandler {
                 override fun onPartialResponse(partialResponse: String) {
-                    trySend(TurnStreamEvent.Token(partialResponse))
+                    trySendOrClose(TurnStreamEvent.Token(partialResponse))
                 }
 
                 override fun onCompleteResponse(completeResponse: ChatResponse) {
-                    trySend(
+                    trySendOrClose(
                         TurnStreamEvent.Done(
                             TurnMetrics(
                                 totalDurationMs = null,
@@ -78,6 +79,13 @@ class LangChain4jOllamaGateway(
             })
 
         awaitClose()
+    }
+
+    private fun ProducerScope<TurnStreamEvent>.trySendOrClose(event: TurnStreamEvent) {
+        val result = trySend(event)
+        if (result.isFailure) {
+            close(result.exceptionOrNull() ?: IllegalStateException("Unable to deliver Ollama stream event."))
+        }
     }
 
     @Serializable

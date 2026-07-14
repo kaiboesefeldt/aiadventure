@@ -169,7 +169,7 @@ data class ApiError(val code: String, val message: String)
 private val eventJson = Json { encodeDefaults = true }
 
 private fun Writer.sse(event: String, data: String) {
-    write("event: $event\\ndata: $data\\n\\n")
+    write("event: $event\ndata: $data\n\n")
     flush()
 }
 
