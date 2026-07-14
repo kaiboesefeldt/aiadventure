@@ -2,6 +2,7 @@ package de.aidadventure.web.persistence
 
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
+import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
@@ -80,26 +81,28 @@ private class RepositoryStore<T>(
 ) {
     suspend fun list(): List<T> {
         val transaction = transaction("readonly")
-        val values = awaitRequest(transaction.objectStore(storeName).getAll(), "listing $storeName") { result ->
+        return awaitRequestAndTransaction(transaction, "listing $storeName", {
+            transaction.objectStore(storeName).getAll()
+        }) { result ->
             result.unsafeCast<Array<dynamic>>().map(::decode)
         }
-        awaitTransaction(transaction, "listing $storeName")
-        return values
     }
 
     suspend fun save(value: T) {
+        val encoded = encode(value)
         val transaction = transaction("readwrite")
-        awaitRequest(transaction.objectStore(storeName).put(encode(value)), "saving $storeName") { Unit }
-        awaitTransaction(transaction, "saving $storeName")
+        awaitRequestAndTransaction(transaction, "saving $storeName", {
+            transaction.objectStore(storeName).put(encoded)
+        }) { Unit }
     }
 
     suspend fun find(id: String): T? {
         val transaction = transaction("readonly")
-        val value = awaitRequest(transaction.objectStore(storeName).get(id), "reading $storeName") { result ->
+        return awaitRequestAndTransaction(transaction, "reading $storeName", {
+            transaction.objectStore(storeName).get(id)
+        }) { result ->
             if (result == null || js("result === undefined") as Boolean) null else decode(result)
         }
-        awaitTransaction(transaction, "reading $storeName")
-        return value
     }
 
     private fun transaction(mode: String): dynamic = try {
@@ -128,16 +131,55 @@ private suspend fun <T> awaitRequest(request: dynamic, operation: String, transf
         }
     }
 
-private suspend fun awaitTransaction(transaction: dynamic, operation: String) {
-    suspendCoroutine<Unit> { continuation ->
-        transaction.oncomplete = { _: dynamic -> continuation.resume(Unit); null }
+internal suspend fun <T> awaitRequestAndTransaction(
+    transaction: dynamic,
+    operation: String,
+    request: () -> dynamic,
+    transform: (dynamic) -> T,
+): T {
+    val transactionObserver = TransactionObserver(transaction, operation)
+    val requestResult = try {
+        Result.success(awaitRequest(request(), operation, transform))
+    } catch (cause: Throwable) {
+        Result.failure(cause)
+    }
+
+    try {
+        transactionObserver.awaitCompletion()
+    } catch (transactionFailure: Throwable) {
+        requestResult.exceptionOrNull()?.let { throw it }
+        throw transactionFailure
+    }
+    return requestResult.getOrThrow()
+}
+
+private class TransactionObserver(transaction: dynamic, operation: String) {
+    private var completion: Result<Unit>? = null
+    private var continuation: Continuation<Unit>? = null
+
+    init {
+        transaction.oncomplete = { _: dynamic -> finish(Result.success(Unit)); null }
         transaction.onerror = { _: dynamic ->
-            continuation.resumeWithException(PersistenceError.DatabaseFailure(operation, transaction.error as? Throwable))
+            finish(Result.failure(PersistenceError.DatabaseFailure(operation, transaction.error as? Throwable)))
             null
         }
         transaction.onabort = { _: dynamic ->
-            continuation.resumeWithException(PersistenceError.DatabaseFailure(operation, transaction.error as? Throwable))
+            finish(Result.failure(PersistenceError.DatabaseFailure(operation, transaction.error as? Throwable)))
             null
+        }
+    }
+
+    suspend fun awaitCompletion() {
+        suspendCoroutine<Unit> { waiter ->
+            completion?.let { waiter.resumeWith(it) } ?: run { continuation = waiter }
+        }
+    }
+
+    private fun finish(result: Result<Unit>) {
+        completion = result
+        continuation?.let { waiter ->
+            continuation = null
+            waiter.resumeWith(result)
         }
     }
 }
