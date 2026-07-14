@@ -16,15 +16,17 @@ ollama serve
 ollama pull example-model
 ```
 
-In separate terminals, start the API and browser client:
+Start the complete application:
 
 ```bash
 ./gradlew :server:run
-./gradlew :web:browserDevelopmentRun
 ```
 
-The API listens only on `127.0.0.1:8080` by default. The browser development server
-always listens on `http://localhost:8088`, which is the API's development CORS origin.
+Open [http://127.0.0.1:8080/](http://127.0.0.1:8080/) in the browser. The server
+serves the browser UI and the API from this same origin. Stop the application with
+Ctrl-C in the Gradle terminal.
+
+The server listens only on `127.0.0.1:8080` by default.
 Set `ADVENTURE_EXPOSE_LAN=true` only when you intentionally need the API reachable on
 your LAN. Do not use that setting on an untrusted network.
 
@@ -82,13 +84,12 @@ curl -N -X POST http://localhost:8080/api/turn \
   --data '{"modelId":"YOUR_MODEL","scenarioMarkdown":"# Fog Harbor","history":[],"playerAction":"look"}'
 ```
 
-Start the browser client with `./gradlew :web:browserDevelopmentRun`, open the
-local URL printed by Gradle, import `harbor.md`, open **Fog Harbor**, choose a
-model, and start a session. Send a short action, reload the page, reopen the
-scenario, resume the saved session, then send a second short action without
-changing the scenario or model. Scenarios and sessions are stored in this
-browser's IndexedDB, so they persist across a reload of the same browser
-profile; the server has no session storage.
+With `./gradlew :server:run` running, open http://127.0.0.1:8080/, import
+`harbor.md`, open **Fog Harbor**, choose a model, and start a session. Send a
+short action, reload the page, reopen the scenario, resume the saved session,
+then send a second short action without changing the scenario or model.
+Scenarios and sessions are stored in this browser's IndexedDB, so they persist
+across a reload of the same browser profile; the server has no session storage.
 
 For a request-level check, use the browser's Network panel: both `POST
 /api/turn` requests contain the same `scenarioMarkdown` and `modelId`; the
