@@ -1,6 +1,6 @@
 # AI Adventure
 
-A local, Ollama-backed interactive adventure application. The JVM server provides the API; the Kotlin/JS React client runs in the browser.
+A local-LLM interactive adventure application with Ollama and OpenAI-compatible llama.cpp alternatives. The JVM server provides the API; the Kotlin/JS React client runs in the browser.
 
 ## Prerequisites
 

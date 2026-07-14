@@ -42,4 +42,17 @@ class LlamaCppConnectionStateTest {
         assertFalse(failed.startOnClick)
         assertFalse(canStartLlamaCppSession(failed, pending = false))
     }
+
+    @Test
+    fun `rejects a discovery result after navigating away from its scenario`() {
+        val guard = LlamaCppDiscoveryGuard()
+        guard.activate("scenario-a")
+        val requestForScenarioA = guard.begin("scenario-a")
+
+        guard.activate("scenario-b")
+        assertFalse(guard.accepts(requestForScenarioA))
+
+        guard.activate(null)
+        assertFalse(guard.accepts(requestForScenarioA))
+    }
 }

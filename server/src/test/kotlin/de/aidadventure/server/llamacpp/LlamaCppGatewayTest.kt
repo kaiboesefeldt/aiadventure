@@ -130,6 +130,51 @@ class LlamaCppGatewayTest {
     }
 
     @Test
+    fun `forwards standalone whitespace and newline SSE content fragments`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
+        val executor = Executors.newSingleThreadExecutor()
+        server.executor = executor
+        server.createContext("/v1/chat/completions") { exchange ->
+            exchange.requestBody.close()
+            exchange.responseHeaders.add("Content-Type", "text/event-stream")
+            val body = """
+                data: {"choices":[{"delta":{"content":"Hello"}}]}
+
+                data: {"choices":[{"delta":{"content":" "}}]}
+
+                data: {"choices":[{"delta":{"content":"\n"}}]}
+
+                data: {"choices":[{"delta":{"content":"world"}}]}
+
+                data: [DONE]
+
+            """.trimIndent()
+            exchange.sendResponseHeaders(200, 0)
+            exchange.responseBody.bufferedWriter().use { writer ->
+                writer.write(body)
+                writer.flush()
+            }
+        }
+        server.start()
+
+        try {
+            assertEquals(
+                listOf(
+                    TurnStreamEvent.Token("Hello"),
+                    TurnStreamEvent.Token(" "),
+                    TurnStreamEvent.Token("\n"),
+                    TurnStreamEvent.Token("world"),
+                    TurnStreamEvent.Done(TurnMetrics(null, null, null)),
+                ),
+                LlamaCppGateway(promptFactory = PromptFactory()).stream(request(server.address.port)).toList(),
+            )
+        } finally {
+            server.stop(0)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
     fun `fails when the upstream stream ends before DONE`() = runBlocking {
         val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
         val executor = Executors.newSingleThreadExecutor()

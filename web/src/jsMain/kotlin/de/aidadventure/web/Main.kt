@@ -32,6 +32,7 @@ import web.html.HTMLInputElement
 import web.html.HTMLTextAreaElement
 
 private val scope = MainScope()
+private val llamaCppDiscoveryGuard = LlamaCppDiscoveryGuard()
 
 fun main() {
     scope.launch {
@@ -76,16 +77,19 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
     var models by useState<List<String>>(emptyList())
     var modelLoadError by useState<String?>(null)
     var llamaCppConnection by useState(LlamaCppConnectionState.initial())
+    var llamaCppPending by useState(false)
 
     fun refreshScenarios() {
         scope.launch { scenarios = props.scenarioRepository.list() }
     }
 
     fun openScenario(scenario: Scenario) {
+        llamaCppDiscoveryGuard.activate(scenario.id)
         view = View.Detail(scenario)
         models = emptyList()
         modelLoadError = null
         llamaCppConnection = LlamaCppConnectionState.initial()
+        llamaCppPending = false
         scope.launch {
             runCatching { props.api.models() }
                 .onSuccess { models = it }
@@ -131,8 +135,13 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                 api = props.api
                 llamaCppConnection = llamaCppConnection
                 llamaCppSession = current.llamaCppSession
+                llamaCppPending = llamaCppPending
                 sessions = { props.sessionRepository.list().filter { it.scenarioId == current.scenario.id } }
-                onBack = { view = View.Library }
+                onBack = {
+                    llamaCppDiscoveryGuard.activate(null)
+                    llamaCppPending = false
+                    view = View.Library
+                }
                 onCreate = { model ->
                     scope.launch {
                         val time = now()
@@ -146,6 +155,8 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                             updatedAt = time,
                         )
                         props.sessionRepository.save(session)
+                        llamaCppDiscoveryGuard.activate(null)
+                        llamaCppPending = false
                         view = View.Play(current.scenario, session)
                     }
                 }
@@ -173,6 +184,8 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                             props.sessionRepository.save(session)
                             session
                         }.onSuccess { session ->
+                            llamaCppDiscoveryGuard.activate(null)
+                            llamaCppPending = false
                             view = View.Play(current.scenario, session)
                             onComplete(null)
                         }.onFailure(onComplete)
@@ -180,12 +193,17 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                 }
                 onResume = { session ->
                     if (session.provider == ModelProvider.LLAMA_CPP) {
+                        llamaCppDiscoveryGuard.activate(current.scenario.id)
+                        llamaCppPending = false
                         llamaCppConnection = LlamaCppConnectionState.initial(session.llamaCppPort, session.modelId)
                         view = View.Detail(current.scenario, session)
                     } else {
+                        llamaCppDiscoveryGuard.activate(null)
+                        llamaCppPending = false
                         view = View.Play(current.scenario, session)
                     }
                 }
+                onLlamaCppPendingChanged = { pending -> llamaCppPending = pending }
                 onReloadModels = { openScenario(current.scenario) }
             }
 
@@ -194,7 +212,11 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                 session = current.session
                 api = props.api
                 sessions = props.sessionRepository
-                onBack = { view = View.Detail(current.scenario) }
+                onBack = {
+                    llamaCppDiscoveryGuard.activate(current.scenario.id)
+                    llamaCppPending = false
+                    view = View.Detail(current.scenario)
+                }
                 onSessionChanged = { session -> view = View.Play(current.scenario, session) }
             }
         }
@@ -265,12 +287,14 @@ private external interface DetailViewProps : Props {
     var api: AdventureApi
     var llamaCppConnection: LlamaCppConnectionState
     var llamaCppSession: GameSession?
+    var llamaCppPending: Boolean
     var sessions: suspend () -> List<GameSession>
     var onBack: () -> Unit
     var onCreate: (String) -> Unit
     var onLlamaCppConnectionChanged: (LlamaCppConnectionState) -> Unit
     var onLlamaCppStart: (String, Int, (Throwable?) -> Unit) -> Unit
     var onResume: (GameSession) -> Unit
+    var onLlamaCppPendingChanged: (Boolean) -> Unit
     var onReloadModels: () -> Unit
 }
 
@@ -278,7 +302,6 @@ private val DetailView = FC<DetailViewProps> { props ->
     var loadedSessions by useState<List<GameSession>>(emptyList())
     var sessionsLoaded by useState(false)
     var sessionError by useState<String?>(null)
-    var llamaCppPending by useState(false)
     fun loadSessions() = scope.launch {
         sessionsLoaded = true
         runCatching { props.sessions() }.onSuccess { loadedSessions = it }.onFailure { sessionError = clientMessage(it) }
@@ -342,7 +365,7 @@ private val DetailView = FC<DetailViewProps> { props ->
                 id = "llama-cpp-port".unsafeCast<web.dom.ElementId>()
                 type = "number".unsafeCast<web.html.InputType>()
                 value = props.llamaCppConnection.portText
-                disabled = !props.llamaCppConnection.portEditable || llamaCppPending
+                disabled = !props.llamaCppConnection.portEditable || props.llamaCppPending
                 onChange = { event ->
                     props.onLlamaCppConnectionChanged(
                         props.llamaCppConnection.withPortText(event.target.unsafeCast<HTMLInputElement>().value),
@@ -357,19 +380,19 @@ private val DetailView = FC<DetailViewProps> { props ->
             }
             ReactHTML.button {
                 className = ClassName("primary-button")
-                disabled = llamaCppPending
+                disabled = props.llamaCppPending
                 onClick = click@{
-                    if (llamaCppPending) return@click
+                    if (props.llamaCppPending) return@click
                     val port = props.llamaCppConnection.portText.toIntOrNull()
                     if (port == null || port !in 1..65535) {
                         props.onLlamaCppConnectionChanged(
                             props.llamaCppConnection.failed("Enter a valid llama.cpp port."),
                         )
-                    } else if (canStartLlamaCppSession(props.llamaCppConnection, llamaCppPending)) {
-                        llamaCppPending = true
+                    } else if (canStartLlamaCppSession(props.llamaCppConnection, props.llamaCppPending)) {
+                        props.onLlamaCppPendingChanged(true)
                         try {
                             props.onLlamaCppStart(props.llamaCppConnection.modelId, port) { failure ->
-                                llamaCppPending = false
+                                props.onLlamaCppPendingChanged(false)
                                 if (failure != null) {
                                     props.onLlamaCppConnectionChanged(
                                         props.llamaCppConnection.failed(clientMessage(failure)),
@@ -377,29 +400,35 @@ private val DetailView = FC<DetailViewProps> { props ->
                                 }
                             }
                         } catch (failure: Throwable) {
-                            llamaCppPending = false
+                            props.onLlamaCppPendingChanged(false)
                             props.onLlamaCppConnectionChanged(
                                 props.llamaCppConnection.failed(clientMessage(failure)),
                             )
                         }
                     } else {
-                        llamaCppPending = true
+                        val discovery = llamaCppDiscoveryGuard.begin(props.scenario.id)
+                        props.onLlamaCppPendingChanged(true)
                         props.onLlamaCppConnectionChanged(props.llamaCppConnection.withoutError())
                         scope.launch {
                             runCatching {
                                 props.api.llamaCppModels(port).firstOrNull()
                                     ?: throw IllegalStateException("No llama.cpp models are available on this port.")
                             }.onSuccess { model ->
-                                props.onLlamaCppConnectionChanged(props.llamaCppConnection.connected(model))
+                                if (llamaCppDiscoveryGuard.accepts(discovery)) {
+                                    props.onLlamaCppConnectionChanged(props.llamaCppConnection.connected(model))
+                                    props.onLlamaCppPendingChanged(false)
+                                }
                             }.onFailure { failure ->
-                                props.onLlamaCppConnectionChanged(props.llamaCppConnection.failed(clientMessage(failure)))
+                                if (llamaCppDiscoveryGuard.accepts(discovery)) {
+                                    props.onLlamaCppConnectionChanged(props.llamaCppConnection.failed(clientMessage(failure)))
+                                    props.onLlamaCppPendingChanged(false)
+                                }
                             }
-                            llamaCppPending = false
                         }
                     }
                 }
                 +(when {
-                    llamaCppPending -> "Checking llama.cpp…"
+                    props.llamaCppPending -> "Checking llama.cpp…"
                     props.llamaCppConnection.startOnClick -> "Start with ${props.llamaCppConnection.modelId}"
                     else -> "Check llama.cpp"
                 })
@@ -595,6 +624,26 @@ internal fun shouldSubmitOnEnter(
 
 internal fun canStartLlamaCppSession(connection: LlamaCppConnectionState, pending: Boolean): Boolean =
     !pending && connection.startOnClick
+
+internal class LlamaCppDiscoveryGuard {
+    private var activeScenarioId: String? = null
+    private var generation = 0
+
+    fun activate(scenarioId: String?) {
+        activeScenarioId = scenarioId
+        generation++
+    }
+
+    fun begin(scenarioId: String): Request {
+        activeScenarioId = scenarioId
+        return Request(scenarioId, ++generation)
+    }
+
+    fun accepts(request: Request): Boolean =
+        request.generation == generation && request.scenarioId == activeScenarioId
+
+    internal data class Request(val scenarioId: String, val generation: Int)
+}
 
 internal data class LlamaCppConnectionState(
     val portText: String,

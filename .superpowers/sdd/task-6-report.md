@@ -79,3 +79,25 @@ The only unperformed validation is the real llama.cpp discovery, two-click
 session start, action streaming, and editable-port resume sequence. Run it once
 with a local `llama-server` on `127.0.0.1:8081`; the README now provides the
 exact startup and browser steps.
+
+## Final review follow-up (2026-07-15)
+
+Added regressions for whitespace/newline llama.cpp SSE fragments and stale
+llama.cpp discovery after navigation. The current change also updates the
+opening README description for both local providers.
+
+Available verification:
+
+```text
+./gradlew :web:browserTest --tests de.aidadventure.web.LlamaCppConnectionStateTest --console=plain
+BUILD SUCCESSFUL in 7s
+18 actionable tasks: 1 executed, 17 up-to-date
+```
+
+The whitespace regression was red before removing the production
+`isNotBlank()` filter. Its first green run exposed a test-fixture escape issue
+(`"\\n"` decoded as a literal backslash and `n`); the fixture was corrected to
+the JSON newline escape. The immediate confirmation command was deliberately
+interrupted at the user's request to stop stalled Gradle work, so no final
+server-test, `./gradlew check`, or production-webpack success is claimed for
+this follow-up.

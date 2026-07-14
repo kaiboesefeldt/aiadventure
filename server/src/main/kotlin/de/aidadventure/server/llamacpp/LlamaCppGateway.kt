@@ -98,7 +98,6 @@ class LlamaCppGateway(
                             throw IllegalStateException("llama.cpp chat completion returned an error.")
                         }
                         chunk.choices.firstOrNull()?.delta?.content
-                            ?.takeIf { it.isNotBlank() }
                             ?.let { token -> send(TurnStreamEvent.Token(token)) }
                     }
                     if (!completed) {
