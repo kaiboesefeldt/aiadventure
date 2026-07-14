@@ -33,6 +33,7 @@ import web.html.HTMLTextAreaElement
 
 private val scope = MainScope()
 private val llamaCppDiscoveryGuard = LlamaCppDiscoveryGuard()
+private val llamaCppStartGuard = LlamaCppStartGuard()
 
 fun main() {
     scope.launch {
@@ -85,6 +86,7 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
 
     fun openScenario(scenario: Scenario) {
         llamaCppDiscoveryGuard.activate(scenario.id)
+        llamaCppStartGuard.invalidate()
         view = View.Detail(scenario)
         models = emptyList()
         modelLoadError = null
@@ -139,10 +141,12 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                 sessions = { props.sessionRepository.list().filter { it.scenarioId == current.scenario.id } }
                 onBack = {
                     llamaCppDiscoveryGuard.activate(null)
+                    llamaCppStartGuard.invalidate()
                     llamaCppPending = false
                     view = View.Library
                 }
                 onCreate = { model ->
+                    llamaCppStartGuard.invalidate()
                     scope.launch {
                         val time = now()
                         val session = GameSession(
@@ -162,6 +166,7 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                 }
                 onLlamaCppConnectionChanged = { connection -> llamaCppConnection = connection }
                 onLlamaCppStart = { model, port, onComplete ->
+                    val start = llamaCppStartGuard.begin()
                     scope.launch {
                         runCatching {
                             val time = now()
@@ -184,14 +189,22 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                             props.sessionRepository.save(session)
                             session
                         }.onSuccess { session ->
-                            llamaCppDiscoveryGuard.activate(null)
-                            llamaCppPending = false
-                            view = View.Play(current.scenario, session)
-                            onComplete(null)
-                        }.onFailure(onComplete)
+                            if (llamaCppStartGuard.accepts(start)) {
+                                llamaCppDiscoveryGuard.activate(null)
+                                llamaCppStartGuard.invalidate()
+                                llamaCppPending = false
+                                view = View.Play(current.scenario, session)
+                                onComplete(null)
+                            }
+                        }.onFailure { failure ->
+                            if (llamaCppStartGuard.accepts(start)) {
+                                onComplete(failure)
+                            }
+                        }
                     }
                 }
                 onResume = { session ->
+                    llamaCppStartGuard.invalidate()
                     if (session.provider == ModelProvider.LLAMA_CPP) {
                         llamaCppDiscoveryGuard.activate(current.scenario.id)
                         llamaCppPending = false
@@ -214,6 +227,7 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                 sessions = props.sessionRepository
                 onBack = {
                     llamaCppDiscoveryGuard.activate(current.scenario.id)
+                    llamaCppStartGuard.invalidate()
                     llamaCppPending = false
                     view = View.Detail(current.scenario)
                 }
@@ -624,6 +638,20 @@ internal fun shouldSubmitOnEnter(
 
 internal fun canStartLlamaCppSession(connection: LlamaCppConnectionState, pending: Boolean): Boolean =
     !pending && connection.startOnClick
+
+internal class LlamaCppStartGuard {
+    private var generation = 0
+
+    fun begin(): Request = Request(++generation)
+
+    fun invalidate() {
+        generation++
+    }
+
+    fun accepts(request: Request): Boolean = request.generation == generation
+
+    internal data class Request(val generation: Int)
+}
 
 internal class LlamaCppDiscoveryGuard {
     private var activeScenarioId: String? = null
