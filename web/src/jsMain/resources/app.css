@@ -15,7 +15,7 @@
 
 * { box-sizing: border-box; }
 
-body { margin: 0; min-width: 320px; background: var(--canvas); line-height: 1.5; }
+body { margin: 0; background: var(--canvas); line-height: 1.5; }
 
 button, input, textarea { font: inherit; }
 
