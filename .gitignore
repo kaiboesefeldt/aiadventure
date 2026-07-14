@@ -3,6 +3,7 @@ build/
 **/build/
 .idea/
 kotlin-js-store/
+.kotlin/
 .yarn-cache/
 .env
 .env.*

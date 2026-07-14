@@ -6,6 +6,7 @@ import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.ollama.LangChain4jOllamaGateway
 import de.aidadventure.server.ollama.OllamaGateway
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.call
@@ -14,6 +15,8 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
+import io.ktor.server.plugins.callid.CallId
+import io.ktor.server.plugins.callid.callId
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
@@ -25,18 +28,41 @@ import kotlinx.serialization.Serializable
 import org.koin.dsl.module
 import org.koin.ktor.ext.get
 import org.koin.ktor.plugin.Koin
+import org.slf4j.LoggerFactory
+import java.util.UUID
 
 fun main() {
-    val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
-    embeddedServer(Netty, port = port, host = "0.0.0.0", module = Application::adventureModule).start(wait = true)
+    val config = ServerRuntimeConfig.from(System.getenv())
+    embeddedServer(Netty, port = config.port, host = config.host, module = Application::adventureModule).start(wait = true)
+}
+
+data class ServerRuntimeConfig(val host: String, val port: Int) {
+    companion object {
+        fun from(environment: Map<String, String>): ServerRuntimeConfig {
+            val exposeLan = environment["ADVENTURE_EXPOSE_LAN"] ?: "false"
+            require(exposeLan == "true" || exposeLan == "false") {
+                "ADVENTURE_EXPOSE_LAN must be either true or false."
+            }
+            return ServerRuntimeConfig(
+                host = if (exposeLan == "true") "0.0.0.0" else "127.0.0.1",
+                port = environment["PORT"]?.toIntOrNull() ?: 8080,
+            )
+        }
+    }
 }
 
 fun Application.adventureModule(
     gateway: OllamaGateway = LangChain4jOllamaGateway(),
     clock: () -> Long = System::currentTimeMillis,
 ) {
+    val logger = LoggerFactory.getLogger("de.aidadventure.server.AdventureApi")
     val modelCatalog = ModelCatalog(gateway, clock)
     install(ContentNegotiation) { json() }
+    install(CallId) {
+        header(HttpHeaders.XRequestId)
+        generate { UUID.randomUUID().toString() }
+        verify { it.isNotBlank() }
+    }
     install(CORS) {
         allowHost("localhost:8088", schemes = listOf("http"))
     }
@@ -58,7 +84,8 @@ fun Application.adventureModule(
         get("/api/models") {
             try {
                 call.respond(ModelsResponse(modelCatalog.availableModels()))
-            } catch (_: RuntimeException) {
+            } catch (failure: RuntimeException) {
+                logger.warn("requestId={} operation=models result=ollama_unavailable cause={}", call.callId, failure.javaClass.simpleName)
                 call.respond(HttpStatusCode.ServiceUnavailable, ApiError("ollama_unavailable", "The model service is unavailable."))
             }
         }
@@ -71,7 +98,8 @@ fun Application.adventureModule(
 
             val models = try {
                 modelCatalog.availableModels()
-            } catch (_: RuntimeException) {
+            } catch (failure: RuntimeException) {
+                logger.warn("requestId={} operation=model_validation result=ollama_unavailable cause={}", call.callId, failure.javaClass.simpleName)
                 call.respond(HttpStatusCode.ServiceUnavailable, ApiError("ollama_unavailable", "The model service is unavailable."))
                 return@post
             }
@@ -82,7 +110,8 @@ fun Application.adventureModule(
 
             try {
                 call.respond(gateway.play(request))
-            } catch (_: RuntimeException) {
+            } catch (failure: RuntimeException) {
+                logger.warn("requestId={} operation=turn result=ollama_unavailable cause={}", call.callId, failure.javaClass.simpleName)
                 call.respond(HttpStatusCode.ServiceUnavailable, ApiError("ollama_unavailable", "The model service is unavailable."))
             }
         }

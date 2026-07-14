@@ -8,6 +8,7 @@ import de.aidadventure.server.ollama.OllamaGateway
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.post
+import io.ktor.client.request.header
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
@@ -17,6 +18,7 @@ import io.ktor.server.testing.testApplication
 import io.ktor.serialization.kotlinx.json.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 
 class ApplicationTest {
     @Test
@@ -37,6 +39,28 @@ class ApplicationTest {
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("{\"models\":[\"small\"]}", response.bodyAsText())
+    }
+
+    @Test
+    fun `cors accepts the fixed browser development origin`() = testApplication {
+        application { adventureModule(FakeGateway()) }
+
+        val response = client.get("/api/models") {
+            header("Origin", "http://localhost:8088")
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("http://localhost:8088", response.headers["Access-Control-Allow-Origin"])
+    }
+
+    @Test
+    fun `gateway failures return a request identifier`() = testApplication {
+        application { adventureModule(FakeGateway(failure = IllegalStateException("offline"))) }
+
+        val response = client.get("/api/models")
+
+        assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+        assertNotNull(response.headers["X-Request-ID"])
     }
 
     @Test

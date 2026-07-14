@@ -2,12 +2,42 @@ package de.aidadventure.web.persistence
 
 import kotlin.test.Test
 import kotlin.test.assertFalse
+import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlinx.browser.window
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.promise
 
 class AdventureDatabaseTest {
+    @Test
+    fun `browser IndexedDB persists scenarios and sessions after database reopen`() = GlobalScope.promise<Unit> {
+        val databaseName = "ai-adventure-test-${js("Date.now()") as Double}"
+        val scenario = de.aidadventure.web.model.Scenario("scenario-1", "harbor.md", "# Harbor", 1)
+        val session = de.aidadventure.web.model.GameSession(
+            id = "session-1",
+            scenarioId = scenario.id,
+            title = "First voyage",
+            modelId = "local-model",
+            messages = emptyList(),
+            createdAt = 1,
+            updatedAt = 1,
+        )
+
+        AdventureDatabase.open(databaseName).also { database ->
+            database.scenarios.save(scenario)
+            database.sessions.save(session)
+            assertEquals(listOf(scenario), database.scenarios.list())
+            assertEquals(session, database.sessions.find(session.id))
+            database.close()
+        }
+
+        AdventureDatabase.open(databaseName).also { reopened ->
+            assertEquals(scenario, reopened.scenarios.find(scenario.id))
+            assertEquals(listOf(session), reopened.sessions.list())
+            reopened.close()
+        }
+    }
+
     @Test
     fun `request failure waits for transaction abort`() = GlobalScope.promise<Unit> {
         val transaction = js("({})")

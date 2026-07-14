@@ -44,17 +44,21 @@ class AdventureDatabase private constructor(private val database: dynamic) {
         override suspend fun find(id: String): GameSession? = sessionStore.find(id)
     }
 
+    fun close() {
+        database.close()
+    }
+
     companion object {
         private const val NAME = "ai-adventure"
         private const val VERSION = 1
         private const val SCENARIOS = "scenarios"
         private const val SESSIONS = "sessions"
 
-        suspend fun open(): AdventureDatabase {
+        suspend fun open(name: String = NAME): AdventureDatabase {
             val indexedDb = js("globalThis.indexedDB")
                 ?: throw PersistenceError.Unavailable()
             val request = try {
-                indexedDb.open(NAME, VERSION)
+                indexedDb.open(name, VERSION)
             } catch (cause: Throwable) {
                 throw PersistenceError.Unavailable(cause)
             }

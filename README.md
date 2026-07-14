@@ -23,7 +23,15 @@ In separate terminals, start the API and browser client:
 ./gradlew :web:browserDevelopmentRun
 ```
 
-The API listens on port 8080. The browser development server prints its local URL when ready.
+The API listens only on `127.0.0.1:8080` by default. The browser development server
+always listens on `http://localhost:8088`, which is the API's development CORS origin.
+Set `ADVENTURE_EXPOSE_LAN=true` only when you intentionally need the API reachable on
+your LAN. Do not use that setting on an untrusted network.
+
+`OLLAMA_KEEP_ALIVE` controls how long Ollama keeps a used model loaded. It accepts a
+positive whole-number duration using `h`, `m`, or `s` (`2h`, `10m`, `45s`), or bare
+seconds (`30`); the default is `10m`. Invalid or non-positive values stop startup with
+a clear configuration error.
 
 ## Verify
 

@@ -3,13 +3,21 @@ plugins {
     kotlin("plugin.serialization")
 }
 
+import org.jetbrains.kotlin.gradle.targets.js.webpack.KotlinWebpackConfig
+
 repositories {
     mavenCentral()
 }
 
 kotlin {
     js {
-        browser()
+        browser {
+            commonWebpackConfig {
+                devServer = (devServer ?: KotlinWebpackConfig.DevServer()).apply {
+                    port = 8088
+                }
+            }
+        }
         binaries.executable()
     }
 

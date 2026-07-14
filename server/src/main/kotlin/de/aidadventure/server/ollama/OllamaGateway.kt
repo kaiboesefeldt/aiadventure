@@ -27,7 +27,7 @@ class LangChain4jOllamaGateway(
     private val httpClient: HttpClient = HttpClient.newHttpClient(),
 ) : OllamaGateway {
     private val normalizedBaseUrl = baseUrl.removeSuffix("/")
-    private val keepAliveSeconds = parseKeepAliveSeconds(keepAlive)
+    private val keepAliveSeconds = KeepAliveDuration.parseSeconds(keepAlive)
 
     override fun availableModels(): List<String> {
         val response = httpClient.send(
@@ -58,12 +58,6 @@ class LangChain4jOllamaGateway(
         )
     }
 
-    private fun parseKeepAliveSeconds(value: String): Int = when {
-        value.endsWith("m") -> value.dropLast(1).toInt() * 60
-        value.endsWith("s") -> value.dropLast(1).toInt()
-        else -> value.toInt()
-    }
-
     @Serializable
     private data class OllamaTagsResponse(val models: List<OllamaTag>)
 
@@ -74,5 +68,23 @@ class LangChain4jOllamaGateway(
         const val DEFAULT_BASE_URL = "http://localhost:11434"
         const val DEFAULT_KEEP_ALIVE = "10m"
         val json = Json { ignoreUnknownKeys = true }
+    }
+}
+
+object KeepAliveDuration {
+    private val pattern = Regex("^(\\d+)([hms]?)$")
+
+    fun parseSeconds(value: String): Int {
+        val match = pattern.matchEntire(value)
+            ?: throw IllegalArgumentException("OLLAMA_KEEP_ALIVE must be a positive duration such as 2h, 10m, 45s, or 30.")
+        val multiplier = when (match.groupValues[2]) {
+            "h" -> 3_600L
+            "m" -> 60L
+            else -> 1L
+        }
+        val seconds = match.groupValues[1].toLongOrNull()?.times(multiplier)
+            ?: throw IllegalArgumentException("OLLAMA_KEEP_ALIVE is too large.")
+        require(seconds in 1..Int.MAX_VALUE) { "OLLAMA_KEEP_ALIVE must be a positive duration no greater than ${Int.MAX_VALUE} seconds." }
+        return seconds.toInt()
     }
 }
