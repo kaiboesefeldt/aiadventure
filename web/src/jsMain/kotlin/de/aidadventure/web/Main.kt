@@ -115,7 +115,7 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                 onRefresh = ::refreshScenarios,
             )
 
-            is View.Detail -> DetailView.create {
+            is View.Detail -> +DetailView.create {
                 scenario = current.scenario
                 this.models = models
                 modelError = modelLoadError
@@ -141,7 +141,7 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                 onReloadModels = { openScenario(current.scenario) }
             }
 
-            is View.Play -> PlayView.create {
+            is View.Play -> +PlayView.create {
                 scenario = current.scenario
                 session = current.session
                 api = props.api

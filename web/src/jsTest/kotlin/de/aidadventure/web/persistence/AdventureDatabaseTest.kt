@@ -4,11 +4,32 @@ import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 import kotlinx.browser.window
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.promise
 
 class AdventureDatabaseTest {
+    @Test
+    fun `reopens a legacy database missing its object stores`() = GlobalScope.promise<Unit> {
+        val databaseName = "ai-adventure-legacy-${js("Date.now()") as Double}"
+        val indexedDb = js("globalThis.indexedDB")
+        val legacyRequest = indexedDb.open(databaseName, 1)
+        suspendCoroutine<Unit> { continuation ->
+            legacyRequest.onsuccess = { _: dynamic ->
+                legacyRequest.result.close()
+                continuation.resume(Unit)
+                null
+            }
+        }
+
+        AdventureDatabase.open(databaseName).also { database ->
+            assertEquals(emptyList(), database.scenarios.list())
+            database.close()
+        }
+    }
+
     @Test
     fun `browser IndexedDB persists scenarios and sessions after database reopen`() = GlobalScope.promise<Unit> {
         val databaseName = "ai-adventure-test-${js("Date.now()") as Double}"

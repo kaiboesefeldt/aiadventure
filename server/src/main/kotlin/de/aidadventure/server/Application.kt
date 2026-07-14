@@ -65,6 +65,7 @@ fun Application.adventureModule(
     }
     install(CORS) {
         allowHost("localhost:8088", schemes = listOf("http"))
+        allowHeader(HttpHeaders.ContentType)
     }
     install(StatusPages) {
         exception<BadRequestException> { call, _ ->

@@ -50,7 +50,7 @@ class AdventureDatabase private constructor(private val database: dynamic) {
 
     companion object {
         private const val NAME = "ai-adventure"
-        private const val VERSION = 1
+        private const val VERSION = 2
         private const val SCENARIOS = "scenarios"
         private const val SESSIONS = "sessions"
 
@@ -73,7 +73,13 @@ class AdventureDatabase private constructor(private val database: dynamic) {
                 }
                 null
             }
-            return awaitRequest(request, "opening database") { AdventureDatabase(it) }
+            return awaitRequest(request, "opening database") {
+                it.onversionchange = { _: dynamic ->
+                    it.close()
+                    null
+                }
+                AdventureDatabase(it)
+            }
         }
     }
 }

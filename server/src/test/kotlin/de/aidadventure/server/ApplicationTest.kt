@@ -7,11 +7,13 @@ import de.aidadventure.server.model.TurnResponse
 import de.aidadventure.server.ollama.OllamaGateway
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
-import io.ktor.client.request.post
 import io.ktor.client.request.header
+import io.ktor.client.request.options
+import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
@@ -51,6 +53,21 @@ class ApplicationTest {
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("http://localhost:8088", response.headers["Access-Control-Allow-Origin"])
+    }
+
+    @Test
+    fun `cors permits a JSON turn request from the browser development origin`() = testApplication {
+        application { adventureModule(FakeGateway()) }
+
+        val response = client.options("/api/turn") {
+            header("Origin", "http://localhost:8088")
+            header("Access-Control-Request-Method", "POST")
+            header("Access-Control-Request-Headers", "content-type")
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("http://localhost:8088", response.headers["Access-Control-Allow-Origin"])
+        assertEquals(HttpHeaders.ContentType, response.headers["Access-Control-Allow-Headers"])
     }
 
     @Test

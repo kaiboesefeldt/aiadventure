@@ -28,6 +28,18 @@ always listens on `http://localhost:8088`, which is the API's development CORS o
 Set `ADVENTURE_EXPOSE_LAN=true` only when you intentionally need the API reachable on
 your LAN. Do not use that setting on an untrusted network.
 
+## Test-Spiel laden
+
+Wenn du nur ein direkt ladbares Beispiel willst, importiere diese Datei in der
+Browser-Oberfläche:
+
+```text
+examples/test-game.md
+```
+
+Das Szenario heißt "Test Spiel: Der Leuchtturm von Nebelhafen" und ist so
+geschrieben, dass du es sofort als kleines Smoke-Test-Spiel starten kannst.
+
 `OLLAMA_KEEP_ALIVE` controls how long Ollama keeps a used model loaded. It accepts a
 positive whole-number duration using `h`, `m`, or `s` (`2h`, `10m`, `45s`), or bare
 seconds (`30`); the default is `10m`. Invalid or non-positive values stop startup with
