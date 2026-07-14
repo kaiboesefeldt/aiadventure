@@ -58,7 +58,18 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .message { padding: 1rem; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
 .message--player { background: var(--accent-wash); border-color: #bdd7d3; }
 .message-speaker { display: block; margin-bottom: 0.35rem; color: var(--muted-ink); font-size: 0.8rem; font-weight: 700; }
-.message-content { margin: 0; line-height: 1.5; white-space: pre-wrap; }
+.message-content { line-height: 1.5; overflow-wrap: anywhere; }
+.message-content > :first-child { margin-top: 0; }
+.message-content > :last-child { margin-bottom: 0; }
+.message-content p, .message-content ul, .message-content ol, .message-content blockquote, .message-content pre, .message-content table { margin: 0.7rem 0; }
+.message-content ul, .message-content ol { padding-left: 1.4rem; }
+.message-content blockquote { margin-left: 0; padding-left: 0.8rem; border-left: 3px solid var(--rule); color: var(--muted-ink); }
+.message-content :not(pre) > code { padding: 0.1rem 0.3rem; border-radius: 4px; background: var(--accent-wash); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.message-content pre { overflow-x: auto; padding: 0.75rem; border-radius: 6px; background: #1f2928; color: #f6f2e8; }
+.message-content pre code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.message-content table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.message-content th, .message-content td { padding: 0.35rem 0.55rem; border: 1px solid var(--rule); text-align: left; }
+.message-content a { color: var(--accent-hover); }
 .message--game-master .message-content { line-height: 1.65; }
 .action-form { display: grid; gap: 0.6rem; margin-top: 1.5rem; }
 .action-label { font-weight: 650; }

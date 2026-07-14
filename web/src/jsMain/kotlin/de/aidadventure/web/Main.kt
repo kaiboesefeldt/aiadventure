@@ -385,9 +385,11 @@ private val PlayView = FC<PlayViewProps> { props ->
                         className = ClassName("message-speaker")
                         +(if (player) "You" else "Game master")
                     }
-                    ReactHTML.p {
+                    ReactHTML.div {
                         className = ClassName("message-content")
-                        +message.content
+                        MarkdownMessage {
+                            content = message.content
+                        }
                     }
                 }
             }
