@@ -4,6 +4,7 @@ import de.aidadventure.web.api.AdventureApi
 import de.aidadventure.web.api.AdventureApiClient
 import de.aidadventure.web.api.TurnMetrics
 import de.aidadventure.web.model.GameSession
+import de.aidadventure.web.model.ModelProvider
 import de.aidadventure.web.model.Scenario
 import de.aidadventure.web.persistence.AdventureDatabase
 import de.aidadventure.web.persistence.ImportResult
@@ -64,7 +65,7 @@ external interface AdventureAppProps : Props {
 
 private sealed interface View {
     data object Library : View
-    data class Detail(val scenario: Scenario) : View
+    data class Detail(val scenario: Scenario, val llamaCppSession: GameSession? = null) : View
     data class Play(val scenario: Scenario, val session: GameSession) : View
 }
 
@@ -74,6 +75,7 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
     var importError by useState<String?>(null)
     var models by useState<List<String>>(emptyList())
     var modelLoadError by useState<String?>(null)
+    var llamaCppConnection by useState(LlamaCppConnectionState.initial())
 
     fun refreshScenarios() {
         scope.launch { scenarios = props.scenarioRepository.list() }
@@ -83,6 +85,7 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
         view = View.Detail(scenario)
         models = emptyList()
         modelLoadError = null
+        llamaCppConnection = LlamaCppConnectionState.initial()
         scope.launch {
             runCatching { props.api.models() }
                 .onSuccess { models = it }
@@ -125,6 +128,9 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                 scenario = current.scenario
                 this.models = models
                 modelError = modelLoadError
+                api = props.api
+                llamaCppConnection = llamaCppConnection
+                llamaCppSession = current.llamaCppSession
                 sessions = { props.sessionRepository.list().filter { it.scenarioId == current.scenario.id } }
                 onBack = { view = View.Library }
                 onCreate = { model ->
@@ -143,7 +149,43 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                         view = View.Play(current.scenario, session)
                     }
                 }
-                onResume = { session -> view = View.Play(current.scenario, session) }
+                onLlamaCppConnectionChanged = { connection -> llamaCppConnection = connection }
+                onLlamaCppStart = { model, port, onComplete ->
+                    scope.launch {
+                        runCatching {
+                            val time = now()
+                            val session = current.llamaCppSession?.copy(
+                                modelId = model,
+                                updatedAt = time,
+                                provider = ModelProvider.LLAMA_CPP,
+                                llamaCppPort = port,
+                            ) ?: GameSession(
+                                id = "session-$time-${kotlin.random.Random.nextInt()}",
+                                scenarioId = current.scenario.id,
+                                title = "${current.scenario.name} adventure",
+                                modelId = model,
+                                messages = emptyList(),
+                                createdAt = time,
+                                updatedAt = time,
+                                provider = ModelProvider.LLAMA_CPP,
+                                llamaCppPort = port,
+                            )
+                            props.sessionRepository.save(session)
+                            session
+                        }.onSuccess { session ->
+                            view = View.Play(current.scenario, session)
+                            onComplete(null)
+                        }.onFailure(onComplete)
+                    }
+                }
+                onResume = { session ->
+                    if (session.provider == ModelProvider.LLAMA_CPP) {
+                        llamaCppConnection = LlamaCppConnectionState.initial(session.llamaCppPort, session.modelId)
+                        view = View.Detail(current.scenario, session)
+                    } else {
+                        view = View.Play(current.scenario, session)
+                    }
+                }
                 onReloadModels = { openScenario(current.scenario) }
             }
 
@@ -220,9 +262,14 @@ private external interface DetailViewProps : Props {
     var scenario: Scenario
     var models: List<String>
     var modelError: String?
+    var api: AdventureApi
+    var llamaCppConnection: LlamaCppConnectionState
+    var llamaCppSession: GameSession?
     var sessions: suspend () -> List<GameSession>
     var onBack: () -> Unit
     var onCreate: (String) -> Unit
+    var onLlamaCppConnectionChanged: (LlamaCppConnectionState) -> Unit
+    var onLlamaCppStart: (String, Int, (Throwable?) -> Unit) -> Unit
     var onResume: (GameSession) -> Unit
     var onReloadModels: () -> Unit
 }
@@ -231,6 +278,7 @@ private val DetailView = FC<DetailViewProps> { props ->
     var loadedSessions by useState<List<GameSession>>(emptyList())
     var sessionsLoaded by useState(false)
     var sessionError by useState<String?>(null)
+    var llamaCppPending by useState(false)
     fun loadSessions() = scope.launch {
         sessionsLoaded = true
         runCatching { props.sessions() }.onSuccess { loadedSessions = it }.onFailure { sessionError = clientMessage(it) }
@@ -277,6 +325,74 @@ private val DetailView = FC<DetailViewProps> { props ->
                         +"Start with $model"
                     }
                 }
+            }
+        }
+        ReactHTML.h3 {
+            className = ClassName("section-title")
+            +(if (props.llamaCppSession == null) "Or connect to llama.cpp" else "Reconnect to llama.cpp")
+        }
+        ReactHTML.div {
+            className = ClassName("stack")
+            ReactHTML.label {
+                className = ClassName("action-label")
+                htmlFor = "llama-cpp-port".unsafeCast<web.dom.ElementId>()
+                +"llama.cpp port"
+            }
+            ReactHTML.input {
+                id = "llama-cpp-port".unsafeCast<web.dom.ElementId>()
+                type = "number".unsafeCast<web.html.InputType>()
+                value = props.llamaCppConnection.portText
+                disabled = !props.llamaCppConnection.portEditable || llamaCppPending
+                onChange = { event ->
+                    props.onLlamaCppConnectionChanged(
+                        props.llamaCppConnection.withPortText(event.target.unsafeCast<HTMLInputElement>().value),
+                    )
+                }
+            }
+            props.llamaCppConnection.error?.let {
+                ReactHTML.p {
+                    className = ClassName("status-error")
+                    +it
+                }
+            }
+            ReactHTML.button {
+                className = ClassName("primary-button")
+                disabled = llamaCppPending
+                onClick = {
+                    val port = props.llamaCppConnection.portText.toIntOrNull()
+                    if (port == null || port !in 1..65535) {
+                        props.onLlamaCppConnectionChanged(
+                            props.llamaCppConnection.failed("Enter a valid llama.cpp port."),
+                        )
+                    } else if (props.llamaCppConnection.startOnClick) {
+                        props.onLlamaCppStart(props.llamaCppConnection.modelId, port) { failure ->
+                            if (failure != null) {
+                                props.onLlamaCppConnectionChanged(
+                                    props.llamaCppConnection.failed(clientMessage(failure)),
+                                )
+                            }
+                        }
+                    } else {
+                        llamaCppPending = true
+                        props.onLlamaCppConnectionChanged(props.llamaCppConnection.withoutError())
+                        scope.launch {
+                            runCatching {
+                                props.api.llamaCppModels(port).firstOrNull()
+                                    ?: throw IllegalStateException("No llama.cpp models are available on this port.")
+                            }.onSuccess { model ->
+                                props.onLlamaCppConnectionChanged(props.llamaCppConnection.connected(model))
+                            }.onFailure { failure ->
+                                props.onLlamaCppConnectionChanged(props.llamaCppConnection.failed(clientMessage(failure)))
+                            }
+                            llamaCppPending = false
+                        }
+                    }
+                }
+                +(when {
+                    llamaCppPending -> "Checking llama.cpp…"
+                    props.llamaCppConnection.startOnClick -> "Start with ${props.llamaCppConnection.modelId}"
+                    else -> "Check llama.cpp"
+                })
             }
         }
         ReactHTML.h3 {
@@ -466,5 +582,42 @@ internal fun shouldSubmitOnEnter(
     pending: Boolean,
     action: String,
 ): Boolean = key == "Enter" && !shiftKey && !isComposing && !pending && action.isNotBlank()
+
+internal data class LlamaCppConnectionState(
+    val portText: String,
+    val modelId: String = "",
+    val checked: Boolean = false,
+    val error: String? = null,
+) {
+    val portEditable: Boolean get() = !checked
+    val startOnClick: Boolean get() = checked && modelId.isNotBlank()
+
+    fun withPortText(portText: String): LlamaCppConnectionState = copy(
+        portText = portText,
+        modelId = "",
+        checked = false,
+        error = null,
+    )
+
+    fun withoutError(): LlamaCppConnectionState = copy(error = null)
+
+    fun connected(modelId: String): LlamaCppConnectionState = copy(
+        modelId = modelId,
+        checked = true,
+        error = null,
+    )
+
+    fun failed(error: String): LlamaCppConnectionState = copy(
+        checked = false,
+        error = error,
+    )
+
+    companion object {
+        fun initial(port: Int? = null, modelId: String? = null): LlamaCppConnectionState = LlamaCppConnectionState(
+            portText = (port ?: AdventureApiClient.DEFAULT_LLAMA_CPP_PORT).toString(),
+            modelId = modelId.orEmpty(),
+        )
+    }
+}
 
 internal fun now(): Long = (js("Date.now()") as Double).toLong()
