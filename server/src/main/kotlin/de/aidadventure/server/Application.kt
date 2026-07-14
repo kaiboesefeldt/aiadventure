@@ -31,7 +31,11 @@ fun main() {
     embeddedServer(Netty, port = port, host = "0.0.0.0", module = Application::adventureModule).start(wait = true)
 }
 
-fun Application.adventureModule(gateway: OllamaGateway = LangChain4jOllamaGateway()) {
+fun Application.adventureModule(
+    gateway: OllamaGateway = LangChain4jOllamaGateway(),
+    clock: () -> Long = System::currentTimeMillis,
+) {
+    val modelCatalog = ModelCatalog(gateway, clock)
     install(ContentNegotiation) { json() }
     install(CORS) {
         allowHost("localhost:8088", schemes = listOf("http"))
@@ -53,7 +57,7 @@ fun Application.adventureModule(gateway: OllamaGateway = LangChain4jOllamaGatewa
         }
         get("/api/models") {
             try {
-                call.respond(ModelsResponse(get<OllamaGateway>().availableModels()))
+                call.respond(ModelsResponse(modelCatalog.availableModels()))
             } catch (_: RuntimeException) {
                 call.respond(HttpStatusCode.ServiceUnavailable, ApiError("ollama_unavailable", "The model service is unavailable."))
             }
@@ -65,9 +69,8 @@ fun Application.adventureModule(gateway: OllamaGateway = LangChain4jOllamaGatewa
                 return@post
             }
 
-            val gateway = get<OllamaGateway>()
             val models = try {
-                gateway.availableModels()
+                modelCatalog.availableModels()
             } catch (_: RuntimeException) {
                 call.respond(HttpStatusCode.ServiceUnavailable, ApiError("ollama_unavailable", "The model service is unavailable."))
                 return@post
@@ -116,3 +119,26 @@ data class ModelsResponse(val models: List<String>)
 
 @Serializable
 data class ApiError(val code: String, val message: String)
+
+private class ModelCatalog(
+    private val gateway: OllamaGateway,
+    private val clock: () -> Long,
+) {
+    private var cachedModels: List<String>? = null
+    private var cachedAtMillis: Long = 0
+
+    @Synchronized
+    fun availableModels(): List<String> {
+        val now = clock()
+        cachedModels?.takeIf { now - cachedAtMillis < TTL_MILLIS }?.let { return it }
+
+        return gateway.availableModels().also {
+            cachedModels = it
+            cachedAtMillis = now
+        }
+    }
+
+    private companion object {
+        const val TTL_MILLIS = 30_000L
+    }
+}

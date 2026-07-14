@@ -97,13 +97,69 @@ class ApplicationTest {
         assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
     }
 
+    @Test
+    fun `turn reuses discovered models within the catalog ttl`() = testApplication {
+        val gateway = FakeGateway()
+        var now = 0L
+        application { adventureModule(gateway, clock = { now }) }
+        configureJsonClient()
+
+        repeat(2) {
+            val response = client.post("/api/turn") {
+                contentType(ContentType.Application.Json)
+                setBody(TurnRequest("model", "# Scenario", emptyList(), "look"))
+            }
+            assertEquals(HttpStatusCode.OK, response.status)
+        }
+
+        assertEquals(1, gateway.modelDiscoveryCalls)
+    }
+
+    @Test
+    fun `models and turn share the catalog within the ttl`() = testApplication {
+        val gateway = FakeGateway()
+        application { adventureModule(gateway) }
+        configureJsonClient()
+
+        assertEquals(HttpStatusCode.OK, client.get("/api/models").status)
+        val turnResponse = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(TurnRequest("model", "# Scenario", emptyList(), "look"))
+        }
+
+        assertEquals(HttpStatusCode.OK, turnResponse.status)
+        assertEquals(1, gateway.modelDiscoveryCalls)
+    }
+
+    @Test
+    fun `turn refreshes discovered models after the catalog ttl`() = testApplication {
+        val gateway = FakeGateway()
+        var now = 0L
+        application { adventureModule(gateway, clock = { now }) }
+        configureJsonClient()
+
+        client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(TurnRequest("model", "# Scenario", emptyList(), "look"))
+        }
+        now += 30_000
+        client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(TurnRequest("model", "# Scenario", emptyList(), "look"))
+        }
+
+        assertEquals(2, gateway.modelDiscoveryCalls)
+    }
+
     private class FakeGateway(
         private val models: List<String> = listOf("model"),
         private val failure: RuntimeException? = null,
     ) : OllamaGateway {
         var playCalls = 0
+        var modelDiscoveryCalls = 0
 
         override fun availableModels(): List<String> {
+            modelDiscoveryCalls++
             failure?.let { throw it }
             return models
         }
