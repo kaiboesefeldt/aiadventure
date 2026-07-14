@@ -57,11 +57,11 @@ class LlamaCppGateway(
         )
 
         return callbackFlow {
-            val responseBody = AtomicReference<InputStream?>()
+            val responseBody = ResponseBodyOwner()
             val reader = launch(Dispatchers.IO) {
                 try {
                     val response = runInterruptible {
-                        httpClient.send(
+                        val received = httpClient.send(
                             HttpRequest.newBuilder(endpoint(port, "/v1/chat/completions"))
                                 .timeout(requestTimeout)
                                 .header("Accept", "text/event-stream")
@@ -70,34 +70,36 @@ class LlamaCppGateway(
                                 .build(),
                             HttpResponse.BodyHandlers.ofInputStream(),
                         )
+                        received.takeIf { responseBody.publish(it.body()) }
                     }
-                    responseBody.set(response.body())
+                        ?: return@launch
+                    if (!isActive) return@launch
                     if (response.statusCode() !in 200..299) {
                         close(IllegalStateException("llama.cpp chat completion failed: HTTP ${response.statusCode()}"))
                         return@launch
                     }
 
                     var completed = false
-                    response.body().bufferedReader().useLines { lines ->
-                        for (line in lines) {
-                            if (!line.startsWith("data:")) continue
+                    val lines = response.body().bufferedReader()
+                    while (true) {
+                        val line = lines.readLine() ?: break
+                        if (!line.startsWith("data:")) continue
 
-                            val data = line.removePrefix("data:").trim()
-                            if (data == "[DONE]") {
-                                send(TurnStreamEvent.Done(TurnMetrics(null, null, null)))
-                                completed = true
-                                close()
-                                break
-                            }
-
-                            val chunk = json.decodeFromString<CompletionChunk>(data)
-                            if (chunk.error != null) {
-                                throw IllegalStateException("llama.cpp chat completion returned an error.")
-                            }
-                            chunk.choices.firstOrNull()?.delta?.content
-                                ?.takeIf { it.isNotBlank() }
-                                ?.let { token -> send(TurnStreamEvent.Token(token)) }
+                        val data = line.removePrefix("data:").trim()
+                        if (data == "[DONE]") {
+                            send(TurnStreamEvent.Done(TurnMetrics(null, null, null)))
+                            completed = true
+                            close()
+                            break
                         }
+
+                        val chunk = json.decodeFromString<CompletionChunk>(data)
+                        if (chunk.error != null) {
+                            throw IllegalStateException("llama.cpp chat completion returned an error.")
+                        }
+                        chunk.choices.firstOrNull()?.delta?.content
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let { token -> send(TurnStreamEvent.Token(token)) }
                     }
                     if (!completed) {
                         close(IllegalStateException("llama.cpp chat completion ended before [DONE]."))
@@ -107,12 +109,15 @@ class LlamaCppGateway(
                 } catch (failure: Exception) {
                     if (isActive) close(failure)
                 } finally {
-                    responseBody.getAndSet(null)?.close()
+                    responseBody.close()
                 }
             }
             awaitClose {
-                responseBody.getAndSet(null)?.close()
-                reader.cancel()
+                try {
+                    responseBody.close()
+                } finally {
+                    reader.cancel()
+                }
             }
         }
     }
@@ -156,6 +161,33 @@ class LlamaCppGateway(
 
     @Serializable
     private data class Delta(val content: String? = null)
+
+    private class ResponseBodyOwner {
+        private val state = AtomicReference<State>(State.Awaiting)
+
+        fun publish(body: InputStream): Boolean {
+            while (true) {
+                when (state.get()) {
+                    State.Awaiting -> if (state.compareAndSet(State.Awaiting, State.Published(body))) return true
+                    State.Closed -> {
+                        body.close()
+                        return false
+                    }
+                    is State.Published -> error("llama.cpp response body was published twice.")
+                }
+            }
+        }
+
+        fun close() {
+            (state.getAndSet(State.Closed) as? State.Published)?.body?.close()
+        }
+
+        private sealed interface State {
+            data object Awaiting : State
+            data object Closed : State
+            data class Published(val body: InputStream) : State
+        }
+    }
 
     private companion object {
         val DEFAULT_TIMEOUT: Duration = Duration.ofSeconds(5)

@@ -11,10 +11,23 @@ import de.aidadventure.server.model.TurnStreamEvent
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.http.HttpClient
+import java.net.http.HttpHeaders
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.net.http.WebSocket
+import java.io.InputStream
+import java.net.ProxySelector
+import java.net.CookieHandler
+import java.net.Authenticator
 import java.time.Duration
+import java.util.Optional
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLParameters
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,6 +50,85 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class LlamaCppGatewayTest {
+    @Test
+    fun `cancelling before response publication closes the later body without reading it`() = runBlocking {
+        val client = PublicationGatedHttpClient()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        var collection: Job? = null
+        try {
+            val gateway = LlamaCppGateway(httpClient = client, promptFactory = PromptFactory())
+
+            collection = scope.launch {
+                gateway.stream(request(8081)).toList()
+            }
+            assertTrue(client.bodyAvailable.await(2, TimeUnit.SECONDS))
+            collection.cancel()
+            client.releaseBody()
+            withTimeout(2_000) {
+                collection.join()
+            }
+
+            val body = requireNotNull(client.responseBody)
+            assertEquals(1, body.closeCount.get())
+            assertEquals(0, body.readCount.get())
+        } finally {
+            client.releaseBody()
+            collection?.cancelAndJoin()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `fails on a non success provider response`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
+        val executor = Executors.newSingleThreadExecutor()
+        server.executor = executor
+        server.createContext("/v1/chat/completions") { exchange ->
+            exchange.requestBody.close()
+            exchange.responseHeaders.add("Content-Type", "application/json")
+            exchange.sendResponseHeaders(503, 0)
+            exchange.responseBody.bufferedWriter().use { it.write("{\"error\":{\"message\":\"overloaded\"}}") }
+        }
+        server.start()
+
+        try {
+            val failure = assertFailsWith<IllegalStateException> {
+                LlamaCppGateway(promptFactory = PromptFactory()).stream(request(server.address.port)).toList()
+            }
+            assertEquals("llama.cpp chat completion failed: HTTP 503", failure.message)
+        } finally {
+            server.stop(0)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `fails on an SSE JSON error object`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
+        val executor = Executors.newSingleThreadExecutor()
+        server.executor = executor
+        server.createContext("/v1/chat/completions") { exchange ->
+            exchange.requestBody.close()
+            exchange.responseHeaders.add("Content-Type", "text/event-stream")
+            exchange.sendResponseHeaders(200, 0)
+            exchange.responseBody.bufferedWriter().use { writer ->
+                writer.write("data: {\"error\":{\"message\":\"overloaded\"}}\n\n")
+                writer.flush()
+            }
+        }
+        server.start()
+
+        try {
+            val failure = assertFailsWith<IllegalStateException> {
+                LlamaCppGateway(promptFactory = PromptFactory()).stream(request(server.address.port)).toList()
+            }
+            assertEquals("llama.cpp chat completion returned an error.", failure.message)
+        } finally {
+            server.stop(0)
+            executor.shutdownNow()
+        }
+    }
+
     @Test
     fun `fails when the upstream stream ends before DONE`() = runBlocking {
         val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
@@ -265,5 +357,121 @@ class LlamaCppGatewayTest {
         responseHeaders.add("Content-Type", "application/json")
         sendResponseHeaders(200, body.toByteArray().size.toLong())
         responseBody.bufferedWriter().use { it.write(body) }
+    }
+
+    private fun request(port: Int) = TurnRequest(
+        modelId = "local-model",
+        scenarioMarkdown = "# Forest",
+        history = emptyList(),
+        playerAction = "Follow the path",
+        provider = ModelProvider.LLAMA_CPP,
+        llamaCppPort = port,
+    )
+
+    private class PublicationGatedHttpClient : HttpClient() {
+        val bodyAvailable = CountDownLatch(1)
+        private val release = CountDownLatch(1)
+
+        @Volatile
+        var responseBody: CloseTrackingInputStream? = null
+
+        fun releaseBody() {
+            release.countDown()
+        }
+
+        override fun cookieHandler(): Optional<CookieHandler> = Optional.empty()
+
+        override fun connectTimeout(): Optional<Duration> = Optional.empty()
+
+        override fun followRedirects(): Redirect = Redirect.NEVER
+
+        override fun proxy(): Optional<ProxySelector> = Optional.empty()
+
+        override fun sslContext(): SSLContext = SSLContext.getDefault()
+
+        override fun sslParameters(): SSLParameters = SSLParameters()
+
+        override fun authenticator(): Optional<Authenticator> = Optional.empty()
+
+        override fun version(): Version = Version.HTTP_1_1
+
+        override fun executor() = Optional.empty<java.util.concurrent.Executor>()
+
+        override fun newWebSocketBuilder(): WebSocket.Builder = throw UnsupportedOperationException()
+
+        override fun <T : Any?> send(
+            request: HttpRequest,
+            responseBodyHandler: HttpResponse.BodyHandler<T>,
+        ): HttpResponse<T> {
+            val trackedBody = CloseTrackingInputStream(InputStream.nullInputStream())
+            responseBody = trackedBody
+            bodyAvailable.countDown()
+            awaitReleaseIgnoringInterrupts()
+            @Suppress("UNCHECKED_CAST")
+            return ResponseWithBody(request, trackedBody) as HttpResponse<T>
+        }
+
+        override fun <T : Any?> sendAsync(
+            request: HttpRequest,
+            responseBodyHandler: HttpResponse.BodyHandler<T>,
+        ): CompletableFuture<HttpResponse<T>> = CompletableFuture.failedFuture(UnsupportedOperationException())
+
+        override fun <T : Any?> sendAsync(
+            request: HttpRequest,
+            responseBodyHandler: HttpResponse.BodyHandler<T>,
+            pushPromiseHandler: HttpResponse.PushPromiseHandler<T>,
+        ): CompletableFuture<HttpResponse<T>> = CompletableFuture.failedFuture(UnsupportedOperationException())
+
+        private fun awaitReleaseIgnoringInterrupts() {
+            while (true) {
+                try {
+                    release.await()
+                    return
+                } catch (_: InterruptedException) {
+                    // The test deliberately models a response arriving despite cancellation.
+                }
+            }
+        }
+    }
+
+    private class ResponseWithBody(
+        private val request: HttpRequest,
+        private val body: InputStream,
+    ) : HttpResponse<InputStream> {
+        override fun statusCode(): Int = 200
+
+        override fun request(): HttpRequest = request
+
+        override fun previousResponse(): Optional<HttpResponse<InputStream>> = Optional.empty()
+
+        override fun headers(): HttpHeaders = HttpHeaders.of(emptyMap()) { _, _ -> true }
+
+        override fun body(): InputStream = body
+
+        override fun sslSession() = Optional.empty<javax.net.ssl.SSLSession>()
+
+        override fun uri() = request.uri()
+
+        override fun version(): HttpClient.Version = HttpClient.Version.HTTP_1_1
+    }
+
+    private class CloseTrackingInputStream(private val delegate: InputStream) : InputStream() {
+        val closeCount = AtomicInteger()
+        val readCount = AtomicInteger()
+
+        override fun read(): Int {
+            readCount.incrementAndGet()
+            return delegate.read()
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            readCount.incrementAndGet()
+            return delegate.read(buffer, offset, length)
+        }
+
+        override fun close() {
+            closeCount.incrementAndGet()
+            delegate.close()
+        }
     }
 }
