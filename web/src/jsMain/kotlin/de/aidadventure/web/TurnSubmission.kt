@@ -20,6 +20,7 @@ internal class TurnSubmission(
         scenario: Scenario,
         playerAction: String,
         onStarted: (GameSession) -> Unit,
+        onStreamed: (GameSession) -> Unit,
     ): CompletedTurn {
         val started = session.copy(
             messages = session.messages + GameMessage("player", playerAction, clock()),
@@ -28,12 +29,26 @@ internal class TurnSubmission(
         onStarted(started)
         sessions.save(started)
 
-        val response = api.play(TurnRequestMapper.map(session, scenario, playerAction))
+        val streamedText = StringBuilder()
+        val metrics = try {
+            api.play(TurnRequestMapper.map(session, scenario, playerAction)) { token ->
+                streamedText.append(token)
+                onStreamed(
+                    started.copy(
+                        messages = started.messages + GameMessage("game-master", streamedText.toString(), clock()),
+                        updatedAt = clock(),
+                    ),
+                )
+            }
+        } catch (cause: Throwable) {
+            onStreamed(started)
+            throw cause
+        }
         val completed = started.copy(
-            messages = started.messages + GameMessage(response.message.role, response.message.content, clock()),
+            messages = started.messages + GameMessage("game-master", streamedText.toString(), clock()),
             updatedAt = clock(),
         )
         sessions.save(completed)
-        return CompletedTurn(completed, response.metrics)
+        return CompletedTurn(completed, metrics)
     }
 }

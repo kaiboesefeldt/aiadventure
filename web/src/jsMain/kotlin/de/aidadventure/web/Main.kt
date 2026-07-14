@@ -270,6 +270,7 @@ private val PlayView = FC<PlayViewProps> { props ->
                                 scenario = props.scenario,
                                 playerAction = playerAction,
                                 onStarted = props.onSessionChanged,
+                                onStreamed = props.onSessionChanged,
                             )
                             metrics = completed.metrics
                             props.onSessionChanged(completed.session)

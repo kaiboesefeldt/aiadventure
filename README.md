@@ -72,6 +72,16 @@ curl -fsS http://localhost:8080/api/models
 The first command returns `{"status":"ok"}`. The second returns the locally
 installed model IDs; choose one of those IDs in the browser.
 
+A successful `POST /api/turn` is an SSE response: it sends one or more `token`
+frames followed by a terminal `done` frame. Check the stream directly with a
+model ID returned by `/api/models`:
+
+```bash
+curl -N -X POST http://localhost:8080/api/turn \
+  -H 'Content-Type: application/json' \
+  --data '{"modelId":"YOUR_MODEL","scenarioMarkdown":"# Fog Harbor","history":[],"playerAction":"look"}'
+```
+
 Start the browser client with `./gradlew :web:browserDevelopmentRun`, open the
 local URL printed by Gradle, import `harbor.md`, open **Fog Harbor**, choose a
 model, and start a session. Send a short action, reload the page, reopen the

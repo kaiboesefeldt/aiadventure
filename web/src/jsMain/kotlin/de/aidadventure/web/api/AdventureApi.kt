@@ -21,15 +21,7 @@ import kotlinx.serialization.json.Json
 
 interface AdventureApi {
     suspend fun models(): List<String>
-    suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics {
-        throw AdventureApiException("Streaming turns are unavailable.")
-    }
-
-    suspend fun play(request: TurnRequest): TurnResponse {
-        val message = StringBuilder()
-        val metrics = play(request) { token -> message.append(token) }
-        return TurnResponse(ChatEntry("game-master", message.toString()), metrics)
-    }
+    suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics
 }
 
 class AdventureApiClient(
@@ -128,9 +120,6 @@ data class TurnRequest(
     val history: List<ChatEntry>,
     val playerAction: String,
 )
-
-@Serializable
-data class TurnResponse(val message: ChatEntry, val metrics: TurnMetrics)
 
 @Serializable
 data class TurnMetrics(
