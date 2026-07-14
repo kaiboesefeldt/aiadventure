@@ -29,6 +29,7 @@ import io.ktor.server.http.content.staticResources
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.ClosedWriteChannelException
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.plugins.BadRequestException
 import kotlinx.serialization.Serializable
@@ -117,15 +118,22 @@ fun Application.adventureModule(
 
             call.respondTextWriter(contentType = ContentType.Text.EventStream) {
                 try {
+                    sseComment("connected")
                     gateway.stream(request).collect { event ->
                         when (event) {
                             is TurnStreamEvent.Token -> sse("token", eventJson.encodeToString(StreamToken(event.text)))
                             is TurnStreamEvent.Done -> sse("done", eventJson.encodeToString(StreamDone(event.metrics)))
                         }
                     }
+                } catch (_: ClosedWriteChannelException) {
+                    logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)
                 } catch (failure: Exception) {
                     logger.warn("requestId={} operation=turn result=ollama_unavailable cause={}", call.callId, failure.javaClass.simpleName)
-                    sse("error", eventJson.encodeToString(StreamError("ollama_unavailable", "The model service is unavailable.")))
+                    try {
+                        sse("error", eventJson.encodeToString(StreamError("ollama_unavailable", "The model service is unavailable.")))
+                    } catch (_: ClosedWriteChannelException) {
+                        logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)
+                    }
                 }
             }
         }
@@ -171,6 +179,11 @@ private val eventJson = Json { encodeDefaults = true }
 
 private fun Writer.sse(event: String, data: String) {
     write("event: $event\ndata: $data\n\n")
+    flush()
+}
+
+private fun Writer.sseComment(comment: String) {
+    write(": $comment\n\n")
     flush()
 }
 

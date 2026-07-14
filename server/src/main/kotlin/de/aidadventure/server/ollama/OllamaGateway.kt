@@ -12,6 +12,7 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.time.Duration
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.trySendBlocking
@@ -36,10 +37,12 @@ class LangChain4jOllamaGateway(
     private val promptFactory: PromptFactory = PromptFactory(),
     private val baseUrl: String = System.getenv("OLLAMA_BASE_URL") ?: DEFAULT_BASE_URL,
     keepAlive: String = System.getenv("OLLAMA_KEEP_ALIVE") ?: DEFAULT_KEEP_ALIVE,
+    requestTimeout: String = System.getenv("OLLAMA_REQUEST_TIMEOUT") ?: DEFAULT_REQUEST_TIMEOUT,
     private val httpClient: HttpClient = HttpClient.newHttpClient(),
 ) : OllamaGateway {
     private val normalizedBaseUrl = baseUrl.removeSuffix("/")
     private val keepAliveSeconds = KeepAliveDuration.parseSeconds(keepAlive)
+    private val requestTimeout = OllamaRequestTimeout.parse(requestTimeout)
 
     override fun availableModels(): List<String> {
         val response = httpClient.send(
@@ -55,6 +58,7 @@ class LangChain4jOllamaGateway(
             .baseUrl(normalizedBaseUrl)
             .modelName(request.modelId)
             .defaultRequestParameters(defaultRequestParameters(keepAliveSeconds))
+            .timeout(requestTimeout)
             .build()
             .chat(promptFactory.build(request), object : StreamingChatResponseHandler {
                 override fun onPartialResponse(partialResponse: String) {
@@ -91,6 +95,7 @@ class LangChain4jOllamaGateway(
     private companion object {
         const val DEFAULT_BASE_URL = "http://localhost:11434"
         const val DEFAULT_KEEP_ALIVE = "10m"
+        const val DEFAULT_REQUEST_TIMEOUT = "10m"
         val json = Json { ignoreUnknownKeys = true }
     }
 }
@@ -117,5 +122,23 @@ object KeepAliveDuration {
             ?: throw IllegalArgumentException("OLLAMA_KEEP_ALIVE is too large.")
         require(seconds in 1..Int.MAX_VALUE) { "OLLAMA_KEEP_ALIVE must be a positive duration no greater than ${Int.MAX_VALUE} seconds." }
         return seconds.toInt()
+    }
+}
+
+object OllamaRequestTimeout {
+    private val pattern = Regex("^(\\d+)([hms]?)$")
+
+    fun parse(value: String): Duration {
+        val match = pattern.matchEntire(value)
+            ?: throw IllegalArgumentException("OLLAMA_REQUEST_TIMEOUT must be a positive duration such as 2h, 10m, 45s, or 30.")
+        val multiplier = when (match.groupValues[2]) {
+            "h" -> 3_600L
+            "m" -> 60L
+            else -> 1L
+        }
+        val seconds = match.groupValues[1].toLongOrNull()?.times(multiplier)
+            ?: throw IllegalArgumentException("OLLAMA_REQUEST_TIMEOUT is too large.")
+        require(seconds > 0) { "OLLAMA_REQUEST_TIMEOUT must be positive." }
+        return Duration.ofSeconds(seconds)
     }
 }

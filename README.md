@@ -47,6 +47,10 @@ positive whole-number duration using `h`, `m`, or `s` (`2h`, `10m`, `45s`), or b
 seconds (`30`); the default is `10m`. Invalid or non-positive values stop startup with
 a clear configuration error.
 
+`OLLAMA_REQUEST_TIMEOUT` controls how long the server waits for Ollama to produce a
+response, including a cold model load. It accepts the same duration format and defaults
+to `10m`.
+
 ## Verify
 
 ```bash
