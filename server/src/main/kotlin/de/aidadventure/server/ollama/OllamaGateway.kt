@@ -3,6 +3,7 @@ package de.aidadventure.server.ollama
 import de.aidadventure.server.game.PromptFactory
 import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnRequest
+import de.aidadventure.server.model.TurnStreamEvent
 import dev.langchain4j.model.ollama.OllamaChatRequestParameters
 import dev.langchain4j.model.ollama.OllamaStreamingChatModel
 import dev.langchain4j.model.chat.response.ChatResponse
@@ -13,9 +14,9 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.channels.ProducerScope
+import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import de.aidadventure.server.model.TurnStreamEvent
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -57,11 +58,11 @@ class LangChain4jOllamaGateway(
             .build()
             .chat(promptFactory.build(request), object : StreamingChatResponseHandler {
                 override fun onPartialResponse(partialResponse: String) {
-                    trySendOrClose(TurnStreamEvent.Token(partialResponse))
+                    sendOrClose(TurnStreamEvent.Token(partialResponse))
                 }
 
                 override fun onCompleteResponse(completeResponse: ChatResponse) {
-                    trySendOrClose(
+                    sendOrClose(
                         TurnStreamEvent.Done(
                             TurnMetrics(
                                 totalDurationMs = null,
@@ -81,13 +82,6 @@ class LangChain4jOllamaGateway(
         awaitClose()
     }
 
-    private fun ProducerScope<TurnStreamEvent>.trySendOrClose(event: TurnStreamEvent) {
-        val result = trySend(event)
-        if (result.isFailure) {
-            close(result.exceptionOrNull() ?: IllegalStateException("Unable to deliver Ollama stream event."))
-        }
-    }
-
     @Serializable
     private data class OllamaTagsResponse(val models: List<OllamaTag>)
 
@@ -98,6 +92,13 @@ class LangChain4jOllamaGateway(
         const val DEFAULT_BASE_URL = "http://localhost:11434"
         const val DEFAULT_KEEP_ALIVE = "10m"
         val json = Json { ignoreUnknownKeys = true }
+    }
+}
+
+internal fun <T> ProducerScope<T>.sendOrClose(event: T) {
+    val result = trySendBlocking(event)
+    if (result.isFailure) {
+        close(result.exceptionOrNull() ?: IllegalStateException("Unable to deliver Ollama stream event."))
     }
 }
 
