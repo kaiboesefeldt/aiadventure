@@ -9,10 +9,13 @@ import de.aidadventure.server.ollama.OllamaGateway
 import com.sun.net.httpserver.HttpServer
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.request.options
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
@@ -38,6 +41,35 @@ class ApplicationTest {
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("{\"status\":\"ok\"}", response.bodyAsText())
+    }
+
+    @Test
+    fun `documented development browser origins are allowed to call the API`() = testApplication {
+        application { adventureModule(FakeGateway()) }
+
+        listOf("http://localhost:8088", "http://127.0.0.1:8088").forEach { origin ->
+            val response = client.options("/api/turn") {
+                header(HttpHeaders.Origin, origin)
+                header(HttpHeaders.AccessControlRequestMethod, "POST")
+                header(HttpHeaders.AccessControlRequestHeaders, HttpHeaders.ContentType)
+            }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(origin, response.headers[HttpHeaders.AccessControlAllowOrigin])
+            assertTrue(response.headers[HttpHeaders.AccessControlAllowHeaders].orEmpty().contains(HttpHeaders.ContentType))
+        }
+    }
+
+    @Test
+    fun `foreign browser origins are not allowed to call the API`() = testApplication {
+        application { adventureModule(FakeGateway()) }
+
+        val response = client.options("/api/models") {
+            header(HttpHeaders.Origin, "http://localhost:3000")
+            header(HttpHeaders.AccessControlRequestMethod, "GET")
+        }
+
+        assertEquals(HttpStatusCode.Forbidden, response.status)
     }
 
     @Test

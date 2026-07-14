@@ -22,6 +22,7 @@ import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.callid.CallId
 import io.ktor.server.plugins.callid.callId
 import io.ktor.server.request.receive
@@ -75,6 +76,11 @@ fun Application.adventureModule(
     val logger = LoggerFactory.getLogger("de.aidadventure.server.AdventureApi")
     val modelCatalog = ModelCatalog(gateway, clock)
     install(ContentNegotiation) { json() }
+    install(CORS) {
+        allowHost("localhost:8088", schemes = listOf("http"))
+        allowHost("127.0.0.1:8088", schemes = listOf("http"))
+        allowHeader(HttpHeaders.ContentType)
+    }
     install(CallId) {
         header(HttpHeaders.XRequestId)
         generate { UUID.randomUUID().toString() }

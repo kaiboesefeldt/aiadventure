@@ -24,7 +24,7 @@ interface AdventureApi {
 }
 
 class AdventureApiClient(
-    private val baseUrl: String = DEFAULT_BASE_URL,
+    private val baseUrl: String = resolveAdventureApiBaseUrl(window.location.hostname, window.location.port),
     private val client: HttpClient = HttpClient(Js) {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         expectSuccess = false
@@ -80,9 +80,13 @@ class AdventureApiClient(
     private val normalizedBaseUrl = baseUrl.removeSuffix("/")
 
     companion object {
-        const val DEFAULT_BASE_URL = ""
         const val DEFAULT_LLAMA_CPP_PORT = 8081
     }
+}
+
+internal fun resolveAdventureApiBaseUrl(hostname: String, port: String): String = when {
+    port == "8088" && hostname in setOf("localhost", "127.0.0.1") -> "http://$hostname:8080"
+    else -> ""
 }
 
 internal fun processTurnStreamChunk(
