@@ -24,6 +24,14 @@ class LlamaCppConnectionStateTest {
     }
 
     @Test
+    fun `pending session start rejects a duplicate start`() {
+        val checked = LlamaCppConnectionState.initial().connected("local-model")
+
+        assertTrue(canStartLlamaCppSession(checked, pending = false))
+        assertFalse(canStartLlamaCppSession(checked, pending = true))
+    }
+
+    @Test
     fun `failed discovery makes the port editable again`() {
         val failed = LlamaCppConnectionState.initial()
             .connected("local-model")
@@ -31,5 +39,7 @@ class LlamaCppConnectionStateTest {
 
         assertTrue(failed.portEditable)
         assertEquals("service unavailable", failed.error)
+        assertFalse(failed.startOnClick)
+        assertFalse(canStartLlamaCppSession(failed, pending = false))
     }
 }

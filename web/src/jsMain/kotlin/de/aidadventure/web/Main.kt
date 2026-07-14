@@ -358,19 +358,29 @@ private val DetailView = FC<DetailViewProps> { props ->
             ReactHTML.button {
                 className = ClassName("primary-button")
                 disabled = llamaCppPending
-                onClick = {
+                onClick = click@{
+                    if (llamaCppPending) return@click
                     val port = props.llamaCppConnection.portText.toIntOrNull()
                     if (port == null || port !in 1..65535) {
                         props.onLlamaCppConnectionChanged(
                             props.llamaCppConnection.failed("Enter a valid llama.cpp port."),
                         )
-                    } else if (props.llamaCppConnection.startOnClick) {
-                        props.onLlamaCppStart(props.llamaCppConnection.modelId, port) { failure ->
-                            if (failure != null) {
-                                props.onLlamaCppConnectionChanged(
-                                    props.llamaCppConnection.failed(clientMessage(failure)),
-                                )
+                    } else if (canStartLlamaCppSession(props.llamaCppConnection, llamaCppPending)) {
+                        llamaCppPending = true
+                        try {
+                            props.onLlamaCppStart(props.llamaCppConnection.modelId, port) { failure ->
+                                llamaCppPending = false
+                                if (failure != null) {
+                                    props.onLlamaCppConnectionChanged(
+                                        props.llamaCppConnection.failed(clientMessage(failure)),
+                                    )
+                                }
                             }
+                        } catch (failure: Throwable) {
+                            llamaCppPending = false
+                            props.onLlamaCppConnectionChanged(
+                                props.llamaCppConnection.failed(clientMessage(failure)),
+                            )
                         }
                     } else {
                         llamaCppPending = true
@@ -582,6 +592,9 @@ internal fun shouldSubmitOnEnter(
     pending: Boolean,
     action: String,
 ): Boolean = key == "Enter" && !shiftKey && !isComposing && !pending && action.isNotBlank()
+
+internal fun canStartLlamaCppSession(connection: LlamaCppConnectionState, pending: Boolean): Boolean =
+    !pending && connection.startOnClick
 
 internal data class LlamaCppConnectionState(
     val portText: String,

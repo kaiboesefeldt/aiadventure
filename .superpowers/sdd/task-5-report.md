@@ -45,3 +45,39 @@ test bundle, including the new pure-state test. It did not stall.
 - The build continues to emit its pre-existing Kotlin `kotlin-js` deprecation warning and existing `GlobalScope` delicate-API warnings. This task does not add either warning.
 - `:web:jsTest` from the original brief is not a task in this single-target Kotlin/JS build. The requested working tasks are `:web:compileTestKotlinJs` and `:web:browserTest`.
 - The forced browser run also emitted Node's existing `[DEP0169]` `url.parse()` deprecation warning during `kotlinNpmInstall`; it did not fail the build.
+
+## Review fix follow-up (2026-07-15)
+
+- The second-stage llama.cpp start now sets `llamaCppPending` before invoking
+  the start callback, rejects clicks while pending, and clears pending from the
+  completion callback or a synchronous start failure.
+- Added a testable start guard: a pending start cannot invoke a second session
+  start, and a failed reconnect is explicitly asserted as not startable.
+
+Test-first evidence:
+
+```text
+./gradlew :web:compileTestKotlinJs --console=plain
+BUILD FAILED in 7s
+Unresolved reference 'canStartLlamaCppSession'.
+```
+
+## Review fix verification
+
+```text
+./gradlew :web:compileTestKotlinJs --console=plain
+BUILD SUCCESSFUL in 7s
+3 actionable tasks: 2 executed, 1 up-to-date
+
+./gradlew :web:browserTest --console=plain
+BUILD SUCCESSFUL in 14s
+18 actionable tasks: 4 executed, 14 up-to-date
+
+./gradlew :web:browserProductionWebpack --console=plain
+BUILD SUCCESSFUL in 7s
+16 actionable tasks: 1 executed, 15 up-to-date
+```
+
+All three commands emitted the existing Kotlin `kotlin-js` deprecation
+warning. No test, webpack, browser, or app-server process remained after the
+checks.
