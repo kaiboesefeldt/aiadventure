@@ -19,7 +19,12 @@ data class GameSession(
     val messages: List<GameMessage>,
     val createdAt: Long,
     val updatedAt: Long,
+    val provider: ModelProvider = ModelProvider.OLLAMA,
+    val llamaCppPort: Int? = null,
 )
+
+@Serializable
+enum class ModelProvider { OLLAMA, LLAMA_CPP }
 
 @Serializable
 data class GameMessage(

@@ -6,11 +6,32 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
+import de.aidadventure.web.model.GameSession
+import de.aidadventure.web.model.ModelProvider
 import kotlinx.browser.window
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.promise
+import kotlinx.serialization.json.Json
 
 class AdventureDatabaseTest {
+    @Test
+    fun `legacy session JSON defaults to Ollama without a llama cpp port`() {
+        val session = Json.decodeFromString<GameSession>("""
+            {
+                "id":"session-1",
+                "scenarioId":"scenario-1",
+                "title":"First voyage",
+                "modelId":"local-model",
+                "messages":[],
+                "createdAt":1,
+                "updatedAt":1
+            }
+        """.trimIndent())
+
+        assertEquals(ModelProvider.OLLAMA, session.provider)
+        assertEquals(null, session.llamaCppPort)
+    }
+
     @Test
     fun `reopens a legacy database missing its object stores`() = GlobalScope.promise<Unit> {
         val databaseName = "ai-adventure-legacy-${js("Date.now()") as Double}"
@@ -42,6 +63,8 @@ class AdventureDatabaseTest {
             messages = emptyList(),
             createdAt = 1,
             updatedAt = 1,
+            provider = ModelProvider.LLAMA_CPP,
+            llamaCppPort = 8081,
         )
 
         AdventureDatabase.open(databaseName).also { database ->
