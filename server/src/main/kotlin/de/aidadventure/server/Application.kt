@@ -2,11 +2,16 @@ package de.aidadventure.server
 
 import de.aidadventure.server.game.PromptFactory
 import de.aidadventure.server.model.ChatEntry
+import de.aidadventure.server.model.StreamDone
+import de.aidadventure.server.model.StreamError
+import de.aidadventure.server.model.StreamToken
 import de.aidadventure.server.model.TurnRequest
+import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.ollama.LangChain4jOllamaGateway
 import de.aidadventure.server.ollama.OllamaGateway
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.HttpHeaders
+import io.ktor.http.ContentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.call
@@ -19,12 +24,16 @@ import io.ktor.server.plugins.callid.CallId
 import io.ktor.server.plugins.callid.callId
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondTextWriter
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.plugins.BadRequestException
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.io.Writer
 import org.koin.dsl.module
 import org.koin.ktor.ext.get
 import org.koin.ktor.plugin.Koin
@@ -109,11 +118,18 @@ fun Application.adventureModule(
                 return@post
             }
 
-            try {
-                call.respond(gateway.play(request))
-            } catch (failure: RuntimeException) {
-                logger.warn("requestId={} operation=turn result=ollama_unavailable cause={}", call.callId, failure.javaClass.simpleName)
-                call.respond(HttpStatusCode.ServiceUnavailable, ApiError("ollama_unavailable", "The model service is unavailable."))
+            call.respondTextWriter(contentType = ContentType.Text.EventStream) {
+                try {
+                    gateway.stream(request).collect { event ->
+                        when (event) {
+                            is TurnStreamEvent.Token -> sse("token", eventJson.encodeToString(StreamToken(event.text)))
+                            is TurnStreamEvent.Done -> sse("done", eventJson.encodeToString(StreamDone(event.metrics)))
+                        }
+                    }
+                } catch (failure: Exception) {
+                    logger.warn("requestId={} operation=turn result=ollama_unavailable cause={}", call.callId, failure.javaClass.simpleName)
+                    sse("error", eventJson.encodeToString(StreamError("ollama_unavailable", "The model service is unavailable.")))
+                }
             }
         }
     }
@@ -149,6 +165,13 @@ data class ModelsResponse(val models: List<String>)
 
 @Serializable
 data class ApiError(val code: String, val message: String)
+
+private val eventJson = Json { encodeDefaults = true }
+
+private fun Writer.sse(event: String, data: String) {
+    write("event: $event\\ndata: $data\\n\\n")
+    flush()
+}
 
 private class ModelCatalog(
     private val gateway: OllamaGateway,

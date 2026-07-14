@@ -1,9 +1,8 @@
 package de.aidadventure.server
 
-import de.aidadventure.server.model.ChatEntry
 import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnRequest
-import de.aidadventure.server.model.TurnResponse
+import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.ollama.OllamaGateway
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
@@ -18,6 +17,9 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -92,7 +94,7 @@ class ApplicationTest {
         }
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertEquals(0, gateway.playCalls)
+        assertEquals(0, gateway.streamCalls)
     }
 
     @Test
@@ -107,7 +109,7 @@ class ApplicationTest {
         }
 
         assertEquals(HttpStatusCode.OK, response.status)
-        assertEquals(1, gateway.playCalls)
+        assertEquals(1, gateway.streamCalls)
     }
 
     @Test
@@ -122,7 +124,7 @@ class ApplicationTest {
         }
 
         assertEquals(HttpStatusCode.NotFound, response.status)
-        assertEquals(0, gateway.playCalls)
+        assertEquals(0, gateway.streamCalls)
     }
 
     @Test
@@ -136,6 +138,44 @@ class ApplicationTest {
         }
 
         assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+    }
+
+    @Test
+    fun `turn streams token frames and terminal metrics`() = testApplication {
+        application { adventureModule(FakeGateway()) }
+        configureJsonClient()
+
+        val response = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(TurnRequest("model", "# Scenario", emptyList(), "look"))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(ContentType.Text.EventStream, response.contentType()?.withoutParameters())
+        assertEquals(
+            "event: token\\ndata: {\"text\":\"The \"}\\n\\n" +
+                "event: token\\ndata: {\"text\":\"door opens.\"}\\n\\n" +
+                "event: done\\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":12,\"cacheTokens\":null}}\\n\\n",
+            response.bodyAsText(),
+        )
+    }
+
+    @Test
+    fun `turn streams a safe error frame after a gateway failure`() = testApplication {
+        application { adventureModule(FakeGateway(streamFailure = IllegalStateException("offline"))) }
+        configureJsonClient()
+
+        val response = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(TurnRequest("model", "# Scenario", emptyList(), "look"))
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(
+            "event: token\\ndata: {\"text\":\"The \"}\\n\\n" +
+                "event: error\\ndata: {\"code\":\"ollama_unavailable\",\"message\":\"The model service is unavailable.\"}\\n\\n",
+            response.bodyAsText(),
+        )
     }
 
     @Test
@@ -195,8 +235,9 @@ class ApplicationTest {
     private class FakeGateway(
         private val models: List<String> = listOf("model"),
         private val failure: RuntimeException? = null,
+        private val streamFailure: RuntimeException? = null,
     ) : OllamaGateway {
-        var playCalls = 0
+        var streamCalls = 0
         var modelDiscoveryCalls = 0
 
         override fun availableModels(): List<String> {
@@ -205,12 +246,18 @@ class ApplicationTest {
             return models
         }
 
-        override fun play(request: TurnRequest): TurnResponse {
-            playCalls++
+        override fun stream(request: TurnRequest): Flow<TurnStreamEvent> {
+            streamCalls++
             failure?.let { throw it }
-            return TurnResponse(
-                message = ChatEntry("game-master", "The door opens."),
-                metrics = TurnMetrics(null, null, null),
+            return streamFailure?.let { failure ->
+                flow {
+                    emit(TurnStreamEvent.Token("The "))
+                    throw failure
+                }
+            } ?: flowOf(
+                TurnStreamEvent.Token("The "),
+                TurnStreamEvent.Token("door opens."),
+                TurnStreamEvent.Done(TurnMetrics(null, 12, null)),
             )
         }
     }

@@ -1,23 +1,27 @@
 package de.aidadventure.server.ollama
 
 import de.aidadventure.server.game.PromptFactory
-import de.aidadventure.server.model.ChatEntry
 import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnRequest
-import de.aidadventure.server.model.TurnResponse
-import dev.langchain4j.model.ollama.OllamaChatModel
 import dev.langchain4j.model.ollama.OllamaChatRequestParameters
+import dev.langchain4j.model.ollama.OllamaStreamingChatModel
+import dev.langchain4j.model.chat.response.ChatResponse
+import dev.langchain4j.model.chat.response.StreamingChatResponseHandler
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import de.aidadventure.server.model.TurnStreamEvent
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 interface OllamaGateway {
     fun availableModels(): List<String>
 
-    fun play(request: TurnRequest): TurnResponse
+    fun stream(request: TurnRequest): Flow<TurnStreamEvent>
 }
 
 internal fun defaultRequestParameters(keepAliveSeconds: Int): OllamaChatRequestParameters =
@@ -44,22 +48,36 @@ class LangChain4jOllamaGateway(
         return json.decodeFromString<OllamaTagsResponse>(response.body()).models.map { it.name }
     }
 
-    override fun play(request: TurnRequest): TurnResponse {
-        val response = OllamaChatModel.builder()
+    override fun stream(request: TurnRequest): Flow<TurnStreamEvent> = callbackFlow {
+        OllamaStreamingChatModel.builder()
             .baseUrl(normalizedBaseUrl)
             .modelName(request.modelId)
             .defaultRequestParameters(defaultRequestParameters(keepAliveSeconds))
             .build()
-            .chat(promptFactory.build(request))
+            .chat(promptFactory.build(request), object : StreamingChatResponseHandler {
+                override fun onPartialResponse(partialResponse: String) {
+                    trySend(TurnStreamEvent.Token(partialResponse))
+                }
 
-        return TurnResponse(
-            message = ChatEntry(role = "game-master", content = response.aiMessage().text() ?: ""),
-            metrics = TurnMetrics(
-                totalDurationMs = null,
-                promptTokens = response.tokenUsage()?.inputTokenCount(),
-                cacheTokens = null,
-            ),
-        )
+                override fun onCompleteResponse(completeResponse: ChatResponse) {
+                    trySend(
+                        TurnStreamEvent.Done(
+                            TurnMetrics(
+                                totalDurationMs = null,
+                                promptTokens = completeResponse.tokenUsage()?.inputTokenCount(),
+                                cacheTokens = null,
+                            ),
+                        ),
+                    )
+                    close()
+                }
+
+                override fun onError(error: Throwable) {
+                    close(error)
+                }
+            })
+
+        awaitClose()
     }
 
     @Serializable

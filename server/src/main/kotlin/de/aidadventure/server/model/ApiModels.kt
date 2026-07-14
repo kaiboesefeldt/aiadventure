@@ -23,8 +23,16 @@ data class TurnMetrics(
     val cacheTokens: Int?,
 )
 
+sealed interface TurnStreamEvent {
+    data class Token(val text: String) : TurnStreamEvent
+    data class Done(val metrics: TurnMetrics) : TurnStreamEvent
+}
+
 @Serializable
-data class TurnResponse(
-    val message: ChatEntry,
-    val metrics: TurnMetrics,
-)
+data class StreamToken(val text: String)
+
+@Serializable
+data class StreamDone(val metrics: TurnMetrics)
+
+@Serializable
+data class StreamError(val code: String, val message: String)
