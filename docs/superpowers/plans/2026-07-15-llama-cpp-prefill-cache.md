@@ -36,80 +36,73 @@
 | `web/.../Main.kt` | llama-only detail and input wiring. |
 | `README.md`, `AGENTS.md`, `docs/UI-UX-Guide.md` | operation and verification contract. |
 
-## Task 1: Make the public and persisted contract llama.cpp only
+## Task 1: Add a backward-compatible prefill boundary
 
 **Files:**
 
 - Modify: `server/src/main/kotlin/de/aidadventure/server/model/ApiModels.kt`
-- Modify: `web/src/jsMain/kotlin/de/aidadventure/web/model/Models.kt`
 - Modify: `web/src/jsMain/kotlin/de/aidadventure/web/api/AdventureApi.kt`
 - Modify: `server/src/test/kotlin/de/aidadventure/server/model/ApiModelsTest.kt`
 - Modify: `web/src/jsTest/kotlin/de/aidadventure/web/api/TurnRequestMapperTest.kt`
-- Modify: `web/src/jsTest/kotlin/de/aidadventure/web/persistence/AdventureDatabaseTest.kt`
 
 **Interfaces:**
 
 ```kotlin
 @Serializable data class TurnRequest(
-    val sessionId: String, val modelId: String, val llamaCppPort: Int,
-    val scenarioMarkdown: String, val history: List<ChatEntry>, val playerAction: String,
+    val modelId: String, val scenarioMarkdown: String, val history: List<ChatEntry>, val playerAction: String,
+    val provider: ModelProvider = ModelProvider.OLLAMA, val llamaCppPort: Int? = null, val sessionId: String = "",
 )
 @Serializable data class PrefillRequest(
-    val sessionId: String, val revision: Long, val modelId: String, val llamaCppPort: Int,
+    val sessionId: String, val revision: Long, val modelId: String, val llamaCppPort: Int?,
     val scenarioMarkdown: String, val history: List<ChatEntry>, val playerAction: String,
 )
 @Serializable enum class PrefillDisposition { STARTED, QUEUED, STALE, TURN_IN_PROGRESS }
 @Serializable data class PrefillAccepted(val disposition: PrefillDisposition)
 ```
 
-- [ ] **Step 1: Write failing DTO, mapper, and IndexedDB tests**
+- [ ] **Step 1: Write failing DTO and mapper tests**
 
 ```kotlin
-@Test fun `mapper copies a live session identity and llama port`() {
-    val request = TurnRequestMapper.map(session(), scenario(), "live-1", "look")
+@Test fun `mapper copies an optional live session identity`() {
+    val request = TurnRequestMapper.map(session(), scenario(), "look", sessionId = "live-1")
     assertEquals("live-1", request.sessionId)
     assertEquals(8081, request.llamaCppPort)
 }
 
-@Test fun `stored session requires a llama port`() {
-    assertEquals(8081, restoredSession().llamaCppPort)
+@Test fun `prefill request carries an increasing revision`() {
+    assertEquals(7L, PrefillRequest("live-1", 7, "model", 8081, "# Scenario", emptyList(), "look").revision)
 }
 ```
 
 - [ ] **Step 2: Run focused tests**
 
-Run: `./gradlew :server:test --tests de.aidadventure.server.model.ApiModelsTest :web:jsTest --tests de.aidadventure.web.api.TurnRequestMapperTest --tests de.aidadventure.web.persistence.AdventureDatabaseTest`
+Run: `./gradlew :server:test --tests de.aidadventure.server.model.ApiModelsTest :web:jsTest --tests de.aidadventure.web.api.TurnRequestMapperTest`
 
-Expected: FAIL because the live session ID, llama-only port, and revised mapper do not exist.
+Expected: FAIL because `sessionId`, `PrefillRequest`, and the mapper's optional live ID do not exist.
 
-- [ ] **Step 3: Implement the llama-only DTOs and mapper**
+- [ ] **Step 3: Implement additive DTOs and mapper support**
 
 ```kotlin
-@Serializable
-data class GameSession(
-    val id: String, val scenarioId: String, val modelId: String, val llamaCppPort: Int,
-    val messages: List<GameMessage>, val createdAt: Long, val updatedAt: Long,
-)
-
 object TurnRequestMapper {
-    fun map(session: GameSession, scenario: Scenario, sessionId: String, action: String) = TurnRequest(
-        sessionId, session.modelId, session.llamaCppPort, scenario.markdown,
-        session.messages.map { ChatEntry(it.role, it.content) }, action,
+    fun map(session: GameSession, scenario: Scenario, action: String, sessionId: String = "") = TurnRequest(
+        modelId = session.modelId, scenarioMarkdown = scenario.markdown,
+        history = session.messages.map { ChatEntry(it.role, it.content) }, playerAction = action,
+        provider = session.provider, llamaCppPort = session.llamaCppPort, sessionId = sessionId,
     )
 }
 ```
 
-Remove `ModelProvider`, `OLLAMA` defaults, and old-record compatibility tests. Update all IndexedDB fixtures to include `llamaCppPort = 8081`.
+Keep `ModelProvider`, stored-session fields, and existing call sites intact in this task. The server/UI cutover tasks remove them together after all callers have migrated. Add matching client DTOs and JSON serialization; do not change IndexedDB schema yet.
 
 - [ ] **Step 4: Run focused tests**
 
-Run: `./gradlew :server:test --tests de.aidadventure.server.model.ApiModelsTest :web:jsTest --tests de.aidadventure.web.api.TurnRequestMapperTest --tests de.aidadventure.web.persistence.AdventureDatabaseTest`
+Run: `./gradlew :server:test --tests de.aidadventure.server.model.ApiModelsTest :web:jsTest --tests de.aidadventure.web.api.TurnRequestMapperTest`
 
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
-Run: `git add server/src/main/kotlin/de/aidadventure/server/model/ApiModels.kt web/src/jsMain/kotlin/de/aidadventure/web/model/Models.kt web/src/jsMain/kotlin/de/aidadventure/web/api/AdventureApi.kt server/src/test/kotlin/de/aidadventure/server/model/ApiModelsTest.kt web/src/jsTest/kotlin/de/aidadventure/web/api/TurnRequestMapperTest.kt web/src/jsTest/kotlin/de/aidadventure/web/persistence/AdventureDatabaseTest.kt && git commit -m "refactor: make adventure sessions llama.cpp only"`
+Run: `git add server/src/main/kotlin/de/aidadventure/server/model/ApiModels.kt web/src/jsMain/kotlin/de/aidadventure/web/api/AdventureApi.kt server/src/test/kotlin/de/aidadventure/server/model/ApiModelsTest.kt web/src/jsTest/kotlin/de/aidadventure/web/api/TurnRequestMapperTest.kt && git commit -m "feat: add prefill request boundary"`
 
 ## Task 2: Replace chat-completions with the native cache-aware llama.cpp gateway
 
@@ -460,6 +453,6 @@ Run: `git add README.md AGENTS.md docs/UI-UX-Guide.md docs/llama-cpp-prefill-ver
 
 ## Plan self-review
 
-- Spec coverage: Task 1 removes the old provider contract; Task 2 implements the documented native cache mechanism; Task 3 implements the session coordinator, revision barriers, and TTL; Task 4 supplies safe asynchronous API routing; Task 5 covers browser debounce and silent behavior; Task 6 documents launch requirements and performs metric-based proof.
+- Spec coverage: Task 1 creates the backward-compatible prefill boundary; Task 2 implements the documented native cache mechanism; Task 3 implements the session coordinator, revision barriers, and TTL; Task 4 and Task 5 perform the atomic server/UI Ollama removal; Task 6 documents launch requirements and performs metric-based proof.
 - Placeholder scan: all tasks name files, interfaces, tests, commands, expected outcomes, and commit boundaries.
 - Type consistency: Task 1 defines the DTOs used by Tasks 2--5; Task 2 exposes the slot gateway consumed by Task 3; Task 3 exposes the registry injected in Task 4; Task 5 matches the task-1 web request shapes.
