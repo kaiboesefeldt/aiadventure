@@ -218,16 +218,9 @@ internal val AdventureApp = FC<AdventureAppProps> { props ->
                 }
                 onResume = { session ->
                     llamaCppStartGuard.invalidate()
-                    if (session.provider == ModelProvider.LLAMA_CPP) {
-                        llamaCppDiscoveryGuard.activate(current.scenario.id)
-                        llamaCppPending = false
-                        llamaCppConnection = LlamaCppConnectionState.initial(session.llamaCppPort, session.modelId)
-                        view = View.Detail(current.scenario, session)
-                    } else {
-                        llamaCppDiscoveryGuard.activate(null)
-                        llamaCppPending = false
-                        view = View.Play(current.scenario, session)
-                    }
+                    llamaCppDiscoveryGuard.activate(null)
+                    llamaCppPending = false
+                    view = View.Play(current.scenario, session)
                 }
                 onLlamaCppPendingChanged = { pending -> llamaCppPending = pending }
                 onReloadModels = { openScenario(current.scenario) }
@@ -243,6 +236,20 @@ internal val AdventureApp = FC<AdventureAppProps> { props ->
                     llamaCppStartGuard.invalidate()
                     llamaCppPending = false
                     view = View.Detail(current.scenario)
+                }
+                onConfigureLlamaCpp = if (current.session.provider == ModelProvider.LLAMA_CPP) {
+                    {
+                        llamaCppDiscoveryGuard.activate(current.scenario.id)
+                        llamaCppStartGuard.invalidate()
+                        llamaCppPending = false
+                        llamaCppConnection = LlamaCppConnectionState.initial(
+                            current.session.llamaCppPort,
+                            current.session.modelId,
+                        )
+                        view = View.Detail(current.scenario, current.session)
+                    }
+                } else {
+                    null
                 }
                 onSessionChanged = { session -> view = View.Play(current.scenario, session) }
             }
@@ -388,6 +395,12 @@ internal val DetailView = FC<DetailViewProps> { props ->
             className = ClassName("section-title")
             +(if (props.llamaCppSession == null) "Or connect to llama.cpp" else "Reconnect to llama.cpp")
         }
+        props.llamaCppSession?.let { session ->
+            ReactHTML.p {
+                className = ClassName("metadata")
+                +"Resume saved session: ${session.title}. Check the port before continuing."
+            }
+        }
         ReactHTML.div {
             className = ClassName("stack")
             ReactHTML.label {
@@ -463,7 +476,10 @@ internal val DetailView = FC<DetailViewProps> { props ->
                 }
                 +(when {
                     props.llamaCppPending -> "Checking llama.cpp…"
+                    props.llamaCppConnection.startOnClick && props.llamaCppSession != null ->
+                        "Resume with ${props.llamaCppConnection.modelId}"
                     props.llamaCppConnection.startOnClick -> "Start with ${props.llamaCppConnection.modelId}"
+                    props.llamaCppSession != null -> "Check llama.cpp to resume"
                     else -> "Check llama.cpp"
                 })
             }
@@ -505,6 +521,7 @@ private external interface PlayViewProps : Props {
     var api: AdventureApi
     var sessions: SessionRepository
     var onBack: () -> Unit
+    var onConfigureLlamaCpp: (() -> Unit)?
     var onSessionChanged: (GameSession) -> Unit
 }
 
@@ -559,6 +576,14 @@ private val PlayView = FC<PlayViewProps> { props ->
             ReactHTML.h2 {
                 className = ClassName("view-title")
                 +displayedSession.title
+            }
+        }
+        props.onConfigureLlamaCpp?.let { configure ->
+            ReactHTML.button {
+                className = ClassName("secondary-button")
+                disabled = pending
+                onClick = { if (!pending) configure() }
+                +"Edit llama.cpp connection"
             }
         }
         ReactHTML.p {

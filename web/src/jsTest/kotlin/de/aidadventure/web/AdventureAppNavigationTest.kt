@@ -3,6 +3,8 @@ package de.aidadventure.web
 import de.aidadventure.web.api.AdventureApi
 import de.aidadventure.web.api.TurnMetrics
 import de.aidadventure.web.api.TurnRequest
+import de.aidadventure.web.model.GameSession
+import de.aidadventure.web.model.ModelProvider
 import de.aidadventure.web.model.Scenario
 import de.aidadventure.web.persistence.ScenarioRepository
 import de.aidadventure.web.persistence.SessionRepository
@@ -57,5 +59,67 @@ class AdventureAppNavigationTest {
         } finally {
             container.remove()
         }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `opening a saved llama cpp session enters its game view`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val scenario = Scenario("scenario", "scenario.md", "# Scenario", 1)
+        val session = GameSession(
+            id = "saved",
+            scenarioId = scenario.id,
+            title = "Saved llama session",
+            modelId = "local-model",
+            messages = emptyList(),
+            createdAt = 1,
+            updatedAt = 1,
+            provider = ModelProvider.LLAMA_CPP,
+            llamaCppPort = 8081,
+        )
+        try {
+            flushSync {
+                createRoot(container).render(
+                    AdventureApp.create {
+                        scenarioRepository = object : ScenarioRepository {
+                            override suspend fun list() = listOf(scenario)
+                            override suspend fun save(scenario: Scenario) = Unit
+                            override suspend fun find(id: String) = null
+                        }
+                        sessionRepository = object : SessionRepository {
+                            override suspend fun list() = listOf(session)
+                            override suspend fun save(session: GameSession) = Unit
+                            override suspend fun find(id: String) = null
+                        }
+                        this.api = object : AdventureApi {
+                            override suspend fun models(): List<String> = emptyList()
+                            override suspend fun llamaCppModels(port: Int): List<String> = emptyList()
+                            override suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics = error("unused")
+                        }
+                        initialScenarios = listOf(scenario)
+                    },
+                )
+            }
+            clickFirstActionRow(container)
+            nextBrowserTick()
+            nextBrowserTick()
+            clickFirstActionRow(container)
+            nextBrowserTick()
+
+            check(container.querySelector("#player-action") != null)
+        } finally {
+            container.remove()
+        }
+    }
+
+    private fun clickFirstActionRow(container: web.html.HTMLElement) {
+        container.querySelector("button.action-row")
+            ?.asDynamic()
+            ?.dispatchEvent(js("new MouseEvent('click', { bubbles: true })"))
+    }
+
+    private suspend fun nextBrowserTick() {
+        Promise<Unit> { resolve, _ -> window.setTimeout({ resolve(Unit) }, 0) }.await()
     }
 }
