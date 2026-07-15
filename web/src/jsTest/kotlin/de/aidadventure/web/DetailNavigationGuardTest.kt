@@ -8,7 +8,7 @@ class DetailNavigationGuardTest {
     @Test
     fun `pending guarded Ollama start blocks detail route until current failure`() {
         val guard = LlamaCppStartGuard()
-        val start = guard.begin()
+        val start = guard.tryBegin()!!
 
         assertFalse(canNavigateDetail(guard.pending))
 

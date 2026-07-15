@@ -145,8 +145,8 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                     llamaCppPending = false
                     view = View.Library
                 }
-                onCreate = { model ->
-                    val start = llamaCppStartGuard.begin()
+                onCreate = createSession@ { model ->
+                    val start = llamaCppStartGuard.tryBegin() ?: return@createSession
                     llamaCppPending = true
                     modelLoadError = null
                     scope.launch {
@@ -178,8 +178,8 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                     }
                 }
                 onLlamaCppConnectionChanged = { connection -> llamaCppConnection = connection }
-                onLlamaCppStart = { model, port, onComplete ->
-                    val start = llamaCppStartGuard.begin()
+                onLlamaCppStart = startLlamaCpp@ { model, port, onComplete ->
+                    val start = llamaCppStartGuard.tryBegin() ?: return@startLlamaCpp
                     scope.launch {
                         runCatching {
                             val time = now()
@@ -663,7 +663,10 @@ internal class LlamaCppStartGuard {
     var pending: Boolean = false
         private set
 
-    fun begin(): Request = Request(++generation).also { pending = true }
+    fun tryBegin(): Request? {
+        if (pending) return null
+        return Request(++generation).also { pending = true }
+    }
 
     fun complete(request: Request): Boolean {
         if (!accepts(request)) return false
