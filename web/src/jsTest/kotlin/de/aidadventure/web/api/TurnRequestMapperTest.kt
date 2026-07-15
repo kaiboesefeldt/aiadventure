@@ -9,6 +9,14 @@ import kotlin.test.assertEquals
 
 class TurnRequestMapperTest {
     @Test
+    fun `mapper copies an optional live session identity`() {
+        val request = TurnRequestMapper.map(session(), scenario(), "look", sessionId = "live-1")
+
+        assertEquals("live-1", request.sessionId)
+        assertEquals(8081, request.llamaCppPort)
+    }
+
+    @Test
     fun `request preserves llama cpp provider and port`() {
         val session = GameSession(
             id = "s",
@@ -45,4 +53,18 @@ class TurnRequestMapperTest {
         assertEquals(listOf("look"), request.history.map { it.content })
         assertEquals("open", request.playerAction)
     }
+
+    private fun session() = GameSession(
+        id = "s",
+        scenarioId = "scenario",
+        title = "Run",
+        modelId = "small",
+        messages = emptyList(),
+        createdAt = 1,
+        updatedAt = 1,
+        provider = ModelProvider.LLAMA_CPP,
+        llamaCppPort = 8081,
+    )
+
+    private fun scenario() = Scenario("scenario", "x.md", "# X", 1)
 }

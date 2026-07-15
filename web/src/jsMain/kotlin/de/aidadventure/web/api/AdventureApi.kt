@@ -142,13 +142,14 @@ class SseFrameDecoder {
 }
 
 object TurnRequestMapper {
-    fun map(session: GameSession, scenario: Scenario, playerAction: String): TurnRequest = TurnRequest(
+    fun map(session: GameSession, scenario: Scenario, playerAction: String, sessionId: String = ""): TurnRequest = TurnRequest(
         modelId = session.modelId,
         scenarioMarkdown = scenario.markdown,
         history = session.messages.map { ChatEntry(it.role, it.content) },
         playerAction = playerAction,
         provider = session.provider,
         llamaCppPort = session.llamaCppPort,
+        sessionId = sessionId,
     )
 }
 
@@ -163,7 +164,25 @@ data class TurnRequest(
     val playerAction: String,
     val provider: ModelProvider = ModelProvider.OLLAMA,
     val llamaCppPort: Int? = null,
+    val sessionId: String = "",
 )
+
+@Serializable
+data class PrefillRequest(
+    val sessionId: String,
+    val revision: Long,
+    val modelId: String,
+    val llamaCppPort: Int?,
+    val scenarioMarkdown: String,
+    val history: List<ChatEntry>,
+    val playerAction: String,
+)
+
+@Serializable
+enum class PrefillDisposition { STARTED, QUEUED, STALE, TURN_IN_PROGRESS }
+
+@Serializable
+data class PrefillAccepted(val disposition: PrefillDisposition)
 
 @Serializable
 data class TurnMetrics(

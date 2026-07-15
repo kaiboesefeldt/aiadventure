@@ -15,4 +15,9 @@ class ApiModelsTest {
         assertEquals(ModelProvider.OLLAMA, request.provider)
         assertNull(request.llamaCppPort)
     }
+
+    @Test
+    fun `prefill request carries an increasing revision`() {
+        assertEquals(7L, PrefillRequest("live-1", 7, "model", 8081, "# Scenario", emptyList(), "look").revision)
+    }
 }

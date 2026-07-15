@@ -19,7 +19,25 @@ data class TurnRequest(
     val playerAction: String,
     val provider: ModelProvider = ModelProvider.OLLAMA,
     val llamaCppPort: Int? = null,
+    val sessionId: String = "",
 )
+
+@Serializable
+data class PrefillRequest(
+    val sessionId: String,
+    val revision: Long,
+    val modelId: String,
+    val llamaCppPort: Int?,
+    val scenarioMarkdown: String,
+    val history: List<ChatEntry>,
+    val playerAction: String,
+)
+
+@Serializable
+enum class PrefillDisposition { STARTED, QUEUED, STALE, TURN_IN_PROGRESS }
+
+@Serializable
+data class PrefillAccepted(val disposition: PrefillDisposition)
 
 @Serializable
 data class TurnMetrics(
