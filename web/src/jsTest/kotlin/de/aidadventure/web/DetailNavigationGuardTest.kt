@@ -6,8 +6,13 @@ import kotlin.test.assertTrue
 
 class DetailNavigationGuardTest {
     @Test
-    fun `pending llama cpp start blocks detail navigation and competing actions`() {
-        assertTrue(canNavigateDetail(pending = false))
-        assertFalse(canNavigateDetail(pending = true))
+    fun `pending guarded Ollama start blocks detail route until current failure`() {
+        val guard = LlamaCppStartGuard()
+        val start = guard.begin()
+
+        assertFalse(canNavigateDetail(guard.pending))
+
+        assertTrue(guard.fail(start))
+        assertTrue(canNavigateDetail(guard.pending))
     }
 }

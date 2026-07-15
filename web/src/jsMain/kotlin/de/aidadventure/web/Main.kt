@@ -146,22 +146,35 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                     view = View.Library
                 }
                 onCreate = { model ->
-                    llamaCppStartGuard.invalidate()
+                    val start = llamaCppStartGuard.begin()
+                    llamaCppPending = true
+                    modelLoadError = null
                     scope.launch {
-                        val time = now()
-                        val session = GameSession(
-                            id = "session-$time-${kotlin.random.Random.nextInt()}",
-                            scenarioId = current.scenario.id,
-                            title = "${current.scenario.name} adventure",
-                            modelId = model,
-                            messages = emptyList(),
-                            createdAt = time,
-                            updatedAt = time,
-                        )
-                        props.sessionRepository.save(session)
-                        llamaCppDiscoveryGuard.activate(null)
-                        llamaCppPending = false
-                        view = View.Play(current.scenario, session)
+                        runCatching {
+                            val time = now()
+                            val session = GameSession(
+                                id = "session-$time-${kotlin.random.Random.nextInt()}",
+                                scenarioId = current.scenario.id,
+                                title = "${current.scenario.name} adventure",
+                                modelId = model,
+                                messages = emptyList(),
+                                createdAt = time,
+                                updatedAt = time,
+                            )
+                            props.sessionRepository.save(session)
+                            session
+                        }.onSuccess { session ->
+                            if (llamaCppStartGuard.complete(start)) {
+                                llamaCppDiscoveryGuard.activate(null)
+                                llamaCppPending = false
+                                view = View.Play(current.scenario, session)
+                            }
+                        }.onFailure { failure ->
+                            if (llamaCppStartGuard.fail(start)) {
+                                llamaCppPending = false
+                                modelLoadError = clientMessage(failure)
+                            }
+                        }
                     }
                 }
                 onLlamaCppConnectionChanged = { connection -> llamaCppConnection = connection }
@@ -189,15 +202,14 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                             props.sessionRepository.save(session)
                             session
                         }.onSuccess { session ->
-                            if (llamaCppStartGuard.accepts(start)) {
+                            if (llamaCppStartGuard.complete(start)) {
                                 llamaCppDiscoveryGuard.activate(null)
-                                llamaCppStartGuard.invalidate()
                                 llamaCppPending = false
                                 view = View.Play(current.scenario, session)
                                 onComplete(null)
                             }
                         }.onFailure { failure ->
-                            if (llamaCppStartGuard.accepts(start)) {
+                            if (llamaCppStartGuard.fail(start)) {
                                 onComplete(failure)
                             }
                         }
@@ -648,11 +660,27 @@ internal fun canNavigateDetail(pending: Boolean): Boolean = !pending
 
 internal class LlamaCppStartGuard {
     private var generation = 0
+    var pending: Boolean = false
+        private set
 
-    fun begin(): Request = Request(++generation)
+    fun begin(): Request = Request(++generation).also { pending = true }
+
+    fun complete(request: Request): Boolean {
+        if (!accepts(request)) return false
+        pending = false
+        invalidate()
+        return true
+    }
+
+    fun fail(request: Request): Boolean {
+        if (!accepts(request)) return false
+        pending = false
+        return true
+    }
 
     fun invalidate() {
         generation++
+        pending = false
     }
 
     fun accepts(request: Request): Boolean = request.generation == generation
