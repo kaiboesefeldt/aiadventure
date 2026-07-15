@@ -1,34 +1,59 @@
 # AI Adventure
 
-A local, Ollama-backed interactive adventure application. The JVM server provides the API; the Kotlin/JS React client runs in the browser.
+A local-LLM interactive adventure application with Ollama and OpenAI-compatible llama.cpp alternatives. The JVM server provides the API; the Kotlin/JS React client runs in the browser.
 
 ## Prerequisites
 
 - Java (a JVM capable of producing Java 21 bytecode)
-- [Ollama](https://ollama.com/) with a local model
+- One local model provider: [Ollama](https://ollama.com/) with a local model, or a local
+  `llama-server` from [llama.cpp](https://github.com/ggml-org/llama.cpp)
 
 ## Start
 
-Start Ollama and ensure a model is available:
+Start one provider before starting the app.
+
+For Ollama, start the service and ensure a model is available:
 
 ```bash
 ollama serve
 ollama pull example-model
 ```
 
-Start the complete application:
+For llama.cpp, start its OpenAI-compatible server on loopback port `8081` (the
+application default):
+
+```bash
+llama-server --host 127.0.0.1 --port 8081 --model /absolute/path/to/model.gguf
+```
+
+Start the API and browser client in separate terminals:
 
 ```bash
 ./gradlew :server:run
+./gradlew :web:browserDevelopmentRun
 ```
 
-Open [http://127.0.0.1:8080/](http://127.0.0.1:8080/) in the browser. The server
-serves the browser UI and the API from this same origin. Stop the application with
-Ctrl-C in the Gradle terminal.
+Open [http://127.0.0.1:8088/](http://127.0.0.1:8088/) in the browser. Stop each
+process with Ctrl-C in its Gradle terminal.
 
 The server listens only on `127.0.0.1:8080` by default.
 Set `ADVENTURE_EXPOSE_LAN=true` only when you intentionally need the API reachable on
 your LAN. Do not use that setting on an untrusted network.
+
+### Connect to llama.cpp
+
+The llama.cpp provider uses the OpenAI-compatible local `llama-server` started above.
+
+With the API and browser client commands above running, import or open a scenario and
+use the **llama.cpp** connection control in its detail view. Enter `8081` unless the
+server uses another local port, then click **Check llama.cpp**. That first click only
+discovers the available model; its name appears on the button and the port field is
+disabled. Click the model-name button a second time to create and start the session.
+
+Reloading the page preserves the session in this browser profile. Reopening a saved
+llama.cpp session returns to the detail view instead of connecting immediately: its
+stored port is editable so you can change it and check the model again before
+resuming. Ollama model buttons remain a one-click session start.
 
 ## Test-Spiel laden
 
@@ -88,7 +113,8 @@ curl -N -X POST http://localhost:8080/api/turn \
   --data '{"modelId":"YOUR_MODEL","scenarioMarkdown":"# Fog Harbor","history":[],"playerAction":"look"}'
 ```
 
-With `./gradlew :server:run` running, open http://127.0.0.1:8080/, import
+With `./gradlew :server:run` and `./gradlew :web:browserDevelopmentRun` running, open
+http://127.0.0.1:8088/, import
 `harbor.md`, open **Fog Harbor**, choose a model, and start a session. Send a
 short action, reload the page, reopen the scenario, resume the saved session,
 then send a second short action without changing the scenario or model.

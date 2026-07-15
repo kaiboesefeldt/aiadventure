@@ -23,6 +23,7 @@ class TurnSubmissionTest {
             sessions = failingSessions(failure),
             api = object : AdventureApi {
                 override suspend fun models(): List<String> = emptyList()
+                override suspend fun llamaCppModels(port: Int): List<String> = emptyList()
                 override suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics {
                     playCalls += 1
                     error("API must not be called when starting state cannot be persisted")
@@ -50,6 +51,7 @@ class TurnSubmissionTest {
             sessions = sessions,
             api = object : AdventureApi {
                 override suspend fun models(): List<String> = emptyList()
+                override suspend fun llamaCppModels(port: Int): List<String> = emptyList()
 
                 override suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics {
                     onToken("The ")
@@ -77,6 +79,7 @@ class TurnSubmissionTest {
             sessions = sessions,
             api = object : AdventureApi {
                 override suspend fun models(): List<String> = emptyList()
+                override suspend fun llamaCppModels(port: Int): List<String> = emptyList()
 
                 override suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics {
                     onToken("The ")

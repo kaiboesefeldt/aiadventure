@@ -2,6 +2,7 @@ package de.aidadventure.web.api
 
 import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
+import de.aidadventure.web.model.ModelProvider
 import de.aidadventure.web.model.Scenario
 import kotlinx.browser.window
 import kotlinx.coroutines.await
@@ -18,11 +19,12 @@ import kotlinx.serialization.json.Json
 
 interface AdventureApi {
     suspend fun models(): List<String>
+    suspend fun llamaCppModels(port: Int): List<String>
     suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics
 }
 
 class AdventureApiClient(
-    private val baseUrl: String = DEFAULT_BASE_URL,
+    private val baseUrl: String = resolveAdventureApiBaseUrl(window.location.hostname, window.location.port),
     private val client: HttpClient = HttpClient(Js) {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
         expectSuccess = false
@@ -30,6 +32,11 @@ class AdventureApiClient(
 ) : AdventureApi {
     override suspend fun models(): List<String> {
         val response = client.get("$normalizedBaseUrl/api/models")
+        return response.requireSuccess().body<ModelsResponse>().models
+    }
+
+    override suspend fun llamaCppModels(port: Int): List<String> {
+        val response = client.get("$normalizedBaseUrl/api/llama/models?port=$port")
         return response.requireSuccess().body<ModelsResponse>().models
     }
 
@@ -73,8 +80,13 @@ class AdventureApiClient(
     private val normalizedBaseUrl = baseUrl.removeSuffix("/")
 
     companion object {
-        const val DEFAULT_BASE_URL = ""
+        const val DEFAULT_LLAMA_CPP_PORT = 8081
     }
+}
+
+internal fun resolveAdventureApiBaseUrl(hostname: String, port: String): String = when {
+    port == "8088" && hostname in setOf("localhost", "127.0.0.1") -> "http://$hostname:8080"
+    else -> ""
 }
 
 internal fun processTurnStreamChunk(
@@ -135,6 +147,8 @@ object TurnRequestMapper {
         scenarioMarkdown = scenario.markdown,
         history = session.messages.map { ChatEntry(it.role, it.content) },
         playerAction = playerAction,
+        provider = session.provider,
+        llamaCppPort = session.llamaCppPort,
     )
 }
 
@@ -147,6 +161,8 @@ data class TurnRequest(
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val playerAction: String,
+    val provider: ModelProvider = ModelProvider.OLLAMA,
+    val llamaCppPort: Int? = null,
 )
 
 @Serializable

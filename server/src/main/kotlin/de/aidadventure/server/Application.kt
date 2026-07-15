@@ -2,11 +2,14 @@ package de.aidadventure.server
 
 import de.aidadventure.server.game.PromptFactory
 import de.aidadventure.server.model.ChatEntry
+import de.aidadventure.server.model.ModelProvider
 import de.aidadventure.server.model.StreamDone
 import de.aidadventure.server.model.StreamError
 import de.aidadventure.server.model.StreamToken
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
+import de.aidadventure.server.llamacpp.LlamaCppGateway
+import de.aidadventure.server.llamacpp.LlamaCppPort
 import de.aidadventure.server.ollama.LangChain4jOllamaGateway
 import de.aidadventure.server.ollama.OllamaGateway
 import io.ktor.http.HttpStatusCode
@@ -19,6 +22,7 @@ import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.callid.CallId
 import io.ktor.server.plugins.callid.callId
 import io.ktor.server.request.receive
@@ -35,6 +39,8 @@ import io.ktor.server.plugins.BadRequestException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.flow.Flow
+import java.io.IOException
 import java.io.Writer
 import org.koin.dsl.module
 import org.koin.ktor.ext.get
@@ -64,11 +70,17 @@ data class ServerRuntimeConfig(val host: String, val port: Int) {
 
 fun Application.adventureModule(
     gateway: OllamaGateway = LangChain4jOllamaGateway(),
+    llamaCppGateway: LlamaCppGateway = LlamaCppGateway(),
     clock: () -> Long = System::currentTimeMillis,
 ) {
     val logger = LoggerFactory.getLogger("de.aidadventure.server.AdventureApi")
     val modelCatalog = ModelCatalog(gateway, clock)
     install(ContentNegotiation) { json() }
+    install(CORS) {
+        allowHost("localhost:8088", schemes = listOf("http"))
+        allowHost("127.0.0.1:8088", schemes = listOf("http"))
+        allowHeader(HttpHeaders.ContentType)
+    }
     install(CallId) {
         header(HttpHeaders.XRequestId)
         generate { UUID.randomUUID().toString() }
@@ -82,6 +94,7 @@ fun Application.adventureModule(
     install(Koin) {
         modules(module {
             single<OllamaGateway> { gateway }
+            single<LlamaCppGateway> { llamaCppGateway }
             single { PromptFactory() }
         })
     }
@@ -97,6 +110,24 @@ fun Application.adventureModule(
                 call.respond(HttpStatusCode.ServiceUnavailable, ApiError("ollama_unavailable", "The model service is unavailable."))
             }
         }
+        get("/api/llama/models") {
+            val port = try {
+                LlamaCppPort.parse(call.request.queryParameters["port"] ?: "")
+            } catch (_: IllegalArgumentException) {
+                call.respond(HttpStatusCode.BadRequest, invalidRequestError())
+                return@get
+            }
+
+            try {
+                call.respond(ModelsResponse(llamaCppGateway.availableModels(port)))
+            } catch (failure: RuntimeException) {
+                logger.warn("requestId={} operation=llama_models result=llama_cpp_unavailable cause={}", call.callId, failure.javaClass.simpleName)
+                call.respond(HttpStatusCode.ServiceUnavailable, ApiError("llama_cpp_unavailable", "The model service is unavailable."))
+            } catch (failure: IOException) {
+                logger.warn("requestId={} operation=llama_models result=llama_cpp_unavailable cause={}", call.callId, failure.javaClass.simpleName)
+                call.respond(HttpStatusCode.ServiceUnavailable, ApiError("llama_cpp_unavailable", "The model service is unavailable."))
+            }
+        }
         post("/api/turn") {
             val request = call.receive<TurnRequest>()
             RequestValidator.validate(request)?.let { error ->
@@ -104,14 +135,45 @@ fun Application.adventureModule(
                 return@post
             }
 
-            val models = try {
-                modelCatalog.availableModels()
-            } catch (failure: RuntimeException) {
-                logger.warn("requestId={} operation=model_validation result=ollama_unavailable cause={}", call.callId, failure.javaClass.simpleName)
-                call.respond(HttpStatusCode.ServiceUnavailable, ApiError("ollama_unavailable", "The model service is unavailable."))
-                return@post
+            val selectedGateway = when (request.provider) {
+                ModelProvider.OLLAMA -> try {
+                    TurnGateway(
+                        models = modelCatalog.availableModels(),
+                        stream = { gateway.stream(request) },
+                        unavailableCode = "ollama_unavailable",
+                    )
+                } catch (failure: RuntimeException) {
+                    logger.warn("requestId={} operation=model_validation result=ollama_unavailable cause={}", call.callId, failure.javaClass.simpleName)
+                    call.respond(HttpStatusCode.ServiceUnavailable, ApiError("ollama_unavailable", "The model service is unavailable."))
+                    return@post
+                }
+                ModelProvider.LLAMA_CPP -> {
+                    val port = try {
+                        LlamaCppPort.parse(request.llamaCppPort?.toString() ?: "")
+                    } catch (_: IllegalArgumentException) {
+                        call.respond(HttpStatusCode.BadRequest, invalidRequestError())
+                        return@post
+                    }
+
+                    try {
+                        TurnGateway(
+                            models = llamaCppGateway.availableModels(port),
+                            stream = { llamaCppGateway.stream(request) },
+                            unavailableCode = "llama_cpp_unavailable",
+                        )
+                    } catch (failure: RuntimeException) {
+                        logger.warn("requestId={} operation=model_validation result=llama_cpp_unavailable cause={}", call.callId, failure.javaClass.simpleName)
+                        call.respond(HttpStatusCode.ServiceUnavailable, ApiError("llama_cpp_unavailable", "The model service is unavailable."))
+                        return@post
+                    } catch (failure: IOException) {
+                        logger.warn("requestId={} operation=model_validation result=llama_cpp_unavailable cause={}", call.callId, failure.javaClass.simpleName)
+                        call.respond(HttpStatusCode.ServiceUnavailable, ApiError("llama_cpp_unavailable", "The model service is unavailable."))
+                        return@post
+                    }
+                }
             }
-            if (request.modelId !in models) {
+
+            if (request.modelId !in selectedGateway.models) {
                 call.respond(HttpStatusCode.NotFound, ApiError("model_not_found", "The requested model is unavailable."))
                 return@post
             }
@@ -119,7 +181,7 @@ fun Application.adventureModule(
             call.respondTextWriter(contentType = ContentType.Text.EventStream) {
                 try {
                     sseComment("connected")
-                    gateway.stream(request).collect { event ->
+                    selectedGateway.stream().collect { event ->
                         when (event) {
                             is TurnStreamEvent.Token -> sse("token", eventJson.encodeToString(StreamToken(event.text)))
                             is TurnStreamEvent.Done -> sse("done", eventJson.encodeToString(StreamDone(event.metrics)))
@@ -128,9 +190,9 @@ fun Application.adventureModule(
                 } catch (_: ClosedWriteChannelException) {
                     logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)
                 } catch (failure: Exception) {
-                    logger.warn("requestId={} operation=turn result=ollama_unavailable cause={}", call.callId, failure.javaClass.simpleName)
+                    logger.warn("requestId={} operation=turn result={} cause={}", call.callId, selectedGateway.unavailableCode, failure.javaClass.simpleName)
                     try {
-                        sse("error", eventJson.encodeToString(StreamError("ollama_unavailable", "The model service is unavailable.")))
+                        sse("error", eventJson.encodeToString(StreamError(selectedGateway.unavailableCode, "The model service is unavailable.")))
                     } catch (_: ClosedWriteChannelException) {
                         logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)
                     }
@@ -143,6 +205,14 @@ fun Application.adventureModule(
         staticResources("/", "ui", index = null)
     }
 }
+
+private data class TurnGateway(
+    val models: List<String>,
+    val stream: () -> Flow<TurnStreamEvent>,
+    val unavailableCode: String,
+)
+
+private fun invalidRequestError(): ApiError = ApiError("invalid_request", "Request contains invalid data.")
 
 object RequestValidator {
     fun validate(request: TurnRequest): ApiError? = when {
