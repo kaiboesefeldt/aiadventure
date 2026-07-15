@@ -316,6 +316,7 @@ private val DetailView = FC<DetailViewProps> { props ->
     var loadedSessions by useState<List<GameSession>>(emptyList())
     var sessionsLoaded by useState(false)
     var sessionError by useState<String?>(null)
+    val detailNavigable = canNavigateDetail(props.llamaCppPending)
     fun loadSessions() = scope.launch {
         sessionsLoaded = true
         runCatching { props.sessions() }.onSuccess { loadedSessions = it }.onFailure { sessionError = clientMessage(it) }
@@ -328,7 +329,8 @@ private val DetailView = FC<DetailViewProps> { props ->
             className = ClassName("view-header")
             ReactHTML.button {
                 className = ClassName("secondary-button")
-                onClick = { props.onBack() }
+                disabled = !detailNavigable
+                onClick = { if (detailNavigable) props.onBack() }
                 +"Back to library"
             }
             ReactHTML.h2 {
@@ -348,7 +350,8 @@ private val DetailView = FC<DetailViewProps> { props ->
         }
         ReactHTML.button {
             className = ClassName("secondary-button")
-            onClick = { props.onReloadModels() }
+            disabled = !detailNavigable
+            onClick = { if (detailNavigable) props.onReloadModels() }
             +"Reload models"
         }
         ReactHTML.div {
@@ -356,7 +359,8 @@ private val DetailView = FC<DetailViewProps> { props ->
             props.models.forEach { model ->
                 ReactHTML.button {
                     className = ClassName("action-row primary-button")
-                    onClick = { props.onCreate(model) }
+                    disabled = !detailNavigable
+                    onClick = { if (detailNavigable) props.onCreate(model) }
                     ReactHTML.span {
                         className = ClassName("action-row-title")
                         +"Start with $model"
@@ -463,7 +467,8 @@ private val DetailView = FC<DetailViewProps> { props ->
             loadedSessions.forEach { session ->
                 ReactHTML.button {
                     className = ClassName("action-row")
-                    onClick = { props.onResume(session) }
+                    disabled = !detailNavigable
+                    onClick = { if (detailNavigable) props.onResume(session) }
                     ReactHTML.span {
                         className = ClassName("action-row-title")
                         +session.title
@@ -638,6 +643,8 @@ internal fun shouldSubmitOnEnter(
 
 internal fun canStartLlamaCppSession(connection: LlamaCppConnectionState, pending: Boolean): Boolean =
     !pending && connection.startOnClick
+
+internal fun canNavigateDetail(pending: Boolean): Boolean = !pending
 
 internal class LlamaCppStartGuard {
     private var generation = 0
