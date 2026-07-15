@@ -175,6 +175,44 @@ class LlamaCppGatewayTest {
     }
 
     @Test
+    fun `does not time out an SSE stream after its response has started`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
+        val executor = Executors.newSingleThreadExecutor()
+        server.executor = executor
+        server.createContext("/v1/chat/completions") { exchange ->
+            exchange.requestBody.close()
+            exchange.responseHeaders.add("Content-Type", "text/event-stream")
+            exchange.sendResponseHeaders(200, 0)
+            Thread.sleep(200)
+            exchange.responseBody.bufferedWriter().use { writer ->
+                writer.write("data: {\"choices\":[{\"delta\":{\"content\":\"late\"}}]}\n\n")
+                writer.write("data: [DONE]\n\n")
+                writer.flush()
+            }
+        }
+        server.start()
+
+        try {
+            val gateway = LlamaCppGateway(
+                httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build(),
+                promptFactory = PromptFactory(),
+                requestTimeout = Duration.ofMillis(100),
+            )
+
+            assertEquals(
+                listOf(
+                    TurnStreamEvent.Token("late"),
+                    TurnStreamEvent.Done(TurnMetrics(null, null, null)),
+                ),
+                gateway.stream(request(server.address.port)).toList(),
+            )
+        } finally {
+            server.stop(0)
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
     fun `fails when the upstream stream ends before DONE`() = runBlocking {
         val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
         val executor = Executors.newSingleThreadExecutor()

@@ -65,7 +65,6 @@ class LlamaCppGateway(
                     val response = runInterruptible {
                         val received = httpClient.send(
                             HttpRequest.newBuilder(endpoint(port, "/v1/chat/completions"))
-                                .timeout(requestTimeout)
                                 .header("Accept", "text/event-stream")
                                 .header("Content-Type", "application/json")
                                 .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(payload)))

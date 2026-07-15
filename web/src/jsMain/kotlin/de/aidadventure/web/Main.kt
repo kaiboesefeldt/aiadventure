@@ -25,6 +25,7 @@ import react.dom.client.createRoot
 import react.dom.flushSync
 import react.dom.html.ReactHTML
 import react.useState
+import react.useEffect
 import web.cssom.ClassName
 import web.dom.document
 import web.file.File
@@ -71,7 +72,7 @@ private sealed interface View {
     data class Play(val scenario: Scenario, val session: GameSession) : View
 }
 
-private val AdventureApp = FC<AdventureAppProps> { props ->
+internal val AdventureApp = FC<AdventureAppProps> { props ->
     var view by useState<View>(View.Library)
     var scenarios by useState(props.initialScenarios)
     var importError by useState<String?>(null)
@@ -135,9 +136,9 @@ private val AdventureApp = FC<AdventureAppProps> { props ->
                 this.models = models
                 modelError = modelLoadError
                 api = props.api
-                llamaCppConnection = llamaCppConnection
+                this.llamaCppConnection = llamaCppConnection
                 llamaCppSession = current.llamaCppSession
-                llamaCppPending = llamaCppPending
+                this.llamaCppPending = llamaCppPending
                 sessions = { props.sessionRepository.list().filter { it.scenarioId == current.scenario.id } }
                 onBack = {
                     llamaCppDiscoveryGuard.activate(null)
@@ -306,7 +307,7 @@ private fun ChildrenBuilder.libraryView(
     }
 }
 
-private external interface DetailViewProps : Props {
+internal external interface DetailViewProps : Props {
     var scenario: Scenario
     var models: List<String>
     var modelError: String?
@@ -324,16 +325,19 @@ private external interface DetailViewProps : Props {
     var onReloadModels: () -> Unit
 }
 
-private val DetailView = FC<DetailViewProps> { props ->
+internal val DetailView = FC<DetailViewProps> { props ->
     var loadedSessions by useState<List<GameSession>>(emptyList())
     var sessionsLoaded by useState(false)
     var sessionError by useState<String?>(null)
     val detailNavigable = canNavigateDetail(props.llamaCppPending)
-    fun loadSessions() = scope.launch {
-        sessionsLoaded = true
-        runCatching { props.sessions() }.onSuccess { loadedSessions = it }.onFailure { sessionError = clientMessage(it) }
+    useEffect(dependencies = emptyArray()) {
+        if (!sessionsLoaded && sessionError == null) {
+            sessionsLoaded = true
+            scope.launch {
+                runCatching { props.sessions() }.onSuccess { loadedSessions = it }.onFailure { sessionError = clientMessage(it) }
+            }
+        }
     }
-    if (!sessionsLoaded && sessionError == null) loadSessions()
 
     ReactHTML.section {
         className = ClassName("view-card")
