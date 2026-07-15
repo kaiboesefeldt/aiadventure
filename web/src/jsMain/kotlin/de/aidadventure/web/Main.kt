@@ -433,7 +433,7 @@ private val DetailView = FC<DetailViewProps> { props ->
                                     ?: throw IllegalStateException("No llama.cpp models are available on this port.")
                             }.onSuccess { model ->
                                 if (llamaCppDiscoveryGuard.accepts(discovery)) {
-                                    props.onLlamaCppConnectionChanged(props.llamaCppConnection.connected(model))
+                                    props.onLlamaCppConnectionChanged(props.llamaCppConnection.discovered(model))
                                     props.onLlamaCppPendingChanged(false)
                                 }
                             }.onFailure { failure ->
@@ -691,18 +691,19 @@ internal data class LlamaCppConnectionState(
 
     fun withPortText(portText: String): LlamaCppConnectionState = copy(
         portText = portText,
-        modelId = "",
         checked = false,
         error = null,
     )
 
     fun withoutError(): LlamaCppConnectionState = copy(error = null)
 
-    fun connected(modelId: String): LlamaCppConnectionState = copy(
-        modelId = modelId,
-        checked = true,
-        error = null,
-    )
+    fun discovered(discoveredModelId: String): LlamaCppConnectionState = when {
+        modelId.isBlank() -> copy(modelId = discoveredModelId, checked = true, error = null)
+        modelId == discoveredModelId -> copy(checked = true, error = null)
+        else -> failed(
+            "The discovered llama.cpp model \"$discoveredModelId\" does not match this saved session's model \"$modelId\".",
+        )
+    }
 
     fun failed(error: String): LlamaCppConnectionState = copy(
         checked = false,

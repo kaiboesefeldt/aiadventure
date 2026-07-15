@@ -16,7 +16,7 @@ class LlamaCppConnectionStateTest {
 
     @Test
     fun `successful discovery locks the port and enables session start`() {
-        val checked = LlamaCppConnectionState.initial().connected("local-model")
+        val checked = LlamaCppConnectionState.initial().discovered("local-model")
 
         assertEquals("local-model", checked.modelId)
         assertFalse(checked.portEditable)
@@ -25,7 +25,7 @@ class LlamaCppConnectionStateTest {
 
     @Test
     fun `pending session start rejects a duplicate start`() {
-        val checked = LlamaCppConnectionState.initial().connected("local-model")
+        val checked = LlamaCppConnectionState.initial().discovered("local-model")
 
         assertTrue(canStartLlamaCppSession(checked, pending = false))
         assertFalse(canStartLlamaCppSession(checked, pending = true))
@@ -34,13 +34,49 @@ class LlamaCppConnectionStateTest {
     @Test
     fun `failed discovery makes the port editable again`() {
         val failed = LlamaCppConnectionState.initial()
-            .connected("local-model")
+            .discovered("local-model")
             .failed("service unavailable")
 
         assertTrue(failed.portEditable)
         assertEquals("service unavailable", failed.error)
         assertFalse(failed.startOnClick)
         assertFalse(canStartLlamaCppSession(failed, pending = false))
+    }
+
+    @Test
+    fun `reopened session rejects a different discovered model without replacing its model`() {
+        val rechecked = LlamaCppConnectionState.initial(port = 8081, modelId = "saved-model")
+            .withPortText("8082")
+            .discovered("different-model")
+
+        assertEquals("8082", rechecked.portText)
+        assertEquals("saved-model", rechecked.modelId)
+        assertTrue(rechecked.portEditable)
+        assertFalse(rechecked.startOnClick)
+        assertEquals(
+            "The discovered llama.cpp model \"different-model\" does not match this saved session's model \"saved-model\".",
+            rechecked.error,
+        )
+    }
+
+    @Test
+    fun `reopened session accepts a matching discovered model`() {
+        val rechecked = LlamaCppConnectionState.initial(port = 8081, modelId = "saved-model")
+            .withPortText("8082")
+            .discovered("saved-model")
+
+        assertEquals("saved-model", rechecked.modelId)
+        assertFalse(rechecked.portEditable)
+        assertTrue(rechecked.startOnClick)
+    }
+
+    @Test
+    fun `new session adopts its first discovered model`() {
+        val checked = LlamaCppConnectionState.initial().discovered("first-model")
+
+        assertEquals("first-model", checked.modelId)
+        assertFalse(checked.portEditable)
+        assertTrue(checked.startOnClick)
     }
 
     @Test
