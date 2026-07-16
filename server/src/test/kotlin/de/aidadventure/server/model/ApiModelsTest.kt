@@ -3,17 +3,16 @@ package de.aidadventure.server.model
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
 
 class ApiModelsTest {
     @Test
-    fun `old turn JSON defaults to Ollama`() {
+    fun `turn JSON carries a live session and llama port`() {
         val request = Json.decodeFromString<TurnRequest>("""
-            {"modelId":"small","scenarioMarkdown":"# S","history":[],"playerAction":"look"}
+            {"sessionId":"live-1","modelId":"small","llamaCppPort":8081,"scenarioMarkdown":"# S","history":[],"playerAction":"look"}
         """)
 
-        assertEquals(ModelProvider.OLLAMA, request.provider)
-        assertNull(request.llamaCppPort)
+        assertEquals("live-1", request.sessionId)
+        assertEquals(8081, request.llamaCppPort)
     }
 
     @Test

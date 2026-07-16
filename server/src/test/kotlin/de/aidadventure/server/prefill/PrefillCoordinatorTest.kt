@@ -193,12 +193,12 @@ class PrefillCoordinatorTest {
     )
 
     private fun turn(action: String) = TurnRequest(
+        sessionId = "session",
         modelId = "model",
+        llamaCppPort = 8081,
         scenarioMarkdown = "# Scenario",
         history = emptyList(),
         playerAction = action,
-        llamaCppPort = 8081,
-        sessionId = "session",
     )
 
     private class ControllableGateway(

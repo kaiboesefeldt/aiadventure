@@ -12,7 +12,7 @@ class PromptFactoryTest {
     @Test
     fun `build keeps immutable prefix before history and action`() {
         val prompt = PromptFactory().build(
-            TurnRequest("test-model", "# Harbor", listOf(ChatEntry("player", "look")), "open door"),
+            TurnRequest("live-1", "test-model", 8081, "# Harbor", listOf(ChatEntry("player", "look")), "open door"),
         )
 
         assertEquals(listOf("system", "system", "user", "user"), prompt.map { it.type().name.lowercase() })
@@ -25,7 +25,7 @@ class PromptFactoryTest {
     fun `build rejects unknown history roles`() {
         assertFailsWith<IllegalArgumentException> {
             PromptFactory().build(
-                TurnRequest("test-model", "# Harbor", listOf(ChatEntry("narrator", "look")), "open door"),
+                TurnRequest("live-1", "test-model", 8081, "# Harbor", listOf(ChatEntry("narrator", "look")), "open door"),
             )
         }
     }

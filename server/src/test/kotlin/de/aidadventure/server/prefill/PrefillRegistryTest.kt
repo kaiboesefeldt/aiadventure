@@ -10,6 +10,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotSame
@@ -57,7 +59,12 @@ class PrefillRegistryTest {
         gateway.prefillCompletion.complete(Unit)
         gateway.prefillFinished.await()
         now += 100
-        registry.removeIdle(now)
+        withTimeout(5_000) {
+            while (gateway.releaseAttempts == 0) {
+                registry.removeIdle(now)
+                yield()
+            }
+        }
 
         assertEquals(1, gateway.releaseAttempts)
         assertNotSame(coordinator, registry.coordinatorFor(key))

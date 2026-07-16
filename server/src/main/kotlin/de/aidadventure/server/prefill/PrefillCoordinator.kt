@@ -3,7 +3,6 @@ package de.aidadventure.server.prefill
 import de.aidadventure.server.llamacpp.CacheMetrics
 import de.aidadventure.server.llamacpp.LlamaCppGateway
 import de.aidadventure.server.llamacpp.LlamaCppSlot
-import de.aidadventure.server.model.ModelProvider
 import de.aidadventure.server.model.PrefillDisposition
 import de.aidadventure.server.model.PrefillRequest
 import de.aidadventure.server.model.TurnRequest
@@ -266,9 +265,8 @@ internal class SessionPrefillCoordinator(
         failure
     }
 
-    private fun acquireLease(port: Int?): Lease {
-        val requiredPort = requireNotNull(port) { "llama.cpp port is required." }
-        return Lease(requiredPort, slotLeases.acquire(requiredPort))
+    private fun acquireLease(port: Int): Lease {
+        return Lease(port, slotLeases.acquire(port))
     }
 
     private fun releaseLeaseLocked(lease: Lease) {
@@ -282,13 +280,12 @@ internal class SessionPrefillCoordinator(
     }
 
     private fun PrefillRequest.toTurnRequest() = TurnRequest(
+        sessionId = sessionId,
         modelId = modelId,
+        llamaCppPort = llamaCppPort,
         scenarioMarkdown = scenarioMarkdown,
         history = history,
         playerAction = playerAction,
-        provider = ModelProvider.LLAMA_CPP,
-        llamaCppPort = llamaCppPort,
-        sessionId = sessionId,
     )
 
     private inner class TurnExecution(private val request: TurnRequest) {

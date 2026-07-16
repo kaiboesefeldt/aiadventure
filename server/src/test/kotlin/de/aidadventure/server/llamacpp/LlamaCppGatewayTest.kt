@@ -4,7 +4,6 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import de.aidadventure.server.game.PromptFactory
 import de.aidadventure.server.model.ChatEntry
-import de.aidadventure.server.model.ModelProvider
 import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
@@ -89,12 +88,12 @@ class LlamaCppGatewayTest {
     }
 
     private fun request(port: Int) = TurnRequest(
+        sessionId = "live-1",
         modelId = "local-model",
+        llamaCppPort = port,
         scenarioMarkdown = "# Forest",
         history = listOf(ChatEntry("player", "Look around"), ChatEntry("game-master", "Misty trees surround you.")),
         playerAction = "Follow the path",
-        provider = ModelProvider.LLAMA_CPP,
-        llamaCppPort = port,
     )
 
     private fun nativeServer(templatePrompt: String = "templated prompt"): NativeServer {

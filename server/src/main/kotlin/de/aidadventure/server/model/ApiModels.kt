@@ -9,17 +9,13 @@ data class ChatEntry(
 )
 
 @Serializable
-enum class ModelProvider { OLLAMA, LLAMA_CPP }
-
-@Serializable
 data class TurnRequest(
+    val sessionId: String,
     val modelId: String,
+    val llamaCppPort: Int,
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val playerAction: String,
-    val provider: ModelProvider = ModelProvider.OLLAMA,
-    val llamaCppPort: Int? = null,
-    val sessionId: String = "",
 )
 
 @Serializable
@@ -27,7 +23,7 @@ data class PrefillRequest(
     val sessionId: String,
     val revision: Long,
     val modelId: String,
-    val llamaCppPort: Int?,
+    val llamaCppPort: Int,
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val playerAction: String,
