@@ -7,6 +7,7 @@ import de.aidadventure.server.model.ChatEntry
 import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
+import de.aidadventure.server.model.WarmupRequest
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.util.concurrent.Executors
@@ -24,6 +25,27 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class LlamaCppGatewayTest {
+    @Test
+    fun `warmup evaluates action-free template without generation`() = runBlocking {
+        nativeServer().use { server ->
+            val metrics = LlamaCppGateway(promptFactory = PromptFactory()).warmup(warmup(server.port), LlamaCppSlot(2))
+
+            assertEquals(listOf("/apply-template", "/completion"), server.paths)
+            assertEquals(
+                listOf("system", "system"),
+                server.templateBodies.single().jsonObject.getValue("messages").jsonArray.map {
+                    it.jsonObject.getValue("role").jsonPrimitive.content
+                },
+            )
+            val body = server.completionBodies.single().jsonObject
+            assertEquals(2, body.getValue("id_slot").jsonPrimitive.int)
+            assertTrue(body.getValue("cache_prompt").jsonPrimitive.boolean)
+            assertEquals(0, body.getValue("n_predict").jsonPrimitive.int)
+            assertEquals(false, body.getValue("stream").jsonPrimitive.boolean)
+            assertEquals(CacheMetrics(17, 3), metrics)
+        }
+    }
+
     @Test
     fun `prefill evaluates the templated prompt without generation`() = runBlocking {
         nativeServer().use { server ->
@@ -103,6 +125,14 @@ class LlamaCppGatewayTest {
         scenarioMarkdown = "# Forest",
         history = listOf(ChatEntry("player", "Look around"), ChatEntry("game-master", "Misty trees surround you.")),
         playerAction = "Follow the path",
+    )
+
+    private fun warmup(port: Int) = WarmupRequest(
+        sessionId = "live-1",
+        modelId = "local-model",
+        llamaCppPort = port,
+        scenarioMarkdown = "# Forest",
+        history = emptyList(),
     )
 
     private fun nativeServer(

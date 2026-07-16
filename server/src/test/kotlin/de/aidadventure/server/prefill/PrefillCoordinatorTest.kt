@@ -9,7 +9,10 @@ import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.model.WarmupRequest
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
@@ -36,6 +39,37 @@ class PrefillCoordinatorTest {
         turn.await()
 
         assertEquals(fake.warmupSlots.single(), fake.turnSlots.single())
+        coordinator.close()
+    }
+
+    @Test
+    fun `completed warmup retains its slot for the next prefill`() = runBlocking {
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+
+        assertEquals(PrefillDisposition.STARTED, coordinator.warmup(warmup()))
+        fake.awaitWarmup()
+        fake.completeWarmup()
+        assertEquals(PrefillDisposition.STARTED, coordinator.submit(prefill(1, "open")))
+        fake.awaitPrefill(1)
+
+        assertEquals(fake.warmupSlots.single(), fake.prefillSlots.single())
+        assertTrue(fake.releasedSlots.isEmpty())
+        coordinator.close()
+    }
+
+    @Test
+    fun `warmup during an active prefill is ignored as stale`() = runBlocking {
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake)
+
+        coordinator.submit(prefill(1, "open"))
+        fake.awaitPrefill(1)
+
+        assertEquals(PrefillDisposition.STALE, coordinator.warmup(warmup()))
+        fake.completePrefill(1)
+        fake.awaitPrefillCompletion(1)
+        assertTrue(fake.warmupSlots.isEmpty())
         coordinator.close()
     }
 

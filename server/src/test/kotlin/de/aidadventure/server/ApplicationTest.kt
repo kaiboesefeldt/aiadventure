@@ -119,6 +119,37 @@ class ApplicationTest {
     }
 
     @Test
+    fun `invalid warmup context avoids registry and coordinator calls`() = testApplication {
+        val registry = FakeRegistry()
+        application { adventureModule(prefillRegistry = registry) }
+        configureJsonClient()
+
+        listOf(
+            WarmupRequest("", "local-model", 8081, "# Scenario", emptyList()),
+            WarmupRequest("live-1", "", 8081, "# Scenario", emptyList()),
+            WarmupRequest("live-1", "local-model", 0, "# Scenario", emptyList()),
+            WarmupRequest("live-1", "local-model", 8081, "", emptyList()),
+            WarmupRequest(
+                "live-1",
+                "local-model",
+                8081,
+                "# Scenario",
+                listOf(de.aidadventure.server.model.ChatEntry("invalid", "history")),
+            ),
+        ).forEach { request ->
+            val response = client.post("/api/warmup") {
+                contentType(ContentType.Application.Json)
+                setBody(request)
+            }
+            assertEquals(HttpStatusCode.BadRequest, response.status)
+        }
+
+        assertTrue(registry.idleCleanupTimes.isEmpty())
+        assertTrue(registry.keys.isEmpty())
+        assertTrue(registry.coordinator.warmupRequests.isEmpty())
+    }
+
+    @Test
     fun `prefill runs TTL cleanup with the injected clock before using a coordinator`() = testApplication {
         val registry = FakeRegistry()
         application { adventureModule(prefillRegistry = registry, clock = { 1234L }) }

@@ -120,7 +120,7 @@ internal class SessionPrefillCoordinator(
                 PrefillDisposition.STARTED
             }
 
-            is State.Prefilling -> PrefillDisposition.QUEUED
+            is State.Prefilling -> PrefillDisposition.STALE
 
             is State.Ready -> {
                 startWarmupLocked(request, current.lease)
