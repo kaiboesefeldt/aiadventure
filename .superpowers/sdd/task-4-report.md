@@ -1,43 +1,77 @@
-# Task 4 Report: Ktor llama.cpp prefill API and Ollama removal
+# Task 4 review
 
-## Implementation
+## Scope
 
-- Replaced provider-specific model discovery with `GET /api/models?port=<llama.cpp port>`.
-- Added `POST /api/prefill`, which validates the live session identity and non-negative revision, submits to the keyed coordinator, and returns `202 Accepted` with `PrefillAccepted`.
-- Routed `POST /api/turn` through the same `(sessionId, modelId, port)` coordinator after llama.cpp model validation; SSE remains the only turn-output path.
-- Made server turn/prefill DTOs llama.cpp-only, including a required session ID and port.
-- Removed the Ollama gateway, its dependency, Koin wiring, provider branches, model catalog, and Ollama-only tests.
-- Retained the direct `langchain4j` dependency because `PromptFactory` and the native llama.cpp template gateway use its message types; the removed `langchain4j-ollama` dependency is no longer present.
-- Stabilized the existing registry TTL test by waiting for the coordinator's actual release condition rather than racing its asynchronous prefill-completion callback.
+- Plan: `docs/superpowers/plans/2026-07-15-llama-cpp-prefill-cache.md`, Task 4 (`L280-L330`).
+- Range: `f781a81..0c4be0e`.
+- Verdict: **REQUEST CHANGES**.
+- Tests: not rerun. The concrete doubts below are not exercised by the current route fakes, so rerunning the existing suite would not resolve them.
 
-## Strict TDD evidence
+## Findings
 
-RED:
+### P1 — Production never runs registry TTL cleanup
 
-```text
-./gradlew :server:test --tests de.aidadventure.server.ApplicationTest.prefill accepts without waiting for evaluation
-BUILD FAILED
-```
+`server/src/main/kotlin/de/aidadventure/server/Application.kt:L68-L71`: `adventureModule` omits the Task 4 `clock` input and constructs the registry, but neither route calls `removeIdle`; `Application.kt:L107-L109` and `L133-L134` only call `coordinatorFor`. `server/src/main/kotlin/de/aidadventure/server/prefill/PrefillRegistry.kt:L46-L62` shows that expiry and coordinator closure happen only when `removeIdle` is explicitly invoked. Consequently, production entries and their llama.cpp slot leases remain for the process lifetime, so the registry is not bounded and inactive sessions can permanently exhaust available slots. Inject/use the clock and invoke lifecycle- or request-driven idle cleanup before acquiring coordinators, with safe failure handling.
 
-The new endpoint test received the absent-route result instead of `202 Accepted`.
+### P1 — `/api/turn` claims coordinator state before the SSE writer owns it
 
-GREEN:
+`docs/superpowers/plans/2026-07-15-llama-cpp-prefill-cache.md:L318` requires `beginTurn` inside the existing SSE writer. Instead, `server/src/main/kotlin/de/aidadventure/server/Application.kt:L133-L139` calls `beginTurn` first and only then installs the writer. `server/src/main/kotlin/de/aidadventure/server/prefill/PrefillCoordinator.kt:L106-L124` moves the coordinator to `TurnWaiting`/`Turning` when `beginTurn` returns, while cleanup is tied to collecting the returned flow. If response startup or the client connection ends before collection begins, the coordinator can retain turn ownership and its slot indefinitely. Move coordinator lookup, `beginTurn`, and collection into the writer's guarded lifecycle so failures remain client-safe SSE errors and collector cancellation releases ownership.
 
-```text
-./gradlew :server:test --tests de.aidadventure.server.ApplicationTest
-BUILD SUCCESSFUL
-```
+### P1 — Synchronous slot I/O bypasses safe route error mapping
 
-The focused route suite covers llama.cpp discovery, missing-port rejection, prompt prefill acceptance, invalid identity/revision rejection without registry access, coordinated SSE turns, and unknown-model rejection.
+`server/src/main/kotlin/de/aidadventure/server/Application.kt:L108-L112` catches only `RuntimeException` around prefill submission; the analogous turn-acquisition guard at `L133-L137` does the same. Both paths can acquire a slot synchronously (`PrefillCoordinator.kt:L72-L82`, `L172-L174`, and `L190-L195`), and `server/src/main/kotlin/de/aidadventure/server/llamacpp/LlamaCppGateway.kt:L59-L66` uses `HttpClient.send`, whose refused/failed connection path is `IOException`, not `RuntimeException`. A llama.cpp disconnect during slot acquisition therefore escapes the request-ID-safe `llama_cpp_unavailable` mapping instead of returning the intended safe 503/SSE error. Handle `IOException` explicitly (while preserving cancellation), and add focused refused-connection coverage for prefill and turn slot acquisition.
 
-## Verification
+## Requirement audit
 
-The first aggregate server run exposed a timing race in the pre-existing Task 3 TTL test: its gateway completion signal preceded the coordinator's state transition. The test now conditionally retries TTL cleanup until the observed release condition, with a bounded timeout; no production concurrency behavior changed.
+### PASS — llama.cpp-only model endpoint
 
-```text
-./gradlew check
-BUILD SUCCESSFUL in 10s
-27 actionable tasks: 2 executed, 25 up-to-date
-```
+- `server/src/main/kotlin/de/aidadventure/server/Application.kt:L91-L99` validates `port` and delegates `/api/models` to `LlamaCppGateway.availableModels(port)` with safe 503 mapping.
+- `server/src/test/kotlin/de/aidadventure/server/ApplicationTest.kt:L61-L82` covers successful discovery and missing-port rejection.
+- No provider branch or Ollama gateway remains in the route.
 
-`rg -n -i 'ollama|ModelProvider' server --glob '!build/**'` produced no matches, and `git diff --check` produced no whitespace errors.
+### PARTIAL — `POST /api/prefill` returns 202 without awaiting evaluation
+
+- `server/src/main/kotlin/de/aidadventure/server/Application.kt:L101-L112` validates before registry lookup and returns `202 Accepted` with `PrefillAccepted` after `submit`.
+- `server/src/main/kotlin/de/aidadventure/server/prefill/PrefillCoordinator.kt:L172-L187` launches evaluation asynchronously, so the happy path does not wait for prompt evaluation.
+- Safe failure behavior is incomplete because synchronous slot-acquisition `IOException` is unhandled (finding 3).
+
+### PARTIAL — coordinator-owned SSE turn
+
+- `server/src/main/kotlin/de/aidadventure/server/Application.kt:L120-L147` validates the selected model, resolves the coordinator by `(sessionId, modelId, port)`, and emits `token`/`done` SSE events.
+- Coordinator ownership begins outside the SSE writer, violating the Task 4 lifecycle requirement (finding 2).
+
+### PASS — validation and handled-path logging
+
+- `server/src/main/kotlin/de/aidadventure/server/Application.kt:L193-L220` rejects negative revisions, blank/oversized session IDs, invalid model/port/scenario/action/history data before registry lookup; `L228-L233` defines the required bounds.
+- `server/src/main/kotlin/de/aidadventure/server/Application.kt:L149-L155` and `L172-L178` log request ID, operation, safe result, and exception class only; no scenario, history, action, prompt, or model output is logged.
+- `server/src/main/kotlin/de/aidadventure/server/prefill/PrefillRegistry.kt:L73-L91` logs only a SHA-256-derived opaque coordinator key.
+- Unhandled slot `IOException` still bypasses this route-level discipline (finding 3).
+
+### PASS — Ollama server removal
+
+- `server/build.gradle.kts:L14-L27` contains no `langchain4j-ollama` dependency; the remaining direct `langchain4j` dependency supplies message types used by the llama.cpp prompt path.
+- `server/src/main/kotlin/de/aidadventure/server/model/ApiModels.kt:L12-L36` contains llama.cpp-only request DTOs and no `ModelProvider`.
+- Range deletions include `server/.../ollama/OllamaGateway.kt` and all four requested Ollama test files.
+- `rg -n -i "ollama|ModelProvider|langchain4j-ollama" server` produced no source/test/build matches.
+
+## Review verification
+
+- `git diff --check f781a81..0c4be0e`: clean.
+- Worktree mutation is limited to this report; the pre-existing `.superpowers/sdd/task-2-report.md` modification was preserved.
+
+## Review-finding fixes (2026-07-16)
+
+- `adventureModule` now receives an injectable clock and runs `removeIdle(clock())` before prefill coordinator use and from the active SSE writer before turn coordinator ownership. This gives the registry a request-driven, safe cleanup cadence.
+- `/api/turn` now writes its SSE connection marker before resolving the coordinator and calling `beginTurn`; writer setup failure therefore cannot claim a turn. Cancellation continues to propagate rather than being converted into an SSE error.
+- Prefill maps `IOException` from synchronous cleanup or slot acquisition to the existing request-ID-safe `503 llama_cpp_unavailable` response. Turn does the equivalent from its SSE writer through the existing safe `error` event.
+
+### Test-first evidence
+
+1. The injected-clock cleanup regression initially failed to compile because `adventureModule` had no `clock` input.
+2. The prefill slot-acquisition I/O regression initially failed because the `IOException` bypassed the runtime-only route mapping.
+3. The turn slot-acquisition I/O regression initially failed because ownership was claimed before the SSE writer and no cleanup ran; the route did not emit the safe SSE error.
+4. Each focused regression passed after its minimal route change.
+
+### Verification
+
+- `./gradlew :server:test --tests de.aidadventure.server.ApplicationTest --tests de.aidadventure.server.prefill.PrefillCoordinatorTest --tests de.aidadventure.server.prefill.PrefillRegistryTest` — passed.

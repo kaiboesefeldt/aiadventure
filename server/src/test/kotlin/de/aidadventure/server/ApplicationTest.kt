@@ -23,6 +23,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import java.io.IOException
 import io.ktor.serialization.kotlinx.json.json
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -99,6 +100,42 @@ class ApplicationTest {
     }
 
     @Test
+    fun `prefill runs TTL cleanup with the injected clock before using a coordinator`() = testApplication {
+        val registry = FakeRegistry()
+        application { adventureModule(prefillRegistry = registry, clock = { 1234L }) }
+        configureJsonClient()
+
+        val response = client.post("/api/prefill") {
+            contentType(ContentType.Application.Json)
+            setBody(prefillRequest())
+        }
+
+        assertEquals(HttpStatusCode.Accepted, response.status)
+        assertEquals(listOf(1234L), registry.idleCleanupTimes)
+        assertEquals(listOf(CoordinatorKey("live-1", "local-model", 8081)), registry.keys)
+    }
+
+    @Test
+    fun `prefill maps slot acquisition IO failure to model service unavailable`() = testApplication {
+        val registry = FakeRegistry().apply {
+            coordinator.submitFailure = IOException("slot service refused connection")
+        }
+        application { adventureModule(prefillRegistry = registry) }
+        configureJsonClient()
+
+        val response = client.post("/api/prefill") {
+            contentType(ContentType.Application.Json)
+            setBody(prefillRequest())
+        }
+
+        assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
+        assertEquals(
+            "{\"code\":\"llama_cpp_unavailable\",\"message\":\"The model service is unavailable.\"}",
+            response.bodyAsText(),
+        )
+    }
+
+    @Test
     fun `invalid session identity and revision avoid registry calls`() = testApplication {
         val registry = FakeRegistry()
         application { adventureModule(prefillRegistry = registry) }
@@ -144,6 +181,36 @@ class ApplicationTest {
     }
 
     @Test
+    fun `turn starts coordinator work inside the SSE writer and maps slot acquisition IO failure`() = testApplication {
+        llamaCppServer().use { llama ->
+            val registry = FakeRegistry().apply {
+                coordinator.beginTurnFailure = IOException("slot service refused connection")
+            }
+            application {
+                adventureModule(
+                    llamaCppGateway = LlamaCppGateway(),
+                    prefillRegistry = registry,
+                    clock = { 5678L },
+                )
+            }
+            configureJsonClient()
+
+            val response = client.post("/api/turn") {
+                contentType(ContentType.Application.Json)
+                setBody(turnRequest(port = llama.port))
+            }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(listOf(5678L), registry.idleCleanupTimes)
+            assertEquals(
+                ": connected\n\n" +
+                    "event: error\ndata: {\"code\":\"llama_cpp_unavailable\",\"message\":\"The model service is unavailable.\"}\n\n",
+                response.bodyAsText(),
+            )
+        }
+    }
+
+    @Test
     fun `turn rejects an unavailable selected model before coordinator use`() = testApplication {
         llamaCppServer().use { llama ->
             val registry = FakeRegistry()
@@ -172,6 +239,7 @@ class ApplicationTest {
 
     private class FakeRegistry : PrefillRegistry {
         val keys = mutableListOf<CoordinatorKey>()
+        val idleCleanupTimes = mutableListOf<Long>()
         val coordinator = FakeCoordinator()
 
         override fun coordinatorFor(key: CoordinatorKey): PrefillCoordinator {
@@ -181,20 +249,26 @@ class ApplicationTest {
 
         override suspend fun remove(key: CoordinatorKey) = Unit
 
-        override suspend fun removeIdle(nowMillis: Long) = Unit
+        override suspend fun removeIdle(nowMillis: Long) {
+            idleCleanupTimes += nowMillis
+        }
     }
 
     private class FakeCoordinator : PrefillCoordinator {
         val prefillRequests = mutableListOf<PrefillRequest>()
         val turnRequests = mutableListOf<TurnRequest>()
+        var submitFailure: Throwable? = null
+        var beginTurnFailure: Throwable? = null
 
         override suspend fun submit(request: PrefillRequest): PrefillDisposition {
             prefillRequests += request
+            submitFailure?.let { throw it }
             return PrefillDisposition.STARTED
         }
 
         override suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent> {
             turnRequests += request
+            beginTurnFailure?.let { throw it }
             return flowOf(
                 TurnStreamEvent.Token("The door opens."),
                 TurnStreamEvent.Done(TurnMetrics(null, 2, 1)),

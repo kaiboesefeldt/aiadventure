@@ -40,6 +40,7 @@ import io.ktor.utils.io.ClosedWriteChannelException
 import java.io.IOException
 import java.io.Writer
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -68,6 +69,7 @@ data class ServerRuntimeConfig(val host: String, val port: Int) {
 fun Application.adventureModule(
     llamaCppGateway: LlamaCppGateway = LlamaCppGateway(),
     prefillRegistry: PrefillRegistry = ExpiringPrefillRegistry(),
+    clock: () -> Long = System::currentTimeMillis,
 ) {
     val logger = LoggerFactory.getLogger("de.aidadventure.server.AdventureApi")
     install(ContentNegotiation) { json() }
@@ -106,8 +108,12 @@ fun Application.adventureModule(
             }
             val key = CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort)
             try {
+                prefillRegistry.removeIdle(clock())
                 call.respond(HttpStatusCode.Accepted, PrefillAccepted(prefillRegistry.coordinatorFor(key).submit(request)))
+            } catch (failure: IOException) {
+                call.respondLlamaUnavailable(logger, "prefill", failure)
             } catch (failure: RuntimeException) {
+                if (failure is CancellationException) throw failure
                 call.respondLlamaUnavailable(logger, "prefill", failure)
             }
         }
@@ -130,15 +136,13 @@ fun Application.adventureModule(
                 return@post
             }
 
-            val stream = try {
-                prefillRegistry.coordinatorFor(CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort)).beginTurn(request)
-            } catch (failure: RuntimeException) {
-                call.respondLlamaUnavailable(logger, "turn", failure)
-                return@post
-            }
             call.respondTextWriter(contentType = ContentType.Text.EventStream) {
                 try {
                     sseComment("connected")
+                    prefillRegistry.removeIdle(clock())
+                    val stream = prefillRegistry
+                        .coordinatorFor(CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort))
+                        .beginTurn(request)
                     stream.collect { event ->
                         when (event) {
                             is TurnStreamEvent.Token -> sse("token", eventJson.encodeToString(StreamToken(event.text)))
@@ -147,6 +151,8 @@ fun Application.adventureModule(
                     }
                 } catch (_: ClosedWriteChannelException) {
                     logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)
+                } catch (failure: CancellationException) {
+                    throw failure
                 } catch (failure: Exception) {
                     logger.warn("requestId={} operation=turn result=llama_cpp_unavailable cause={}", call.callId, failure.javaClass.simpleName)
                     try {
