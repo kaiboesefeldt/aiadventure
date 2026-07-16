@@ -24,7 +24,7 @@ class AdventureApiClient(
     }
 
     override suspend fun prefill(request: PrefillRequest): PrefillAccepted {
-        val response = browserFetch("/api/prefill", request)
+        val response = browserFetch("/api/prefill", encodePrefillRequest(request))
         if (response.status.unsafeCast<Int>() != 202) throw browserFailure(response)
         return streamJson.decodeFromString(response.text().unsafeCast<Promise<String>>().await())
     }
@@ -45,14 +45,14 @@ class AdventureApiClient(
     }
 
     private suspend fun browserFetchTurn(request: TurnRequest): dynamic {
-        return browserFetch("/api/turn", request)
+        return browserFetch("/api/turn", encodeTurnRequest(request))
     }
 
-    private suspend fun browserFetch(path: String, body: Any): dynamic {
+    private suspend fun browserFetch(path: String, body: String): dynamic {
         val options = js("({})")
         options.method = "POST"
         options.headers = js("({ 'Content-Type': 'application/json' })")
-        options.body = streamJson.encodeToString(body)
+        options.body = body
         return window.fetch("$normalizedBaseUrl$path", options).await()
     }
 
@@ -74,6 +74,12 @@ class AdventureApiClient(
         const val DEFAULT_LLAMA_CPP_PORT = 8081
     }
 }
+
+internal fun encodeTurnRequest(request: TurnRequest): String =
+    streamJson.encodeToString(TurnRequest.serializer(), request)
+
+internal fun encodePrefillRequest(request: PrefillRequest): String =
+    streamJson.encodeToString(PrefillRequest.serializer(), request)
 
 internal fun resolveAdventureApiBaseUrl(hostname: String, port: String): String = when {
     port == "8088" && hostname in setOf("localhost", "127.0.0.1") -> "http://$hostname:8080"
