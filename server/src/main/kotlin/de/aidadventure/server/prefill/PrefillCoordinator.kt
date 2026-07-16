@@ -239,15 +239,8 @@ internal class SessionPrefillCoordinator(
             }
 
             is State.Turning -> if (current.execution === execution && current.lease === lease) {
-                generation++
-                try {
-                    releaseLeaseLocked(current.lease)
-                    state = State.Idle
-                    null
-                } catch (failure: Throwable) {
-                    state = State.ReleasePending(current.lease)
-                    failure
-                }
+                state = State.Ready(current.lease)
+                null
             } else {
                 null
             }
