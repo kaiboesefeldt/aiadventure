@@ -95,6 +95,20 @@ class PrefillCoordinatorTest {
     }
 
     @Test
+    fun `completed turn retains its slot for the next prefill`() = runBlocking {
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake)
+
+        coordinator.beginTurn(turn("look")).toList()
+        coordinator.submit(prefill(1, "open"))
+        fake.awaitPrefill(1)
+
+        assertEquals(fake.turnSlots.single(), fake.prefillSlots.single())
+        assertTrue(fake.releasedSlots.isEmpty())
+        coordinator.close()
+    }
+
+    @Test
     fun `closing cancels and joins a running turn before releasing its slot`() = runBlocking {
         val events = mutableListOf<String>()
         val streamStarted = CompletableDeferred<Unit>()
