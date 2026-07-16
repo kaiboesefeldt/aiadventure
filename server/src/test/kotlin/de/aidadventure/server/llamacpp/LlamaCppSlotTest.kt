@@ -27,6 +27,22 @@ class LlamaCppSlotTest {
     }
 
     @Test
+    fun `acquires an idle slot when llama cpp omits task id`() {
+        slotServer(
+            """
+            [
+              {"id":0,"n_ctx":16384,"is_processing":false}
+            ]
+            """.trimIndent(),
+        ).use { server ->
+            val gateway = LlamaCppGateway()
+
+            assertEquals(LlamaCppSlot(0), gateway.acquireIdleSlot(server.port))
+            assertEquals(listOf("GET /slots", "POST /slots/0?action=erase"), server.requests)
+        }
+    }
+
+    @Test
     fun `does not erase an idle slot excluded by process lease ownership`() {
         slotServer(
             """
