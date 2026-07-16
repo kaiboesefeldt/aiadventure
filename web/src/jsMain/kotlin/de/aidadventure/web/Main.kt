@@ -159,7 +159,7 @@ private val PlayView = FC<PlayViewProps> { props ->
     fun submit() { val text = action.trim(); if (text.isBlank() || pending) return; prefill.turnStarted(); pending = true; action = ""; error = null; scope.launch { try {
         val completed = TurnSubmission(props.sessions, props.api).submit(props.session, props.scenario, text, { flushStreamUpdate { streamed = it } }, { flushStreamUpdate { streamed = it } }, liveId)
         metrics = completed.metrics; streamed = completed.session; props.onSessionChanged(completed.session)
-    } catch (failure: Throwable) { error = clientMessage(failure) } finally { pending = false } } }
+    } catch (failure: Throwable) { error = clientMessage(failure) } finally { prefill.turnFinished(); pending = false } } }
     ReactHTML.section { className = ClassName("view-card")
         ReactHTML.button { className = ClassName("secondary-button"); disabled = pending; onClick = { props.onBack() }; +"Back to sessions" }
         ReactHTML.h2 { className = ClassName("view-title"); +displayed.title }

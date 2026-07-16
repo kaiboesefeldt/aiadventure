@@ -40,6 +40,10 @@ internal class PrefillSubmission(
         pending?.let(scheduler::cancel)
         pending = null
     }
+
+    fun turnFinished() {
+        turnActive = false
+    }
 }
 
 private object BrowserPrefillScheduler : PrefillScheduler {

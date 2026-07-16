@@ -46,6 +46,22 @@ class PrefillSubmissionTest {
         assertTrue(api.prefilledActions.isEmpty())
     }
 
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `a completed turn allows prefill for the next action`() = GlobalScope.promise<Unit> {
+        val scheduler = ManualPrefillScheduler()
+        val api = RecordingAdventureApi()
+        val prefill = PrefillSubmission(api, scheduler)
+
+        prefill.turnStarted()
+        prefill.turnFinished()
+        prefill.changed(session(), scenario(), "live-1", "open the door")
+        scheduler.runAll()
+        nextTick()
+
+        assertEquals(listOf("open the door"), api.prefilledActions)
+    }
+
     @Test
     fun `clearing input cancels queued prefill`() {
         val scheduler = ManualPrefillScheduler()
