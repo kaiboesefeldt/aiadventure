@@ -14,7 +14,7 @@ class LlamaCppSlotTest {
             """
             [
               {"id":0,"is_processing":true,"id_task":-1},
-              {"id":1,"is_processing":false,"id_task":42},
+              {"id":1,"is_processing":true,"id_task":42},
               {"id":2,"is_processing":false,"id_task":-1}
             ]
             """.trimIndent(),
@@ -39,6 +39,22 @@ class LlamaCppSlotTest {
 
             assertEquals(LlamaCppSlot(0), gateway.acquireIdleSlot(server.port))
             assertEquals(listOf("GET /slots", "POST /slots/0?action=erase"), server.requests)
+        }
+    }
+
+    @Test
+    fun `acquires a completed slot that retains its task id`() {
+        slotServer(
+            """
+            [
+              {"id":1,"is_processing":false,"id_task":42}
+            ]
+            """.trimIndent(),
+        ).use { server ->
+            val gateway = LlamaCppGateway()
+
+            assertEquals(LlamaCppSlot(1), gateway.acquireIdleSlot(server.port))
+            assertEquals(listOf("GET /slots", "POST /slots/1?action=erase"), server.requests)
         }
     }
 
