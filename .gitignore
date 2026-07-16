@@ -10,3 +10,4 @@ kotlin-js-store/
 .env
 .env.*
 !.env.example
+.llama.cpp/
