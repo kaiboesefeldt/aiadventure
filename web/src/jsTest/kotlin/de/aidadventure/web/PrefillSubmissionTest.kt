@@ -5,6 +5,7 @@ import de.aidadventure.web.api.PrefillAccepted
 import de.aidadventure.web.api.PrefillRequest
 import de.aidadventure.web.api.TurnMetrics
 import de.aidadventure.web.api.TurnRequest
+import de.aidadventure.web.api.WarmupRequest
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
 import kotlin.test.Test
@@ -16,6 +17,18 @@ import kotlinx.coroutines.promise
 import kotlinx.coroutines.await
 
 class PrefillSubmissionTest {
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `resume warmup reaches API once with the stored session ID`() = GlobalScope.promise<Unit> {
+        val api = RecordingAdventureApi()
+
+        WarmupSubmission(api).submit(session(), scenario())
+        nextTick()
+
+        assertEquals(listOf("stored-1"), api.warmedSessionIds)
+        assertEquals(1, api.warmupRequests.size)
+    }
+
     @OptIn(DelicateCoroutinesApi::class)
     @Test
     fun `debounce sends only newest complete input`() = GlobalScope.promise<Unit> {
@@ -114,12 +127,19 @@ private class ManualPrefillScheduler : PrefillScheduler {
 private class RecordingAdventureApi : AdventureApi {
     val prefilledActions = mutableListOf<String>()
     val prefillRevisions = mutableListOf<Long>()
+    val warmupRequests = mutableListOf<WarmupRequest>()
+    val warmedSessionIds get() = warmupRequests.map { it.sessionId }
 
     override suspend fun models(port: Int): List<String> = emptyList()
 
     override suspend fun prefill(request: PrefillRequest): PrefillAccepted {
         prefilledActions += request.playerAction
         prefillRevisions += request.revision
+        return PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+    }
+
+    override suspend fun warmup(request: WarmupRequest): PrefillAccepted {
+        warmupRequests += request
         return PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
     }
 

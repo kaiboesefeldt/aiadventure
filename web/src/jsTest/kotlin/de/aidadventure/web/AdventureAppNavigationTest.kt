@@ -5,6 +5,7 @@ import de.aidadventure.web.api.PrefillAccepted
 import de.aidadventure.web.api.PrefillRequest
 import de.aidadventure.web.api.TurnMetrics
 import de.aidadventure.web.api.TurnRequest
+import de.aidadventure.web.api.WarmupRequest
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
 import de.aidadventure.web.persistence.ScenarioRepository
@@ -38,6 +39,7 @@ class AdventureAppNavigationTest {
                     api = object : AdventureApi {
                         override suspend fun models(port: Int) = listOf("local-model")
                         override suspend fun prefill(request: PrefillRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+                        override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
                         override suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics = error("unused")
                     }
                     initialScenarios = listOf(scenario)

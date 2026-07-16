@@ -12,6 +12,7 @@ import kotlinx.serialization.json.Json
 interface AdventureApi {
     suspend fun models(port: Int): List<String>
     suspend fun prefill(request: PrefillRequest): PrefillAccepted
+    suspend fun warmup(request: WarmupRequest): PrefillAccepted
     suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics
 }
 
@@ -25,6 +26,12 @@ class AdventureApiClient(
 
     override suspend fun prefill(request: PrefillRequest): PrefillAccepted {
         val response = browserFetch("/api/prefill", encodePrefillRequest(request))
+        if (response.status.unsafeCast<Int>() != 202) throw browserFailure(response)
+        return streamJson.decodeFromString(response.text().unsafeCast<Promise<String>>().await())
+    }
+
+    override suspend fun warmup(request: WarmupRequest): PrefillAccepted {
+        val response = browserFetch("/api/warmup", encodeWarmupRequest(request))
         if (response.status.unsafeCast<Int>() != 202) throw browserFailure(response)
         return streamJson.decodeFromString(response.text().unsafeCast<Promise<String>>().await())
     }
@@ -80,6 +87,9 @@ internal fun encodeTurnRequest(request: TurnRequest): String =
 
 internal fun encodePrefillRequest(request: PrefillRequest): String =
     streamJson.encodeToString(PrefillRequest.serializer(), request)
+
+internal fun encodeWarmupRequest(request: WarmupRequest): String =
+    streamJson.encodeToString(WarmupRequest.serializer(), request)
 
 internal fun resolveAdventureApiBaseUrl(hostname: String, port: String): String = when {
     port == "8088" && hostname in setOf("localhost", "127.0.0.1") -> "http://$hostname:8080"
@@ -161,6 +171,16 @@ object PrefillRequestMapper {
     )
 }
 
+object WarmupRequestMapper {
+    fun map(session: GameSession, scenario: Scenario): WarmupRequest = WarmupRequest(
+        sessionId = session.id,
+        modelId = session.modelId,
+        llamaCppPort = session.llamaCppPort,
+        scenarioMarkdown = scenario.markdown,
+        history = session.messages.map { ChatEntry(it.role, it.content) },
+    )
+}
+
 @Serializable
 data class ChatEntry(val role: String, val content: String)
 
@@ -183,6 +203,15 @@ data class PrefillRequest(
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val playerAction: String,
+)
+
+@Serializable
+data class WarmupRequest(
+    val sessionId: String,
+    val modelId: String,
+    val llamaCppPort: Int,
+    val scenarioMarkdown: String,
+    val history: List<ChatEntry>,
 )
 
 @Serializable
