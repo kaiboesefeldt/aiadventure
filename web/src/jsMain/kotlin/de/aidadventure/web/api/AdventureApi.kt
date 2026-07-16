@@ -2,42 +2,31 @@ package de.aidadventure.web.api
 
 import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
-import de.aidadventure.web.model.ModelProvider
 import de.aidadventure.web.model.Scenario
 import kotlinx.browser.window
 import kotlinx.coroutines.await
-import io.ktor.client.HttpClient
-import io.ktor.client.call.body
-import io.ktor.client.engine.js.Js
-import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.client.request.get
-import io.ktor.http.isSuccess
-import io.ktor.serialization.kotlinx.json.json
 import kotlin.js.Promise
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 interface AdventureApi {
-    suspend fun models(): List<String>
-    suspend fun llamaCppModels(port: Int): List<String>
+    suspend fun models(port: Int): List<String>
+    suspend fun prefill(request: PrefillRequest): PrefillAccepted
     suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics
 }
 
 class AdventureApiClient(
     private val baseUrl: String = resolveAdventureApiBaseUrl(window.location.hostname, window.location.port),
-    private val client: HttpClient = HttpClient(Js) {
-        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
-        expectSuccess = false
-    },
 ) : AdventureApi {
-    override suspend fun models(): List<String> {
-        val response = client.get("$normalizedBaseUrl/api/models")
-        return response.requireSuccess().body<ModelsResponse>().models
+    override suspend fun models(port: Int): List<String> {
+        val response = requireBrowserSuccess(window.fetch("$normalizedBaseUrl/api/models?port=$port").await())
+        return streamJson.decodeFromString<ModelsResponse>(response.text().unsafeCast<Promise<String>>().await()).models
     }
 
-    override suspend fun llamaCppModels(port: Int): List<String> {
-        val response = client.get("$normalizedBaseUrl/api/llama/models?port=$port")
-        return response.requireSuccess().body<ModelsResponse>().models
+    override suspend fun prefill(request: PrefillRequest): PrefillAccepted {
+        val response = browserFetch("/api/prefill", request)
+        if (response.status.unsafeCast<Int>() != 202) throw browserFailure(response)
+        return streamJson.decodeFromString(response.text().unsafeCast<Promise<String>>().await())
     }
 
     override suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics {
@@ -56,25 +45,27 @@ class AdventureApiClient(
     }
 
     private suspend fun browserFetchTurn(request: TurnRequest): dynamic {
+        return browserFetch("/api/turn", request)
+    }
+
+    private suspend fun browserFetch(path: String, body: Any): dynamic {
         val options = js("({})")
         options.method = "POST"
         options.headers = js("({ 'Content-Type': 'application/json' })")
-        options.body = streamJson.encodeToString(request)
-        return window.fetch("$normalizedBaseUrl/api/turn", options).await()
+        options.body = streamJson.encodeToString(body)
+        return window.fetch("$normalizedBaseUrl$path", options).await()
     }
 
     private suspend fun requireBrowserSuccess(response: dynamic): dynamic {
         if (response.ok.unsafeCast<Boolean>()) return response
+        throw browserFailure(response)
+    }
+
+    private suspend fun browserFailure(response: dynamic): AdventureApiException {
         val message = runCatching {
             streamJson.decodeFromString<ApiError>(response.text().unsafeCast<Promise<String>>().await()).message
         }.getOrNull() ?: "The adventure service is unavailable."
-        throw AdventureApiException(message)
-    }
-
-    private suspend fun io.ktor.client.statement.HttpResponse.requireSuccess(): io.ktor.client.statement.HttpResponse {
-        if (status.isSuccess()) return this
-        val message = runCatching { body<ApiError>().message }.getOrNull() ?: "The adventure service is unavailable."
-        throw AdventureApiException(message)
+        return AdventureApiException(message)
     }
 
     private val normalizedBaseUrl = baseUrl.removeSuffix("/")
@@ -142,13 +133,25 @@ class SseFrameDecoder {
 }
 
 object TurnRequestMapper {
-    fun map(session: GameSession, scenario: Scenario, playerAction: String): TurnRequest = TurnRequest(
+    fun map(session: GameSession, scenario: Scenario, playerAction: String, sessionId: String = ""): TurnRequest = TurnRequest(
         modelId = session.modelId,
         scenarioMarkdown = scenario.markdown,
         history = session.messages.map { ChatEntry(it.role, it.content) },
         playerAction = playerAction,
-        provider = session.provider,
         llamaCppPort = session.llamaCppPort,
+        sessionId = sessionId,
+    )
+}
+
+object PrefillRequestMapper {
+    fun map(session: GameSession, scenario: Scenario, sessionId: String, revision: Long, action: String): PrefillRequest = PrefillRequest(
+        sessionId = sessionId,
+        revision = revision,
+        modelId = session.modelId,
+        llamaCppPort = session.llamaCppPort,
+        scenarioMarkdown = scenario.markdown,
+        history = session.messages.map { ChatEntry(it.role, it.content) },
+        playerAction = action,
     )
 }
 
@@ -161,9 +164,26 @@ data class TurnRequest(
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val playerAction: String,
-    val provider: ModelProvider = ModelProvider.OLLAMA,
-    val llamaCppPort: Int? = null,
+    val llamaCppPort: Int,
+    val sessionId: String,
 )
+
+@Serializable
+data class PrefillRequest(
+    val sessionId: String,
+    val revision: Long,
+    val modelId: String,
+    val llamaCppPort: Int,
+    val scenarioMarkdown: String,
+    val history: List<ChatEntry>,
+    val playerAction: String,
+)
+
+@Serializable
+enum class PrefillDisposition { STARTED, QUEUED, STALE, TURN_IN_PROGRESS }
+
+@Serializable
+data class PrefillAccepted(val disposition: PrefillDisposition)
 
 @Serializable
 data class TurnMetrics(

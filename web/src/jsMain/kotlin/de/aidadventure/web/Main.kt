@@ -3,8 +3,8 @@ package de.aidadventure.web
 import de.aidadventure.web.api.AdventureApi
 import de.aidadventure.web.api.AdventureApiClient
 import de.aidadventure.web.api.TurnMetrics
+import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
-import de.aidadventure.web.model.ModelProvider
 import de.aidadventure.web.model.Scenario
 import de.aidadventure.web.persistence.AdventureDatabase
 import de.aidadventure.web.persistence.ImportResult
@@ -17,15 +17,15 @@ import kotlinx.coroutines.await
 import kotlinx.coroutines.launch
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
-import react.FC
 import react.ChildrenBuilder
+import react.FC
 import react.Props
 import react.create
 import react.dom.client.createRoot
 import react.dom.flushSync
 import react.dom.html.ReactHTML
-import react.useState
 import react.useEffect
+import react.useState
 import web.cssom.ClassName
 import web.dom.document
 import web.file.File
@@ -33,29 +33,21 @@ import web.html.HTMLInputElement
 import web.html.HTMLTextAreaElement
 
 private val scope = MainScope()
-private val llamaCppDiscoveryGuard = LlamaCppDiscoveryGuard()
-private val llamaCppStartGuard = LlamaCppStartGuard()
 
 fun main() {
     scope.launch {
         val database = AdventureDatabase.open()
-        val koin = startKoin {
-            modules(module {
-                single<ScenarioRepository> { database.scenarios }
-                single<SessionRepository> { database.sessions }
-                single<AdventureApi> { AdventureApiClient() }
-            })
-        }.koin
+        val koin = startKoin { modules(module {
+            single<ScenarioRepository> { database.scenarios }
+            single<SessionRepository> { database.sessions }
+            single<AdventureApi> { AdventureApiClient() }
+        }) }.koin
         val root = document.getElementById("root".unsafeCast<web.dom.ElementId>()) ?: error("Missing #root element")
         val initialScenarios = database.scenarios.list()
-        createRoot(root).render(
-            AdventureApp.create {
-                scenarioRepository = koin.get()
-                sessionRepository = koin.get()
-                api = koin.get()
-                this.initialScenarios = initialScenarios
-            },
-        )
+        createRoot(root).render(AdventureApp.create {
+            scenarioRepository = koin.get(); sessionRepository = koin.get(); api = koin.get()
+            this.initialScenarios = initialScenarios
+        })
     }
 }
 
@@ -68,7 +60,7 @@ external interface AdventureAppProps : Props {
 
 private sealed interface View {
     data object Library : View
-    data class Detail(val scenario: Scenario, val llamaCppSession: GameSession? = null) : View
+    data class Detail(val scenario: Scenario) : View
     data class Play(val scenario: Scenario, val session: GameSession) : View
 }
 
@@ -76,706 +68,111 @@ internal val AdventureApp = FC<AdventureAppProps> { props ->
     var view by useState<View>(View.Library)
     var scenarios by useState(props.initialScenarios)
     var importError by useState<String?>(null)
-    var models by useState<List<String>>(emptyList())
-    var modelLoadError by useState<String?>(null)
-    var llamaCppConnection by useState(LlamaCppConnectionState.initial())
-    var llamaCppPending by useState(false)
-
-    fun refreshScenarios() {
-        scope.launch { scenarios = props.scenarioRepository.list() }
-    }
-
-    fun openScenario(scenario: Scenario) {
-        llamaCppDiscoveryGuard.activate(scenario.id)
-        llamaCppStartGuard.invalidate()
-        view = View.Detail(scenario)
-        models = emptyList()
-        modelLoadError = null
-        llamaCppConnection = LlamaCppConnectionState.initial()
-        llamaCppPending = false
-        scope.launch {
-            runCatching { props.api.models() }
-                .onSuccess { models = it }
-                .onFailure { modelLoadError = clientMessage(it) }
-        }
-    }
-
+    fun refresh() { scope.launch { scenarios = props.scenarioRepository.list() } }
     ReactHTML.main {
         className = ClassName("app-shell")
-        ReactHTML.h1 {
-            className = ClassName("app-title")
-            +"AI Adventure"
-        }
+        ReactHTML.h1 { className = ClassName("app-title"); +"AI Adventure" }
         when (val current = view) {
-            View.Library -> libraryView(
-                scenarios = scenarios,
-                importError = importError,
-                onImport = { file ->
-                    scope.launch {
-                        runCatching {
-                            file.asDynamic().text().unsafeCast<kotlin.js.Promise<String>>().await()
-                        }.onSuccess { markdown ->
-                            when (val result = ScenarioImport.fromFile(file.name, markdown, scenarios, now())) {
-                                is ImportResult.Created -> {
-                                    props.scenarioRepository.save(result.scenario)
-                                    importError = null
-                                    refreshScenarios()
-                                }
-                                is ImportResult.Updated -> importError = "This scenario is already in your library."
-                                is ImportResult.Rejected -> importError = result.message
-                            }
-                        }.onFailure { importError = clientMessage(it) }
-                    }
-                },
-                onOpen = ::openScenario,
-                onRefresh = ::refreshScenarios,
-            )
-
-            is View.Detail -> +DetailView.create {
-                scenario = current.scenario
-                this.models = models
-                modelError = modelLoadError
-                api = props.api
-                this.llamaCppConnection = llamaCppConnection
-                llamaCppSession = current.llamaCppSession
-                this.llamaCppPending = llamaCppPending
+            View.Library -> libraryView(scenarios, importError, { file -> scope.launch {
+                runCatching { file.asDynamic().text().unsafeCast<kotlin.js.Promise<String>>().await() }
+                    .onSuccess { markdown -> when (val result = ScenarioImport.fromFile(file.name, markdown, scenarios, now())) {
+                        is ImportResult.Created -> { props.scenarioRepository.save(result.scenario); importError = null; refresh() }
+                        is ImportResult.Updated -> importError = "This scenario is already in your library."
+                        is ImportResult.Rejected -> importError = result.message
+                    } }.onFailure { importError = clientMessage(it) }
+            } }, { view = View.Detail(it) }, ::refresh)
+            is View.Detail -> DetailView.create {
+                scenario = current.scenario; api = props.api
                 sessions = { props.sessionRepository.list().filter { it.scenarioId == current.scenario.id } }
-                onBack = {
-                    llamaCppDiscoveryGuard.activate(null)
-                    llamaCppStartGuard.invalidate()
-                    llamaCppPending = false
-                    view = View.Library
-                }
-                onCreate = createSession@ { model ->
-                    val start = llamaCppStartGuard.tryBegin() ?: return@createSession
-                    llamaCppPending = true
-                    modelLoadError = null
-                    scope.launch {
-                        runCatching {
-                            val time = now()
-                            val session = GameSession(
-                                id = "session-$time-${kotlin.random.Random.nextInt()}",
-                                scenarioId = current.scenario.id,
-                                title = "${current.scenario.name} adventure",
-                                modelId = model,
-                                messages = emptyList(),
-                                createdAt = time,
-                                updatedAt = time,
-                            )
-                            props.sessionRepository.save(session)
-                            session
-                        }.onSuccess { session ->
-                            if (llamaCppStartGuard.complete(start)) {
-                                llamaCppDiscoveryGuard.activate(null)
-                                llamaCppPending = false
-                                view = View.Play(current.scenario, session)
-                            }
-                        }.onFailure { failure ->
-                            if (llamaCppStartGuard.fail(start)) {
-                                llamaCppPending = false
-                                modelLoadError = clientMessage(failure)
-                            }
-                        }
-                    }
-                }
-                onLlamaCppConnectionChanged = { connection -> llamaCppConnection = connection }
-                onLlamaCppStart = startLlamaCpp@ { model, port, onComplete ->
-                    val start = llamaCppStartGuard.tryBegin() ?: return@startLlamaCpp
-                    scope.launch {
-                        runCatching {
-                            val time = now()
-                            val session = current.llamaCppSession?.copy(
-                                modelId = model,
-                                updatedAt = time,
-                                provider = ModelProvider.LLAMA_CPP,
-                                llamaCppPort = port,
-                            ) ?: GameSession(
-                                id = "session-$time-${kotlin.random.Random.nextInt()}",
-                                scenarioId = current.scenario.id,
-                                title = "${current.scenario.name} adventure",
-                                modelId = model,
-                                messages = emptyList(),
-                                createdAt = time,
-                                updatedAt = time,
-                                provider = ModelProvider.LLAMA_CPP,
-                                llamaCppPort = port,
-                            )
-                            props.sessionRepository.save(session)
-                            session
-                        }.onSuccess { session ->
-                            if (llamaCppStartGuard.complete(start)) {
-                                llamaCppDiscoveryGuard.activate(null)
-                                llamaCppPending = false
-                                view = View.Play(current.scenario, session)
-                                onComplete(null)
-                            }
-                        }.onFailure { failure ->
-                            if (llamaCppStartGuard.fail(start)) {
-                                onComplete(failure)
-                            }
-                        }
-                    }
-                }
-                onResume = { session ->
-                    llamaCppStartGuard.invalidate()
-                    llamaCppDiscoveryGuard.activate(null)
-                    llamaCppPending = false
-                    view = View.Play(current.scenario, session)
-                }
-                onLlamaCppPendingChanged = { pending -> llamaCppPending = pending }
-                onReloadModels = { openScenario(current.scenario) }
+                onBack = { view = View.Library }
+                onCreate = { model, port -> scope.launch {
+                    val time = now(); val session = GameSession("session-$time-${kotlin.random.Random.nextInt()}", current.scenario.id,
+                        "${current.scenario.name} adventure", model, emptyList(), time, time, port)
+                    props.sessionRepository.save(session); view = View.Play(current.scenario, session)
+                } }
+                onResume = { session -> view = View.Play(current.scenario, session) }
             }
-
-            is View.Play -> +PlayView.create {
-                scenario = current.scenario
-                session = current.session
-                api = props.api
-                sessions = props.sessionRepository
-                onBack = {
-                    llamaCppDiscoveryGuard.activate(current.scenario.id)
-                    llamaCppStartGuard.invalidate()
-                    llamaCppPending = false
-                    view = View.Detail(current.scenario)
-                }
-                onConfigureLlamaCpp = if (current.session.provider == ModelProvider.LLAMA_CPP) {
-                    {
-                        llamaCppDiscoveryGuard.activate(current.scenario.id)
-                        llamaCppStartGuard.invalidate()
-                        llamaCppPending = false
-                        llamaCppConnection = LlamaCppConnectionState.initial(
-                            current.session.llamaCppPort,
-                            current.session.modelId,
-                        )
-                        view = View.Detail(current.scenario, current.session)
-                    }
-                } else {
-                    null
-                }
-                onSessionChanged = { session -> view = View.Play(current.scenario, session) }
+            is View.Play -> PlayView.create {
+                scenario = current.scenario; session = current.session; api = props.api; sessions = props.sessionRepository
+                onBack = { view = View.Detail(current.scenario) }
+                onSessionChanged = { view = View.Play(current.scenario, it) }
             }
         }
     }
 }
 
-private fun ChildrenBuilder.libraryView(
-    scenarios: List<Scenario>,
-    importError: String?,
-    onImport: (File) -> Unit,
-    onOpen: (Scenario) -> Unit,
-    onRefresh: () -> Unit,
-) {
+private fun ChildrenBuilder.libraryView(scenarios: List<Scenario>, error: String?, onImport: (File) -> Unit, onOpen: (Scenario) -> Unit, onRefresh: () -> Unit) {
     ReactHTML.section {
-        className = ClassName("view-card")
-        ReactHTML.h2 {
-            className = ClassName("view-title")
-            +"Your scenarios"
-        }
-        ReactHTML.input {
-            type = "file".unsafeCast<web.html.InputType>()
-            accept = ".md,.markdown,text/markdown"
-            onChange = { event ->
-                event.target.unsafeCast<HTMLInputElement>().files?.item(0)?.let(onImport)
-            }
-        }
-        importError?.let {
-            ReactHTML.p {
-                className = ClassName("status-error")
-                +it
-            }
-        }
-        ReactHTML.button {
-            className = ClassName("secondary-button")
-            onClick = { onRefresh() }
-            +"Refresh library"
-        }
-        if (scenarios.isEmpty()) {
-            ReactHTML.p {
-                className = ClassName("empty-state")
-                +"Import a Markdown scenario to begin."
-            }
-        }
-        ReactHTML.div {
-            className = ClassName("stack")
-            scenarios.forEach { scenario ->
-                ReactHTML.button {
-                    className = ClassName("action-row")
-                    onClick = { onOpen(scenario) }
-                    ReactHTML.span {
-                        className = ClassName("action-row-title")
-                        +scenario.name
-                    }
-                    ReactHTML.span {
-                        className = ClassName("action-row-meta")
-                        +"Imported scenario"
-                    }
-                }
-            }
-        }
+        className = ClassName("view-card"); ReactHTML.h2 { className = ClassName("view-title"); +"Your scenarios" }
+        ReactHTML.input { type = "file".unsafeCast<web.html.InputType>(); accept = ".md,.markdown,text/markdown"; onChange = { it.target.unsafeCast<HTMLInputElement>().files?.item(0)?.let(onImport) } }
+        error?.let { ReactHTML.p { className = ClassName("status-error"); +it } }
+        ReactHTML.button { className = ClassName("secondary-button"); onClick = { onRefresh() }; +"Refresh library" }
+        ReactHTML.div { className = ClassName("stack"); scenarios.forEach { scenario -> ReactHTML.button {
+            className = ClassName("action-row"); onClick = { onOpen(scenario) }
+            ReactHTML.span { className = ClassName("action-row-title"); +scenario.name }
+        } } }
     }
 }
 
-internal external interface DetailViewProps : Props {
-    var scenario: Scenario
-    var models: List<String>
-    var modelError: String?
-    var api: AdventureApi
-    var llamaCppConnection: LlamaCppConnectionState
-    var llamaCppSession: GameSession?
-    var llamaCppPending: Boolean
-    var sessions: suspend () -> List<GameSession>
-    var onBack: () -> Unit
-    var onCreate: (String) -> Unit
-    var onLlamaCppConnectionChanged: (LlamaCppConnectionState) -> Unit
-    var onLlamaCppStart: (String, Int, (Throwable?) -> Unit) -> Unit
-    var onResume: (GameSession) -> Unit
-    var onLlamaCppPendingChanged: (Boolean) -> Unit
-    var onReloadModels: () -> Unit
+private external interface DetailViewProps : Props {
+    var scenario: Scenario; var api: AdventureApi; var sessions: suspend () -> List<GameSession>
+    var onBack: () -> Unit; var onCreate: (String, Int) -> Unit; var onResume: (GameSession) -> Unit
 }
 
-internal val DetailView = FC<DetailViewProps> { props ->
+private val DetailView = FC<DetailViewProps> { props ->
+    var portText by useState(AdventureApiClient.DEFAULT_LLAMA_CPP_PORT.toString())
+    var models by useState<List<String>>(emptyList())
     var loadedSessions by useState<List<GameSession>>(emptyList())
-    var sessionsLoaded by useState(false)
-    var sessionError by useState<String?>(null)
-    val detailNavigable = canNavigateDetail(props.llamaCppPending)
-    useEffect(dependencies = emptyArray()) {
-        if (!sessionsLoaded && sessionError == null) {
-            sessionsLoaded = true
-            scope.launch {
-                runCatching { props.sessions() }.onSuccess { loadedSessions = it }.onFailure { sessionError = clientMessage(it) }
-            }
-        }
-    }
-
-    ReactHTML.section {
-        className = ClassName("view-card")
-        ReactHTML.div {
-            className = ClassName("view-header")
-            ReactHTML.button {
-                className = ClassName("secondary-button")
-                disabled = !detailNavigable
-                onClick = { if (detailNavigable) props.onBack() }
-                +"Back to library"
-            }
-            ReactHTML.h2 {
-                className = ClassName("view-title")
-                +props.scenario.name
-            }
-        }
-        ReactHTML.h3 {
-            className = ClassName("section-title")
-            +"Choose a model for a new session"
-        }
-        props.modelError?.let {
-            ReactHTML.p {
-                className = ClassName("status-error")
-                +it
-            }
-        }
-        ReactHTML.button {
-            className = ClassName("secondary-button")
-            disabled = !detailNavigable
-            onClick = { if (detailNavigable) props.onReloadModels() }
-            +"Reload models"
-        }
-        ReactHTML.div {
-            className = ClassName("stack")
-            props.models.forEach { model ->
-                ReactHTML.button {
-                    className = ClassName("action-row primary-button")
-                    disabled = !detailNavigable
-                    onClick = { if (detailNavigable) props.onCreate(model) }
-                    ReactHTML.span {
-                        className = ClassName("action-row-title")
-                        +"Start with $model"
-                    }
-                }
-            }
-        }
-        ReactHTML.h3 {
-            className = ClassName("section-title")
-            +(if (props.llamaCppSession == null) "Or connect to llama.cpp" else "Reconnect to llama.cpp")
-        }
-        props.llamaCppSession?.let { session ->
-            ReactHTML.p {
-                className = ClassName("metadata")
-                +"Resume saved session: ${session.title}. Check the port before continuing."
-            }
-        }
-        ReactHTML.div {
-            className = ClassName("stack")
-            ReactHTML.label {
-                className = ClassName("action-label")
-                htmlFor = "llama-cpp-port".unsafeCast<web.dom.ElementId>()
-                +"llama.cpp port"
-            }
-            ReactHTML.input {
-                id = "llama-cpp-port".unsafeCast<web.dom.ElementId>()
-                type = "number".unsafeCast<web.html.InputType>()
-                value = props.llamaCppConnection.portText
-                disabled = !props.llamaCppConnection.portEditable || props.llamaCppPending
-                onChange = { event ->
-                    props.onLlamaCppConnectionChanged(
-                        props.llamaCppConnection.withPortText(event.target.unsafeCast<HTMLInputElement>().value),
-                    )
-                }
-            }
-            props.llamaCppConnection.error?.let {
-                ReactHTML.p {
-                    className = ClassName("status-error")
-                    +it
-                }
-            }
-            ReactHTML.button {
-                className = ClassName("primary-button")
-                disabled = props.llamaCppPending
-                onClick = click@{
-                    if (props.llamaCppPending) return@click
-                    val port = props.llamaCppConnection.portText.toIntOrNull()
-                    if (port == null || port !in 1..65535) {
-                        props.onLlamaCppConnectionChanged(
-                            props.llamaCppConnection.failed("Enter a valid llama.cpp port."),
-                        )
-                    } else if (canStartLlamaCppSession(props.llamaCppConnection, props.llamaCppPending)) {
-                        props.onLlamaCppPendingChanged(true)
-                        try {
-                            props.onLlamaCppStart(props.llamaCppConnection.modelId, port) { failure ->
-                                props.onLlamaCppPendingChanged(false)
-                                if (failure != null) {
-                                    props.onLlamaCppConnectionChanged(
-                                        props.llamaCppConnection.failed(clientMessage(failure)),
-                                    )
-                                }
-                            }
-                        } catch (failure: Throwable) {
-                            props.onLlamaCppPendingChanged(false)
-                            props.onLlamaCppConnectionChanged(
-                                props.llamaCppConnection.failed(clientMessage(failure)),
-                            )
-                        }
-                    } else {
-                        val discovery = llamaCppDiscoveryGuard.begin(props.scenario.id)
-                        props.onLlamaCppPendingChanged(true)
-                        props.onLlamaCppConnectionChanged(props.llamaCppConnection.withoutError())
-                        scope.launch {
-                            runCatching {
-                                props.api.llamaCppModels(port).firstOrNull()
-                                    ?: throw IllegalStateException("No llama.cpp models are available on this port.")
-                            }.onSuccess { model ->
-                                if (llamaCppDiscoveryGuard.accepts(discovery)) {
-                                    props.onLlamaCppConnectionChanged(props.llamaCppConnection.discovered(model))
-                                    props.onLlamaCppPendingChanged(false)
-                                }
-                            }.onFailure { failure ->
-                                if (llamaCppDiscoveryGuard.accepts(discovery)) {
-                                    props.onLlamaCppConnectionChanged(props.llamaCppConnection.failed(clientMessage(failure)))
-                                    props.onLlamaCppPendingChanged(false)
-                                }
-                            }
-                        }
-                    }
-                }
-                +(when {
-                    props.llamaCppPending -> "Checking llama.cpp…"
-                    props.llamaCppConnection.startOnClick && props.llamaCppSession != null ->
-                        "Resume with ${props.llamaCppConnection.modelId}"
-                    props.llamaCppConnection.startOnClick -> "Start with ${props.llamaCppConnection.modelId}"
-                    props.llamaCppSession != null -> "Check llama.cpp to resume"
-                    else -> "Check llama.cpp"
-                })
-            }
-        }
-        ReactHTML.h3 {
-            className = ClassName("section-title")
-            +"Saved sessions"
-        }
-        sessionError?.let {
-            ReactHTML.p {
-                className = ClassName("status-error")
-                +it
-            }
-        }
-        ReactHTML.div {
-            className = ClassName("stack")
-            loadedSessions.forEach { session ->
-                ReactHTML.button {
-                    className = ClassName("action-row")
-                    disabled = !detailNavigable
-                    onClick = { if (detailNavigable) props.onResume(session) }
-                    ReactHTML.span {
-                        className = ClassName("action-row-title")
-                        +session.title
-                    }
-                    ReactHTML.span {
-                        className = ClassName("action-row-meta")
-                        +"${session.modelId} · ${session.messages.size} messages"
-                    }
-                }
-            }
-        }
-    }
-}
-
-private external interface PlayViewProps : Props {
-    var scenario: Scenario
-    var session: GameSession
-    var api: AdventureApi
-    var sessions: SessionRepository
-    var onBack: () -> Unit
-    var onConfigureLlamaCpp: (() -> Unit)?
-    var onSessionChanged: (GameSession) -> Unit
-}
-
-private val PlayView = FC<PlayViewProps> { props ->
-    var action by useState("")
     var pending by useState(false)
     var error by useState<String?>(null)
-    var metrics by useState<TurnMetrics?>(null)
-    var streamedSession by useState<GameSession?>(null)
-    val displayedSession = sessionForDisplay(props.session, streamedSession)
-
-    fun submitAction() {
-        val playerAction = action.trim()
-        if (playerAction.isNotBlank() && !pending) {
-            pending = true
-            error = null
-            action = ""
-            scope.launch {
-                try {
-                    val completed = TurnSubmission(props.sessions, props.api).submit(
-                        session = props.session,
-                        scenario = props.scenario,
-                        playerAction = playerAction,
-                        onStarted = { session ->
-                            flushStreamUpdate { streamedSession = session }
-                        },
-                        onStreamed = { session ->
-                            flushStreamUpdate { streamedSession = session }
-                        },
-                    )
-                    metrics = completed.metrics
-                    flushStreamUpdate { streamedSession = completed.session }
-                    props.onSessionChanged(completed.session)
-                } catch (cause: Throwable) {
-                    error = clientMessage(cause)
-                } finally {
-                    pending = false
-                }
-            }
-        }
+    useEffect(dependencies = emptyArray()) { scope.launch { runCatching { props.sessions() }.onSuccess { loadedSessions = it }.onFailure { error = clientMessage(it) } } }
+    fun port() = portText.toIntOrNull()?.takeIf { it in 1..65535 }
+    fun discover(after: (List<String>) -> Unit) {
+        val port = port() ?: run { error = "Enter a valid llama.cpp port."; return }
+        pending = true; error = null; scope.launch { runCatching { props.api.models(port) }.onSuccess { list -> pending = false; models = list; after(list) }.onFailure { pending = false; error = clientMessage(it) } }
     }
-
-    ReactHTML.section {
-        className = ClassName("view-card")
-        ReactHTML.div {
-            className = ClassName("view-header")
-            ReactHTML.button {
-                className = ClassName("secondary-button")
-                onClick = { props.onBack() }
-                +"Back to sessions"
+    ReactHTML.section { className = ClassName("view-card")
+        ReactHTML.button { className = ClassName("secondary-button"); disabled = pending; onClick = { props.onBack() }; +"Back to library" }
+        ReactHTML.h2 { className = ClassName("view-title"); +props.scenario.name }
+        ReactHTML.label { className = ClassName("action-label"); +"llama.cpp port" }
+        ReactHTML.input { type = "number".unsafeCast<web.html.InputType>(); value = portText; disabled = pending; onChange = { portText = it.target.unsafeCast<HTMLInputElement>().value } }
+        ReactHTML.button { className = ClassName("secondary-button"); disabled = pending; onClick = { discover {} }; +"Find models" }
+        error?.let { ReactHTML.p { className = ClassName("status-error"); +it } }
+        ReactHTML.div { className = ClassName("stack"); models.forEach { model -> ReactHTML.button { className = ClassName("action-row primary-button"); disabled = pending; onClick = { port()?.let { props.onCreate(model, it) } }; +"Start with $model" } } }
+        ReactHTML.h3 { className = ClassName("section-title"); +"Saved sessions" }
+        loadedSessions.forEach { session -> ReactHTML.button { className = ClassName("action-row"); disabled = pending; onClick = {
+            val selectedPort = port()
+            if (selectedPort == null) error = "Enter a valid llama.cpp port." else discover { models ->
+                if (models.contains(session.modelId)) props.onResume(session.copy(llamaCppPort = selectedPort))
+                else error = "Saved model is unavailable on this port."
             }
-            ReactHTML.h2 {
-                className = ClassName("view-title")
-                +displayedSession.title
-            }
-        }
-        props.onConfigureLlamaCpp?.let { configure ->
-            ReactHTML.button {
-                className = ClassName("secondary-button")
-                disabled = pending
-                onClick = { if (!pending) configure() }
-                +"Edit llama.cpp connection"
-            }
-        }
-        ReactHTML.p {
-            className = ClassName("metadata")
-            +"Model: ${displayedSession.modelId}"
-        }
-        ReactHTML.div {
-            className = ClassName("transcript")
-            displayedSession.messages.forEach { message ->
-                val player = message.role in setOf("player", "user")
-                ReactHTML.article {
-                    className = ClassName(if (player) "message message--player" else "message message--game-master")
-                    ReactHTML.span {
-                        className = ClassName("message-speaker")
-                        +(if (player) "You" else "Game master")
-                    }
-                    ReactHTML.div {
-                        className = ClassName("message-content")
-                        MarkdownMessage {
-                            content = message.content
-                        }
-                    }
-                }
-            }
-        }
-        metrics?.let { renderMetrics(it) }
-        error?.let {
-            ReactHTML.p {
-                className = ClassName("status-error")
-                +it
-            }
-        }
-        ReactHTML.div {
-            className = ClassName("action-form")
-            ReactHTML.label {
-                className = ClassName("action-label")
-                htmlFor = "player-action".unsafeCast<web.dom.ElementId>()
-                +"Your action"
-            }
-            ReactHTML.p {
-                className = ClassName("input-hint")
-                +"Enter sends · Shift+Enter adds a new line"
-            }
-            ReactHTML.textarea {
-                id = "player-action".unsafeCast<web.dom.ElementId>()
-                className = ClassName("action-input")
-                value = action
-                disabled = pending
-                placeholder = "What do you do?"
-                onChange = { event -> action = event.target.unsafeCast<HTMLTextAreaElement>().value }
-                onKeyDown = { event ->
-                    val composing = event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>()
-                    if (shouldSubmitOnEnter(event.key, event.shiftKey, composing, pending, action)) {
-                        event.preventDefault()
-                        submitAction()
-                    }
-                }
-            }
-            ReactHTML.button {
-                className = ClassName("primary-button")
-                disabled = pending || action.isBlank()
-                onClick = { submitAction() }
-                +(if (pending) "Sending…" else "Send")
-            }
-        }
+        }; +session.title } }
     }
 }
 
-private fun ChildrenBuilder.renderMetrics(metrics: TurnMetrics) {
-    val parts = listOfNotNull(
-        metrics.totalDurationMs?.let { "duration: ${it}ms" },
-        metrics.promptTokens?.let { "prompt tokens: $it" },
-        metrics.cacheTokens?.let { "cache tokens: $it" },
-    )
-    if (parts.isNotEmpty()) {
-        ReactHTML.p {
-            className = ClassName("metadata")
-            +parts.joinToString(" · ")
-        }
+private external interface PlayViewProps : Props { var scenario: Scenario; var session: GameSession; var api: AdventureApi; var sessions: SessionRepository; var onBack: () -> Unit; var onSessionChanged: (GameSession) -> Unit }
+private val PlayView = FC<PlayViewProps> { props ->
+    var action by useState(""); var pending by useState(false); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null)
+    val (liveId) = useState("live-${kotlin.random.Random.nextInt()}-${now()}")
+    val (prefill) = useState(PrefillSubmission(props.api))
+    val displayed = sessionForDisplay(props.session, streamed)
+    fun submit() { val text = action.trim(); if (text.isBlank() || pending) return; prefill.turnStarted(); pending = true; action = ""; error = null; scope.launch { try {
+        val completed = TurnSubmission(props.sessions, props.api).submit(props.session, props.scenario, text, { flushStreamUpdate { streamed = it } }, { flushStreamUpdate { streamed = it } }, liveId)
+        metrics = completed.metrics; streamed = completed.session; props.onSessionChanged(completed.session)
+    } catch (failure: Throwable) { error = clientMessage(failure) } finally { pending = false } } }
+    ReactHTML.section { className = ClassName("view-card")
+        ReactHTML.button { className = ClassName("secondary-button"); disabled = pending; onClick = { props.onBack() }; +"Back to sessions" }
+        ReactHTML.h2 { className = ClassName("view-title"); +displayed.title }
+        ReactHTML.div { className = ClassName("transcript"); displayed.messages.forEach { message -> ReactHTML.article { className = ClassName("message"); MarkdownMessage { content = message.content } } } }
+        metrics?.let { renderMetrics(it) }; error?.let { ReactHTML.p { className = ClassName("status-error"); +it } }
+        ReactHTML.textarea { id = "player-action".unsafeCast<web.dom.ElementId>(); className = ClassName("action-input"); value = action; disabled = pending; onChange = { action = it.target.unsafeCast<HTMLTextAreaElement>().value; prefill.changed(props.session, props.scenario, liveId, action) }; onKeyDown = { event -> if (shouldSubmitOnEnter(event.key, event.shiftKey, event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>(), pending, action)) { event.preventDefault(); submit() } } }
+        ReactHTML.button { className = ClassName("primary-button"); disabled = pending || action.isBlank(); onClick = { submit() }; +(if (pending) "Sending…" else "Send") }
     }
 }
 
-private fun clientMessage(cause: Throwable): String = cause.message ?: "Something went wrong. Please try again."
-
-internal fun flushStreamUpdate(update: () -> Unit) {
-    flushSync(update)
-}
-
-internal fun sessionForDisplay(persisted: GameSession, streamed: GameSession?): GameSession = streamed ?: persisted
-
-internal fun shouldSubmitOnEnter(
-    key: String,
-    shiftKey: Boolean,
-    isComposing: Boolean,
-    pending: Boolean,
-    action: String,
-): Boolean = key == "Enter" && !shiftKey && !isComposing && !pending && action.isNotBlank()
-
-internal fun canStartLlamaCppSession(connection: LlamaCppConnectionState, pending: Boolean): Boolean =
-    !pending && connection.startOnClick
-
-internal fun canNavigateDetail(pending: Boolean): Boolean = !pending
-
-internal class LlamaCppStartGuard {
-    private var generation = 0
-    var pending: Boolean = false
-        private set
-
-    fun tryBegin(): Request? {
-        if (pending) return null
-        return Request(++generation).also { pending = true }
-    }
-
-    fun complete(request: Request): Boolean {
-        if (!accepts(request)) return false
-        pending = false
-        invalidate()
-        return true
-    }
-
-    fun fail(request: Request): Boolean {
-        if (!accepts(request)) return false
-        pending = false
-        return true
-    }
-
-    fun invalidate() {
-        generation++
-        pending = false
-    }
-
-    fun accepts(request: Request): Boolean = request.generation == generation
-
-    internal data class Request(val generation: Int)
-}
-
-internal class LlamaCppDiscoveryGuard {
-    private var activeScenarioId: String? = null
-    private var generation = 0
-
-    fun activate(scenarioId: String?) {
-        activeScenarioId = scenarioId
-        generation++
-    }
-
-    fun begin(scenarioId: String): Request {
-        activeScenarioId = scenarioId
-        return Request(scenarioId, ++generation)
-    }
-
-    fun accepts(request: Request): Boolean =
-        request.generation == generation && request.scenarioId == activeScenarioId
-
-    internal data class Request(val scenarioId: String, val generation: Int)
-}
-
-internal data class LlamaCppConnectionState(
-    val portText: String,
-    val modelId: String = "",
-    val checked: Boolean = false,
-    val error: String? = null,
-) {
-    val portEditable: Boolean get() = !checked
-    val startOnClick: Boolean get() = checked && modelId.isNotBlank()
-
-    fun withPortText(portText: String): LlamaCppConnectionState = copy(
-        portText = portText,
-        checked = false,
-        error = null,
-    )
-
-    fun withoutError(): LlamaCppConnectionState = copy(error = null)
-
-    fun discovered(discoveredModelId: String): LlamaCppConnectionState = when {
-        modelId.isBlank() -> copy(modelId = discoveredModelId, checked = true, error = null)
-        modelId == discoveredModelId -> copy(checked = true, error = null)
-        else -> failed(
-            "The discovered llama.cpp model \"$discoveredModelId\" does not match this saved session's model \"$modelId\".",
-        )
-    }
-
-    fun failed(error: String): LlamaCppConnectionState = copy(
-        checked = false,
-        error = error,
-    )
-
-    companion object {
-        fun initial(port: Int? = null, modelId: String? = null): LlamaCppConnectionState = LlamaCppConnectionState(
-            portText = (port ?: AdventureApiClient.DEFAULT_LLAMA_CPP_PORT).toString(),
-            modelId = modelId.orEmpty(),
-        )
-    }
-}
-
+private fun ChildrenBuilder.renderMetrics(metrics: TurnMetrics) { listOfNotNull(metrics.totalDurationMs?.let { "duration: ${it}ms" }, metrics.promptTokens?.let { "prompt tokens: $it" }, metrics.cacheTokens?.let { "cache tokens: $it" }).takeIf { it.isNotEmpty() }?.let { ReactHTML.p { className = ClassName("metadata"); +it.joinToString(" · ") } } }
+private fun clientMessage(cause: Throwable) = cause.message ?: "Something went wrong. Please try again."
+internal fun flushStreamUpdate(update: () -> Unit) = flushSync(update)
+internal fun sessionForDisplay(persisted: GameSession, streamed: GameSession?) = streamed ?: persisted
+internal fun shouldSubmitOnEnter(key: String, shiftKey: Boolean, isComposing: Boolean, pending: Boolean, action: String) = key == "Enter" && !shiftKey && !isComposing && !pending && action.isNotBlank()
 internal fun now(): Long = (js("Date.now()") as Double).toLong()
