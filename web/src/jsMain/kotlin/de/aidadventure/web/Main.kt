@@ -81,7 +81,7 @@ internal val AdventureApp = FC<AdventureAppProps> { props ->
                         is ImportResult.Rejected -> importError = result.message
                     } }.onFailure { importError = clientMessage(it) }
             } }, { view = View.Detail(it) }, ::refresh)
-            is View.Detail -> DetailView.create {
+            is View.Detail -> +DetailView.create {
                 scenario = current.scenario; api = props.api
                 sessions = { props.sessionRepository.list().filter { it.scenarioId == current.scenario.id } }
                 onBack = { view = View.Library }
@@ -92,7 +92,7 @@ internal val AdventureApp = FC<AdventureAppProps> { props ->
                 } }
                 onResume = { session -> view = View.Play(current.scenario, session) }
             }
-            is View.Play -> PlayView.create {
+            is View.Play -> +PlayView.create {
                 scenario = current.scenario; session = current.session; api = props.api; sessions = props.sessionRepository
                 onBack = { view = View.Detail(current.scenario) }
                 onSessionChanged = { view = View.Play(current.scenario, it) }
