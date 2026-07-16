@@ -60,7 +60,7 @@
 @Serializable data class PrefillAccepted(val disposition: PrefillDisposition)
 ```
 
-- [ ] **Step 1: Write failing DTO and mapper tests**
+- [x] **Step 1: Write failing DTO and mapper tests**
 
 ```kotlin
 @Test fun `mapper copies an optional live session identity`() {
@@ -74,13 +74,13 @@
 }
 ```
 
-- [ ] **Step 2: Run focused tests**
+- [x] **Step 2: Run focused tests**
 
 Run: `./gradlew :server:test --tests de.aidadventure.server.model.ApiModelsTest :web:jsTest --tests de.aidadventure.web.api.TurnRequestMapperTest`
 
 Expected: FAIL because `sessionId`, `PrefillRequest`, and the mapper's optional live ID do not exist.
 
-- [ ] **Step 3: Implement additive DTOs and mapper support**
+- [x] **Step 3: Implement additive DTOs and mapper support**
 
 ```kotlin
 object TurnRequestMapper {
@@ -94,13 +94,13 @@ object TurnRequestMapper {
 
 Keep `ModelProvider`, stored-session fields, and existing call sites intact in this task. The server/UI cutover tasks remove them together after all callers have migrated. Add matching client DTOs and JSON serialization; do not change IndexedDB schema yet.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run: `./gradlew :server:test --tests de.aidadventure.server.model.ApiModelsTest :web:jsTest --tests de.aidadventure.web.api.TurnRequestMapperTest`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Run: `git add server/src/main/kotlin/de/aidadventure/server/model/ApiModels.kt web/src/jsMain/kotlin/de/aidadventure/web/api/AdventureApi.kt server/src/test/kotlin/de/aidadventure/server/model/ApiModelsTest.kt web/src/jsTest/kotlin/de/aidadventure/web/api/TurnRequestMapperTest.kt && git commit -m "feat: add prefill request boundary"`
 
@@ -127,7 +127,7 @@ interface LlamaCppGateway {
 }
 ```
 
-- [ ] **Step 1: Write failing native HTTP tests**
+- [x] **Step 1: Write failing native HTTP tests**
 
 Use a local `HttpServer` that records paths and decoded JSON.
 
@@ -148,13 +148,13 @@ Use a local `HttpServer` that records paths and decoded JSON.
 }
 ```
 
-- [ ] **Step 2: Run gateway tests**
+- [x] **Step 2: Run gateway tests**
 
 Run: `./gradlew :server:test --tests de.aidadventure.server.llamacpp.LlamaCppGatewayTest --tests de.aidadventure.server.llamacpp.LlamaCppSlotTest`
 
 Expected: FAIL because `/apply-template`, `/completion`, slots, and cache metrics are absent.
 
-- [ ] **Step 3: Implement template, slot, prefill, and completion handling**
+- [x] **Step 3: Implement template, slot, prefill, and completion handling**
 
 ```kotlin
 @Serializable private data class CompletionRequest(
@@ -174,13 +174,13 @@ override suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMet
 
 `applyTemplate` maps `PromptFactory.build(request)` to roles and rejects a blank returned prompt. `acquireIdleSlot` reads `/slots`, accepts only a non-processing, process-unleased slot, and erases it before lease. `releaseSlot` erases it once. Native SSE `content` becomes `Token`; terminal `tokens_cached` and `tokens_evaluated` become `TurnMetrics`.
 
-- [ ] **Step 4: Run gateway tests**
+- [x] **Step 4: Run gateway tests**
 
 Run: `./gradlew :server:test --tests de.aidadventure.server.llamacpp.LlamaCppGatewayTest --tests de.aidadventure.server.llamacpp.LlamaCppSlotTest`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Run: `git add server/src/main/kotlin/de/aidadventure/server/llamacpp server/src/test/kotlin/de/aidadventure/server/llamacpp && git commit -m "feat(server): add native llama.cpp cache gateway"`
 
@@ -209,7 +209,7 @@ interface PrefillRegistry {
 }
 ```
 
-- [ ] **Step 1: Write failing transition tests with a controllable gateway fake**
+- [x] **Step 1: Write failing transition tests with a controllable gateway fake**
 
 ```kotlin
 @Test fun `newer pending prefill replaces older pending work`() = runTest {
@@ -237,13 +237,13 @@ interface PrefillRegistry {
 }
 ```
 
-- [ ] **Step 2: Run coordinator tests**
+- [x] **Step 2: Run coordinator tests**
 
 Run: `./gradlew :server:test --tests de.aidadventure.server.prefill.PrefillCoordinatorTest --tests de.aidadventure.server.prefill.PrefillRegistryTest`
 
 Expected: FAIL because the coordinator and registry do not exist.
 
-- [ ] **Step 3: Implement mutex state and generation barriers**
+- [x] **Step 3: Implement mutex state and generation barriers**
 
 ```kotlin
 private sealed interface State {
@@ -267,13 +267,13 @@ override suspend fun submit(request: PrefillRequest): PrefillDisposition = mutex
 
 Use a `SupervisorJob`; only matching internal generation completions may start pending work or the waiting turn. `close`, TTL cleanup, and gateway failure cancel children, invalidate generation, and release the slot exactly once. Registry logs only a SHA-256-derived opaque key and removes idle coordinators after a finite TTL.
 
-- [ ] **Step 4: Run coordinator tests**
+- [x] **Step 4: Run coordinator tests**
 
 Run: `./gradlew :server:test --tests de.aidadventure.server.prefill.PrefillCoordinatorTest --tests de.aidadventure.server.prefill.PrefillRegistryTest`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Run: `git add server/src/main/kotlin/de/aidadventure/server/prefill server/src/test/kotlin/de/aidadventure/server/prefill && git commit -m "feat(server): coordinate session prefill cache work"`
 
@@ -292,7 +292,7 @@ Run: `git add server/src/main/kotlin/de/aidadventure/server/prefill server/src/t
 
 **Interfaces:** Consumes Tasks 1--3 and produces `GET /api/models?port=8081`, `POST /api/prefill`, and coordinated SSE `POST /api/turn`.
 
-- [ ] **Step 1: Write failing API tests**
+- [x] **Step 1: Write failing API tests**
 
 ```kotlin
 @Test fun `prefill accepts without waiting for evaluation`() = testApplication {
@@ -307,17 +307,17 @@ Run: `git add server/src/main/kotlin/de/aidadventure/server/prefill server/src/t
 }
 ```
 
-- [ ] **Step 2: Run ApplicationTest**
+- [x] **Step 2: Run ApplicationTest**
 
 Run: `./gradlew :server:test --tests de.aidadventure.server.ApplicationTest`
 
 Expected: FAIL because prefill and llama-only route wiring do not exist.
 
-- [ ] **Step 3: Wire routes and validation**
+- [x] **Step 3: Wire routes and validation**
 
 Make `adventureModule` accept `LlamaCppGateway`, `PrefillRegistry`, and `clock`. Remove `ModelCatalog`, `OllamaGateway`, and provider branches. Validate `sessionId` is nonblank and at most 256 characters and `revision >= 0` before registry lookup. `POST /api/prefill` invokes `submit` then responds `PrefillAccepted`; `/api/turn` calls `beginTurn` in the existing SSE writer. Keep request-ID-only safe error logging. The model endpoint validates `port` and calls `llamaCppGateway.availableModels(port)`.
 
-- [ ] **Step 4: Remove dependency and run server tests**
+- [x] **Step 4: Remove dependency and run server tests**
 
 Remove `implementation("dev.langchain4j:langchain4j-ollama:1.17.2")`. Update all server fakes to implement llama.cpp only.
 
@@ -325,7 +325,7 @@ Run: `./gradlew :server:test`
 
 Expected: PASS; `rg -n -i "ollama|ModelProvider" server` returns no source/test matches.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Run: `git add server && git commit -m "feat(server): add coordinated llama.cpp prefill API"`
 
@@ -351,7 +351,7 @@ interface AdventureApi {
 }
 ```
 
-- [ ] **Step 1: Write failing debounce and turn-suppression tests**
+- [x] **Step 1: Write failing debounce and turn-suppression tests**
 
 ```kotlin
 @Test fun `debounce sends only newest complete input`() = runTest {
@@ -370,13 +370,13 @@ interface AdventureApi {
 }
 ```
 
-- [ ] **Step 2: Run focused browser tests**
+- [x] **Step 2: Run focused browser tests**
 
 Run: `./gradlew :web:jsTest --tests de.aidadventure.web.PrefillSubmissionTest --tests de.aidadventure.web.ActionSubmissionTest`
 
 Expected: FAIL because `PrefillSubmission` and `AdventureApi.prefill` do not exist.
 
-- [ ] **Step 3: Implement the helper and `POST /api/prefill`**
+- [x] **Step 3: Implement the helper and `POST /api/prefill`**
 
 ```kotlin
 fun changed(session: GameSession, scenario: Scenario, sessionId: String, action: String) {
@@ -396,17 +396,17 @@ fun turnStarted() { turnActive = true; pendingTimer?.let(cancel); pendingTimer =
 
 Use browser `fetch`, require 202, and decode `PrefillAccepted`. Swallow prefill failures inside this helper: do not render them, persist them, or disable Send. `PlayView` creates an opaque random live ID with `useRef`, calls `changed` after textarea edits, and calls `turnStarted` immediately before `TurnSubmission.submit`.
 
-- [ ] **Step 4: Simplify the detail view**
+- [x] **Step 4: Simplify the detail view**
 
 Remove Ollama buttons, provider branches, and two-stage `LlamaCppConnectionState`. Keep one llama.cpp port input, discover models through `GET /api/models?port=...`, persist the chosen model and port, and verify the stored connection before resume. Keep Enter-to-send unchanged.
 
-- [ ] **Step 5: Run all web tests**
+- [x] **Step 5: Run all web tests**
 
 Run: `./gradlew :web:jsTest`
 
 Expected: PASS; `rg -n -i "ollama|ModelProvider|LlamaCppConnectionState" web` returns no source/test matches.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Run: `git add web && git commit -m "feat(web): prefill llama prompts while typing"`
 
@@ -419,21 +419,21 @@ Run: `git add web && git commit -m "feat(web): prefill llama prompts while typin
 - Modify: `docs/UI-UX-Guide.md`
 - Create: `docs/llama-cpp-prefill-verification.md`
 
-- [ ] **Step 1: Update the operating contract**
+- [x] **Step 1: Update the operating contract**
 
 Document this launch shape:
 
 ```bash
-llama-server --host 127.0.0.1 --port 8081 --model /absolute/path/to/model.gguf --parallel 4 --slots
+llama-server --host 127.0.0.1 --port 8081 --model /absolute/path/to/model.gguf --parallel 4 --slots --slot-save-path /tmp/ai-adventure-slots
 ```
 
 State that `--parallel 1` is unnecessary: active sessions reserve individual slots; a full server returns a safe busy error rather than using another session's cache. Replace Ollama routes/commands with `/api/models?port=8081`; document `202` prefill and same-`sessionId` turn requests. Explain that only backend `tokens_cached`/`tokens_evaluated` fields prove reuse.
 
-- [ ] **Step 2: Add an aggregate-only live verification checklist**
+- [x] **Step 2: Add an aggregate-only live verification checklist**
 
 The new document records: start llama.cpp with at least two slots; type and pause for prefill; send the same action; record only request IDs and cache/evaluated-token counters; compare with a new session sent without pause; verify no prefill transcript entry. It explicitly forbids capturing scenario, action, prompt, history, or model output in logs/evidence.
 
-- [ ] **Step 3: Scan docs and source for removed provider references**
+- [x] **Step 3: Scan docs and source for removed provider references**
 
 Run: `rg -n -i "ollama|ModelProvider|OLLAMA_" README.md AGENTS.md docs server web; git diff --check`
 
@@ -447,7 +447,7 @@ Expected: exit code 0.
 
 Then execute the checklist. Stop all agent-started processes, run `./gradlew --stop`, and confirm no agent-started listeners remain on 8080, 8081, 8088, or 9222.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Run: `git add README.md AGENTS.md docs/UI-UX-Guide.md docs/llama-cpp-prefill-verification.md && git commit -m "docs: explain llama.cpp prefill cache workflow"`
 

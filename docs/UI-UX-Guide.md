@@ -61,6 +61,8 @@ disabled controls must also use text, borders, or opacity.
 - **Enter submits a non-empty action. Shift+Enter inserts a newline.**
 - Enter must not submit while a response is pending or while IME composition is
   active. The Send button follows the same disabled rule.
+- Typing may trigger a silent, debounced prefill. It must not add a transcript
+  entry, show an error, disable Send, or otherwise change the reading flow.
 - File selection and model/session actions remain operable with keyboard focus.
 
 ## Responsive Behavior
