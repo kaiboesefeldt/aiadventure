@@ -56,7 +56,7 @@ class LlamaCppGateway(
         return listOf(modelId)
     }
 
-    fun acquireIdleSlot(port: Int): LlamaCppSlot {
+    fun acquireIdleSlot(port: Int, excludedSlots: Set<LlamaCppSlot> = emptySet()): LlamaCppSlot {
         val response = httpClient.send(
             HttpRequest.newBuilder(endpoint(port, "/slots"))
                 .timeout(requestTimeout)
@@ -66,7 +66,7 @@ class LlamaCppGateway(
         )
         check(response.statusCode() in 200..299) { "llama.cpp slot discovery failed: HTTP ${response.statusCode()}" }
         val slot = json.decodeFromString<List<SlotResponse>>(response.body()).firstOrNull {
-            !it.isProcessing && it.taskId == -1
+            !it.isProcessing && it.taskId == -1 && LlamaCppSlot(it.id) !in excludedSlots
         } ?: throw IllegalStateException("llama.cpp has no idle slot.")
         val leasedSlot = LlamaCppSlot(slot.id)
         eraseSlot(port, leasedSlot)

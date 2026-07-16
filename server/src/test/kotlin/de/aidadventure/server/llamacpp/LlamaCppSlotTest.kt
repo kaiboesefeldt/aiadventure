@@ -27,6 +27,26 @@ class LlamaCppSlotTest {
     }
 
     @Test
+    fun `does not erase an idle slot excluded by process lease ownership`() {
+        slotServer(
+            """
+            [
+              {"id":1,"is_processing":false,"id_task":-1},
+              {"id":2,"is_processing":false,"id_task":-1}
+            ]
+            """.trimIndent(),
+        ).use { server ->
+            val gateway = LlamaCppGateway()
+
+            assertEquals(
+                LlamaCppSlot(2),
+                gateway.acquireIdleSlot(server.port, setOf(LlamaCppSlot(1))),
+            )
+            assertEquals(listOf("GET /slots", "POST /slots/2?action=erase"), server.requests)
+        }
+    }
+
+    @Test
     fun `releasing a slot erases it once`() {
         slotServer("[]").use { server ->
             LlamaCppGateway().releaseSlot(server.port, LlamaCppSlot(2))
