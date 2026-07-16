@@ -131,3 +131,45 @@
    BUILD SUCCESSFUL in 11s
    4 actionable tasks: 4 executed
    ```
+
+---
+
+# Task 2 report: browser resume warmup
+
+## Changed files
+
+- `web/src/jsMain/kotlin/de/aidadventure/web/api/AdventureApi.kt`: warmup request, mapper, encoder, and `POST /api/warmup` API.
+- `web/src/jsMain/kotlin/de/aidadventure/web/PrefillSubmission.kt`: persisted-session warmup submission.
+- `web/src/jsMain/kotlin/de/aidadventure/web/Main.kt`: uses `session.id` for cache-aware requests and triggers one silent mount warmup.
+- `web/src/jsTest/kotlin/de/aidadventure/web/PrefillSubmissionTest.kt`: one warmup with stored session ID.
+- `web/src/jsTest/kotlin/de/aidadventure/web/api/RequestBodyEncodingTest.kt`: warmup encoding with no player action.
+- `web/src/jsTest/kotlin/de/aidadventure/web/AdventureAppNavigationTest.kt`: updated API test double.
+
+## Test evidence
+
+- RED: `./gradlew :web:compileTestKotlinJs --console=plain` failed on the missing warmup types/API after tests were added.
+- `:web:jsTest --tests ...` is unavailable; `:web:test --tests ...` does not support Gradle test selectors.
+- `./gradlew :web:test --console=plain` blocked at the shared Yarn-installation lock (`Waiting for the other yarn instance to finish (132)`).
+- Skipping the install reached `:web:browserTest`, which lacked `kotlin-web-helpers/dist/kotlin-test-karma-runner.js` because the shared installation had not completed.
+- Final: `git diff --check && ./gradlew :web:compileTestKotlinJs --console=plain` passed.
+
+## Concern
+
+Browser unit execution remains blocked by shared Yarn installation state. No lock or external process was modified; all JS source and tests compile.
+
+---
+
+# Task 2 review follow-up: PlayView resume integration coverage
+
+## Changed files
+
+- `web/src/jsTest/kotlin/de/aidadventure/web/PrefillSubmissionTest.kt`: renders `AdventureApp`, resumes a saved session through the real UI path, and asserts exactly one complete `WarmupRequest` recorded by the API test double (persisted session ID, model, port, scenario, and history; no player action field).
+
+## Verification
+
+- `./gradlew :web:compileTestKotlinJs --console=plain` passed.
+- `./gradlew :web:browserTest -x kotlinNpmInstall -x kotlinStoreYarnLock --console=plain` compiled the test executable, then could not start Karma because the shared Yarn installation lacks `kotlin-web-helpers/dist/kotlin-test-karma-runner.js`.
+
+## Concern
+
+The integration test is compile-verified, but browser execution remains unavailable until the shared Yarn installation completes. No production change was required: the rendered `PlayView` already mounts one warmup and uses the persisted session ID.
