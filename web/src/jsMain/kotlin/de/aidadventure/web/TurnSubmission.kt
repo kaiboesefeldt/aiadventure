@@ -21,6 +21,7 @@ internal class TurnSubmission(
         playerAction: String,
         onStarted: (GameSession) -> Unit,
         onStreamed: (GameSession) -> Unit,
+        liveSessionId: String = session.id,
     ): CompletedTurn {
         val started = session.copy(
             messages = session.messages + GameMessage("player", playerAction, clock()),
@@ -31,7 +32,7 @@ internal class TurnSubmission(
 
         val streamedText = StringBuilder()
         val metrics = try {
-            api.play(TurnRequestMapper.map(session, scenario, playerAction)) { token ->
+            api.play(TurnRequestMapper.map(session, scenario, playerAction, liveSessionId)) { token ->
                 streamedText.append(token)
                 onStreamed(
                     started.copy(

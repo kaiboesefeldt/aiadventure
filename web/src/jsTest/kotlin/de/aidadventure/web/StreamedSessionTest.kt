@@ -29,5 +29,6 @@ class StreamedSessionTest {
         messages = messages,
         createdAt = 1,
         updatedAt = 1,
+        llamaCppPort = 8081,
     )
 }
