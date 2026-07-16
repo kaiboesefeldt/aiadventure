@@ -6,6 +6,7 @@ import de.aidadventure.server.model.PrefillDisposition
 import de.aidadventure.server.model.PrefillRequest
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
+import de.aidadventure.server.model.WarmupRequest
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
@@ -23,6 +24,21 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
+    @Test
+    fun `turn waits for active warmup and receives its slot`() = runBlocking {
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake)
+
+        assertEquals(PrefillDisposition.STARTED, coordinator.warmup(warmup()))
+        fake.awaitWarmup()
+        val turn = async(start = CoroutineStart.UNDISPATCHED) { coordinator.beginTurn(turn("look")).toList() }
+        fake.completeWarmup()
+        turn.await()
+
+        assertEquals(fake.warmupSlots.single(), fake.turnSlots.single())
+        coordinator.close()
+    }
+
     @Test
     fun `newer pending prefill replaces older pending work`() = runBlocking {
         val fake = ControllableGateway()
@@ -215,6 +231,14 @@ class PrefillCoordinatorTest {
         playerAction = action,
     )
 
+    private fun warmup() = WarmupRequest(
+        sessionId = "session",
+        modelId = "model",
+        llamaCppPort = 8081,
+        scenarioMarkdown = "# Scenario",
+        history = emptyList(),
+    )
+
     private class ControllableGateway(
         private val stream: (TurnRequest) -> Flow<TurnStreamEvent> = { flowOf() },
         private val prefill: (suspend (TurnRequest) -> CacheMetrics)? = null,
@@ -227,6 +251,7 @@ class PrefillCoordinatorTest {
         val prefilledActions = mutableListOf<String>()
         val turnedActions = mutableListOf<String>()
         val prefillSlots = mutableListOf<LlamaCppSlot>()
+        val warmupSlots = mutableListOf<LlamaCppSlot>()
         val turnSlots = mutableListOf<LlamaCppSlot>()
         val releasedSlots = mutableListOf<LlamaCppSlot>()
         var releaseAttempts = 0
@@ -260,6 +285,13 @@ class PrefillCoordinatorTest {
             }
         }
 
+        override suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics {
+            warmupSlots += slot
+            warmupStarted.complete(Unit)
+            warmupCompletion.await()
+            return CacheMetrics(null, null)
+        }
+
         override fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> {
             turnedActions += request.playerAction
             turnSlots += slot
@@ -276,6 +308,15 @@ class PrefillCoordinatorTest {
 
         suspend fun awaitPrefillCompletion(revision: Long) {
             prefillFinished.getOrPut(revision) { CompletableDeferred() }.await()
+        }
+
+        private val warmupStarted = CompletableDeferred<Unit>()
+        private val warmupCompletion = CompletableDeferred<Unit>()
+
+        suspend fun awaitWarmup() = warmupStarted.await()
+
+        fun completeWarmup() {
+            warmupCompletion.complete(Unit)
         }
 
         private fun requestRevision(request: TurnRequest): Long = when (request.playerAction) {

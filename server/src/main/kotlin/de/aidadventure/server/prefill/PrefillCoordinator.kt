@@ -7,6 +7,7 @@ import de.aidadventure.server.model.PrefillDisposition
 import de.aidadventure.server.model.PrefillRequest
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
+import de.aidadventure.server.model.WarmupRequest
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -32,6 +33,7 @@ data class CoordinatorKey(val sessionId: String, val modelId: String, val port: 
 
 interface PrefillCoordinator {
     suspend fun submit(request: PrefillRequest): PrefillDisposition
+    suspend fun warmup(request: WarmupRequest): PrefillDisposition = error("Warmup is not supported by this coordinator.")
     suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent>
     fun tryBeginIdleClose(): Boolean
     suspend fun close()
@@ -41,6 +43,8 @@ internal interface PrefillGateway {
     fun acquireIdleSlot(port: Int, excludedSlots: Set<LlamaCppSlot>): LlamaCppSlot
     fun releaseSlot(port: Int, slot: LlamaCppSlot)
     suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics
+    suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics =
+        error("Warmup is not supported by this gateway.")
     fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent>
 }
 
@@ -53,6 +57,8 @@ internal class LlamaCppPrefillGateway(
     override fun releaseSlot(port: Int, slot: LlamaCppSlot) = gateway.releaseSlot(port, slot)
 
     override suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics = gateway.prefill(request, slot)
+
+    override suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics = gateway.warmup(request, slot)
 
     override fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> = gateway.stream(request, slot)
 }
@@ -96,6 +102,35 @@ internal class SessionPrefillCoordinator(
                 releaseLeaseLocked(current.lease)
                 state = State.Idle
                 startPrefillLocked(request)
+                PrefillDisposition.STARTED
+            }
+
+            is State.Turning, is State.TurnWaiting -> PrefillDisposition.TURN_IN_PROGRESS
+        }
+    }
+
+    override suspend fun warmup(request: WarmupRequest): PrefillDisposition = mutex.withLock {
+        if (closed || state is State.Turning || state is State.TurnWaiting) {
+            return@withLock PrefillDisposition.TURN_IN_PROGRESS
+        }
+
+        when (val current = state) {
+            State.Idle -> {
+                startWarmupLocked(request)
+                PrefillDisposition.STARTED
+            }
+
+            is State.Prefilling -> PrefillDisposition.QUEUED
+
+            is State.Ready -> {
+                startWarmupLocked(request, current.lease)
+                PrefillDisposition.STARTED
+            }
+
+            is State.ReleasePending -> {
+                releaseLeaseLocked(current.lease)
+                state = State.Idle
+                startWarmupLocked(request)
                 PrefillDisposition.STARTED
             }
 
@@ -176,6 +211,24 @@ internal class SessionPrefillCoordinator(
         operation.job = scope.launch(start = CoroutineStart.LAZY) {
             val failure = try {
                 gateway.prefill(request.toTurnRequest(), lease.slot)
+                null
+            } catch (_: CancellationException) {
+                return@launch
+            } catch (failure: Throwable) {
+                failure
+            }
+            prefillFinished(lease, operation, failure)
+        }
+        operation.job.start()
+    }
+
+    private fun startWarmupLocked(request: WarmupRequest, existingLease: Lease? = null) {
+        val lease = existingLease ?: acquireLease(request.llamaCppPort)
+        val operation = PrefillOperation(++generation)
+        state = State.Prefilling(lease, operation, pending = null)
+        operation.job = scope.launch(start = CoroutineStart.LAZY) {
+            val failure = try {
+                gateway.warmup(request, lease.slot)
                 null
             } catch (_: CancellationException) {
                 return@launch
