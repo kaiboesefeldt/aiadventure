@@ -248,7 +248,7 @@ class LlamaCppGateway(
     private fun postCompletion(port: Int?, payload: CompletionRequest): NativeCompletionResponse {
         val response = httpClient.send(
             HttpRequest.newBuilder(endpoint(requirePort(port), "/completion"))
-                .timeout(requestTimeout)
+                .timeout(PREFILL_TIMEOUT)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(payload)))
                 .build(),
@@ -374,6 +374,7 @@ class LlamaCppGateway(
 
     private companion object {
         val DEFAULT_TIMEOUT: Duration = Duration.ofSeconds(5)
+        val PREFILL_TIMEOUT: Duration = Duration.ofSeconds(60)
         val json = Json { ignoreUnknownKeys = true }
     }
 }

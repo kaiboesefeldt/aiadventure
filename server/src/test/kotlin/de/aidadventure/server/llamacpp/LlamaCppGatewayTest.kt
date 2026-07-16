@@ -49,6 +49,15 @@ class LlamaCppGatewayTest {
     }
 
     @Test
+    fun `prefill waits beyond the standard request timeout`() = runBlocking {
+        nativeServer(completionDelayMillis = 5_500).use { server ->
+            val metrics = LlamaCppGateway().prefill(request(server.port), LlamaCppSlot(2))
+
+            assertEquals(CacheMetrics(17, 3), metrics)
+        }
+    }
+
+    @Test
     fun `turn uses the same slot and maps cache metrics`() = runBlocking {
         nativeServer().use { server ->
             val gateway = LlamaCppGateway(promptFactory = PromptFactory())
@@ -96,14 +105,18 @@ class LlamaCppGatewayTest {
         playerAction = "Follow the path",
     )
 
-    private fun nativeServer(templatePrompt: String = "templated prompt"): NativeServer {
+    private fun nativeServer(
+        templatePrompt: String = "templated prompt",
+        completionDelayMillis: Long = 0,
+    ): NativeServer {
         val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
-        return NativeServer(server, templatePrompt).also { it.start() }
+        return NativeServer(server, templatePrompt, completionDelayMillis).also { it.start() }
     }
 
     private class NativeServer(
         private val server: HttpServer,
         private val templatePrompt: String,
+        private val completionDelayMillis: Long,
     ) : AutoCloseable {
         private val executor = Executors.newSingleThreadExecutor()
         val paths = mutableListOf<String>()
@@ -125,6 +138,7 @@ class LlamaCppGatewayTest {
             server.createContext("/completion") { exchange ->
                 record(exchange)
                 completionBodies += exchange.requestBody.bufferedReader().use { it.readText() }
+                if (completionDelayMillis > 0) Thread.sleep(completionDelayMillis)
                 val body = completionBodies.last().jsonObject
                 if (body.getValue("stream").jsonPrimitive.boolean) {
                     exchange.responseHeaders.add("Content-Type", "text/event-stream")
