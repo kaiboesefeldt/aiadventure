@@ -14,12 +14,14 @@ interface ScenarioRepository {
     suspend fun list(): List<Scenario>
     suspend fun save(scenario: Scenario)
     suspend fun find(id: String): Scenario?
+    suspend fun delete(id: String)
 }
 
 interface SessionRepository {
     suspend fun list(): List<GameSession>
     suspend fun save(session: GameSession)
     suspend fun find(id: String): GameSession?
+    suspend fun delete(id: String)
 }
 
 sealed class PersistenceError(message: String, cause: Throwable? = null) : Exception(message, cause) {
@@ -36,12 +38,37 @@ class AdventureDatabase private constructor(private val database: dynamic) {
         override suspend fun list(): List<Scenario> = scenarioStore.list()
         override suspend fun save(scenario: Scenario) = scenarioStore.save(scenario)
         override suspend fun find(id: String): Scenario? = scenarioStore.find(id)
+        override suspend fun delete(id: String) = deleteScenarioAndSessions(id)
     }
 
     val sessions: SessionRepository = object : SessionRepository {
         override suspend fun list(): List<GameSession> = sessionStore.list()
         override suspend fun save(session: GameSession) = sessionStore.save(session)
         override suspend fun find(id: String): GameSession? = sessionStore.find(id)
+        override suspend fun delete(id: String) = sessionStore.delete(id)
+    }
+
+    private suspend fun deleteScenarioAndSessions(scenarioId: String) {
+        val transaction = try {
+            database.transaction(arrayOf(SCENARIOS, SESSIONS), "readwrite")
+        } catch (cause: Throwable) {
+            throw PersistenceError.DatabaseFailure("opening scenario deletion transaction", cause)
+        }
+        val observer = TransactionObserver(transaction, "deleting scenario")
+        try {
+            transaction.objectStore(SCENARIOS).delete(scenarioId)
+            val sessions = transaction.objectStore(SESSIONS)
+            awaitRequest(sessions.index("scenarioId").getAll(scenarioId), "finding scenario sessions") { result ->
+                result.unsafeCast<Array<dynamic>>().forEach { session -> sessions.delete(session.id) }
+                Unit
+            }
+            observer.awaitCompletion()
+        } catch (cause: Throwable) {
+            throw when (cause) {
+                is PersistenceError -> cause
+                else -> PersistenceError.DatabaseFailure("deleting scenario", cause)
+            }
+        }
     }
 
     fun close() {
@@ -115,6 +142,13 @@ private class RepositoryStore<T>(
         }
     }
 
+    suspend fun delete(id: String) {
+        val transaction = transaction("readwrite")
+        awaitRequestAndTransaction(transaction, "deleting $storeName", {
+            transaction.objectStore(storeName).delete(id)
+        }) { Unit }
+    }
+
     private fun transaction(mode: String): dynamic = try {
         database.transaction(storeName, mode)
     } catch (cause: Throwable) {
@@ -124,6 +158,9 @@ private class RepositoryStore<T>(
     private fun encode(value: T): dynamic = JSON.parse(Json.encodeToString(serializer, value))
     private fun decode(value: dynamic): T = Json.decodeFromString(serializer, JSON.stringify(value))
 }
+
+internal fun sessionIdsForScenarioDeletion(scenarioId: String, sessions: List<GameSession>): List<String> =
+    sessions.filter { it.scenarioId == scenarioId }.map { it.id }
 
 private suspend fun <T> awaitRequest(request: dynamic, operation: String, transform: (dynamic) -> T): T =
     suspendCoroutine { continuation ->

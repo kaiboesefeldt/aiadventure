@@ -1,6 +1,7 @@
 package de.aidadventure.web.persistence
 
 import de.aidadventure.web.model.Scenario
+import de.aidadventure.web.model.GameSession
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -42,5 +43,19 @@ class ScenarioImportTest {
 
         assertEquals(first.scenario.id, second.scenario.id)
         assertEquals("# Harbor", first.scenario.markdown)
+    }
+
+    @Test
+    fun `scenario deletion selects sessions with the matching scenario id`() {
+        val sessions = listOf(
+            GameSession("session-1", "harbor", "Harbor", "model", emptyList(), 1, 1),
+            GameSession("session-2", "forest", "Forest", "model", emptyList(), 1, 1),
+            GameSession("session-3", "harbor", "Return", "model", emptyList(), 1, 1),
+        )
+
+        assertEquals(
+            listOf("session-1", "session-3"),
+            sessionIdsForScenarioDeletion("harbor", sessions),
+        )
     }
 }
