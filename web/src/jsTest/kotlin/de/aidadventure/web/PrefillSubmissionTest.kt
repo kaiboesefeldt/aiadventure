@@ -59,7 +59,7 @@ class PrefillSubmissionTest {
                 })
             }
 
-            container.click("button.action-row")
+            container.clickButtonNamed(scenario.name)
             nextBrowserTick()
             assertNotNull(container.buttonNamed("Find models"))
             container.clickButtonNamed("Find models")
