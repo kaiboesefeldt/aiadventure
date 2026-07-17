@@ -15,6 +15,8 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicReference
+import javax.crypto.KeyGenerator
+import javax.crypto.Mac
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -30,6 +32,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import org.slf4j.LoggerFactory
 
 data class CacheMetrics(val cachedTokens: Int?, val evaluatedTokens: Int?)
 
@@ -78,22 +81,28 @@ class LlamaCppGateway(
     }
 
     suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics = runInterruptible {
+        val port = requirePort(request.llamaCppPort)
         val prompt = applyTemplate(request)
+        logDiagnostic("prepared", port, slot, prompt)
         val response = postCompletion(
-            request.llamaCppPort,
+            port,
             CompletionRequest(prompt, slot.id, predictedTokens = 0, stream = false),
         )
-        CacheMetrics(response.tokensCached, response.tokensEvaluated)
+        CacheMetrics(response.tokensCached, response.tokensEvaluated).also { metrics ->
+            logDiagnostic("completed", port, slot, prompt, metrics)
+        }
     }
 
     fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> = callbackFlow {
         val responseBody = ResponseBodyOwner()
         val reader = launch(Dispatchers.IO) {
             try {
+                val port = requirePort(request.llamaCppPort)
                 val prompt = applyTemplate(request)
+                logDiagnostic("prepared", port, slot, prompt)
                 val response = runInterruptible {
                     val received = httpClient.send(
-                        HttpRequest.newBuilder(endpoint(requirePort(request.llamaCppPort), "/completion"))
+                        HttpRequest.newBuilder(endpoint(port, "/completion"))
                             .header("Accept", "text/event-stream")
                             .header("Content-Type", "application/json")
                             .POST(
@@ -127,7 +136,9 @@ class LlamaCppGateway(
                     }
                     chunk.content?.takeIf { it.isNotEmpty() }?.let { token -> send(TurnStreamEvent.Token(token)) }
                     if (chunk.stop) {
-                        send(TurnStreamEvent.Done(TurnMetrics(null, chunk.tokensEvaluated, chunk.tokensCached)))
+                        val metrics = CacheMetrics(chunk.tokensCached, chunk.tokensEvaluated)
+                        logDiagnostic("completed", port, slot, prompt, metrics)
+                        send(TurnStreamEvent.Done(TurnMetrics(null, metrics.evaluatedTokens, metrics.cachedTokens)))
                         completed = true
                         close()
                         break
@@ -269,6 +280,25 @@ class LlamaCppGateway(
         check(response.statusCode() in 200..299) { "llama.cpp slot erase failed: HTTP ${response.statusCode()}" }
     }
 
+    private fun logDiagnostic(
+        phase: String,
+        port: Int,
+        slot: LlamaCppSlot,
+        prompt: String,
+        metrics: CacheMetrics? = null,
+    ) {
+        logger.debug(
+            "operation=llama_completion phase={} port={} slot={} fingerprint={} promptChars={} tokensCached={} tokensEvaluated={}",
+            phase,
+            port,
+            slot.id,
+            promptFingerprint(prompt),
+            prompt.length,
+            metrics?.cachedTokens,
+            metrics?.evaluatedTokens,
+        )
+    }
+
     private fun requirePort(port: Int?): Int = requireNotNull(port) { "llama.cpp port is required." }
         .also { require(it in 1..65535) { "llama.cpp port must be between 1 and 65535." } }
 
@@ -372,9 +402,17 @@ class LlamaCppGateway(
         }
     }
 
-    private companion object {
-        val DEFAULT_TIMEOUT: Duration = Duration.ofSeconds(5)
-        val PREFILL_TIMEOUT: Duration = Duration.ofSeconds(60)
-        val json = Json { ignoreUnknownKeys = true }
+    companion object {
+        private val DEFAULT_TIMEOUT: Duration = Duration.ofSeconds(5)
+        private val PREFILL_TIMEOUT: Duration = Duration.ofSeconds(60)
+        private val json = Json { ignoreUnknownKeys = true }
+        private val logger = LoggerFactory.getLogger(LlamaCppGateway::class.java)
+        private val promptFingerprintKey = KeyGenerator.getInstance("HmacSHA256").generateKey()
+
+        internal fun promptFingerprint(prompt: String): String = Mac.getInstance("HmacSHA256")
+            .apply { init(promptFingerprintKey) }
+            .doFinal(prompt.toByteArray(Charsets.UTF_8))
+            .take(12)
+            .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
     }
 }

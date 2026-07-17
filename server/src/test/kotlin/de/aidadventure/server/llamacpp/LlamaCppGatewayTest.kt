@@ -21,9 +21,23 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class LlamaCppGatewayTest {
+    @Test
+    fun `prompt fingerprint is deterministic HMAC prefix without prompt text`() {
+        val prompt = "The hidden vault opens only at dusk."
+
+        val fingerprint = LlamaCppGateway.promptFingerprint(prompt)
+
+        assertEquals(fingerprint, LlamaCppGateway.promptFingerprint(prompt))
+        assertNotEquals("3150735069398b8daeb8c17f", fingerprint)
+        assertEquals(24, fingerprint.length)
+        assertFalse(fingerprint.contains(prompt))
+    }
+
     @Test
     fun `prefill evaluates the templated prompt without generation`() = runBlocking {
         nativeServer().use { server ->

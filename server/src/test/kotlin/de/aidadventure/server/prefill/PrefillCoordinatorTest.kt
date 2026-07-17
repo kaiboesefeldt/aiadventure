@@ -24,6 +24,28 @@ import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
     @Test
+    fun `lease lifecycle emits opaque diagnostics for acquired handoff and retained slot`() = runBlocking {
+        val diagnostics = mutableListOf<CoordinatorLeaseDiagnostic>()
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake, diagnosticSink = diagnostics::add)
+
+        coordinator.submit(prefill(1, "open"))
+        fake.awaitPrefill(1)
+        fake.completePrefill(1)
+        fake.awaitPrefillCompletion(1)
+        coordinator.beginTurn(turn("look")).toList()
+        coordinator.close()
+
+        assertEquals(
+            listOf("lease_acquired", "turn_handoff", "turn_retained", "lease_released"),
+            diagnostics.map(CoordinatorLeaseDiagnostic::transition),
+        )
+        assertEquals(listOf(1, 1, 1, 1), diagnostics.map(CoordinatorLeaseDiagnostic::slotId))
+        assertEquals(listOf(8081, 8081, 8081, 8081), diagnostics.map(CoordinatorLeaseDiagnostic::port))
+        assertEquals(1, diagnostics.map(CoordinatorLeaseDiagnostic::coordinatorId).distinct().size)
+    }
+
+    @Test
     fun `newer pending prefill replaces older pending work`() = runBlocking {
         val fake = ControllableGateway()
         val coordinator = SessionPrefillCoordinator(fake)
