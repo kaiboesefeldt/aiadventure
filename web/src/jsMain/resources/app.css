@@ -47,6 +47,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .stack { display: grid; gap: 0.75rem; }
 .action-row { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.85rem 1rem; text-align: left; }
 .action-row:hover { border-color: var(--accent); background: var(--accent-wash); }
+.action-row-open { flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; color: inherit; text-align: left; }
+.action-row-open:hover { background: transparent; }
+.delete-button { flex: none; border-color: color-mix(in srgb, var(--danger, #a33) 55%, var(--border)); color: var(--danger, #a33); background: transparent; }
+.delete-button:hover { border-color: var(--danger, #a33); background: color-mix(in srgb, var(--danger, #a33) 8%, transparent); }
 .action-row-title, .action-row-meta { min-width: 0; overflow-wrap: anywhere; }
 .action-row-title { font-weight: 650; }
 .action-row-meta, .metadata, .input-hint { color: var(--muted-ink); font-size: 0.9rem; }
