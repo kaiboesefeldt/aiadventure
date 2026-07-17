@@ -32,6 +32,11 @@ The coordinator retains a successful warmup lease as `Ready`, matching the
 completed-turn cache behavior. TTL expiry, session removal, gateway failure,
 and coordinator close still release and erase the slot.
 
+This retained slot is a required performance contract. A llama.cpp-free
+coordinator test must prove that both a new session and a resumed session run
+their warmup and first turn through one acquisition and one unchanged slot,
+with no release before explicit cleanup.
+
 ## API and validation
 
 Add a dedicated warmup request and endpoint rather than overloading prefill
@@ -49,3 +54,5 @@ Cover the following behavior:
 - A warmup prompt contains only instruction, scenario, and history.
 - A turn submitted during warmup waits and receives the warmup's slot.
 - A completed warmup retains its slot for the next prefill or turn.
+- New and resumed warmups keep one acquired slot warm through their first
+  turn, without a release or reacquisition between the two operations.

@@ -3,6 +3,8 @@ package de.aidadventure.server.game
 import de.aidadventure.server.model.ChatEntry
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.WarmupRequest
+import dev.langchain4j.data.message.AiMessage
+import dev.langchain4j.data.message.ChatMessage
 import dev.langchain4j.data.message.SystemMessage
 import dev.langchain4j.data.message.UserMessage
 import kotlin.test.Test
@@ -40,5 +42,48 @@ class PromptFactoryTest {
         assertEquals(listOf("system", "system", "user"), prompt.map { it.type().name.lowercase() })
         assertEquals("# Harbor", (prompt[1] as SystemMessage).text())
         assertEquals("look", (prompt[2] as UserMessage).singleText())
+    }
+
+    @Test
+    fun `new game warmup is a prefix of its first turn`() {
+        val factory = PromptFactory()
+        val warmup = factory.buildWarmup(WarmupRequest("live-1", "test-model", 8081, "# Harbor", emptyList()))
+        val firstTurn = factory.build(TurnRequest("live-1", "test-model", 8081, "# Harbor", emptyList(), "enter the inn"))
+
+        assertCachePrefix(warmup, firstTurn)
+    }
+
+    @Test
+    fun `resumed game warmup is a prefix of its first turn`() {
+        val factory = PromptFactory()
+        val history = listOf(ChatEntry("player", "inspect the pier"), ChatEntry("game-master", "Fog covers the water."))
+        val warmup = factory.buildWarmup(WarmupRequest("saved-1", "test-model", 8081, "# Harbor", history))
+        val firstTurn = factory.build(TurnRequest("saved-1", "test-model", 8081, "# Harbor", history, "follow the bell"))
+
+        assertCachePrefix(warmup, firstTurn)
+    }
+
+    @Test
+    fun `next turn extends the completed turn cache chain`() {
+        val factory = PromptFactory()
+        val completedTurn = factory.build(TurnRequest("live-1", "test-model", 8081, "# Harbor", emptyList(), "inspect the pier"))
+        val persistedHistory = listOf(
+            ChatEntry("player", "inspect the pier"),
+            ChatEntry("game-master", "Fog covers the water."),
+        )
+        val nextTurn = factory.build(TurnRequest("live-1", "test-model", 8081, "# Harbor", persistedHistory, "follow the bell"))
+
+        assertCachePrefix(completedTurn + AiMessage.from("Fog covers the water."), nextTurn)
+    }
+
+    private fun assertCachePrefix(expectedPrefix: List<ChatMessage>, actual: List<ChatMessage>) {
+        assertEquals(expectedPrefix.map(::segment), actual.take(expectedPrefix.size).map(::segment))
+    }
+
+    private fun segment(message: ChatMessage): Pair<String, String> = when (message) {
+        is SystemMessage -> "system" to message.text()
+        is UserMessage -> "user" to message.singleText()
+        is AiMessage -> "assistant" to message.text()
+        else -> error("Unsupported cache message: ${message.type()}")
     }
 }

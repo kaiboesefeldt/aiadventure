@@ -27,6 +27,12 @@ TTL. Coordinator close, TTL expiry, session deletion, gateway failure, and
 server restart handling continue to release and erase the slot. A turn still
 has exclusive use of its slot while it streams.
 
+Retention is a release-blocking performance requirement: the completed turn,
+the next typing prefill, and the following turn must use one unchanged lease
+and slot. A fast in-process coordinator test double must prove that no release
+or reacquisition occurs before explicit cleanup; no llama.cpp server is needed
+for this regression test.
+
 No browser API, request shape, prompt ordering, or logging content changes.
 An empty-action prefill is deliberately not introduced: chat templates append
 role delimiters and a generation prompt, so such a request would not be a
