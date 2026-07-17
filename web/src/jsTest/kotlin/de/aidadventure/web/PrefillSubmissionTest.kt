@@ -75,7 +75,7 @@ class PrefillSubmissionTest {
                     WarmupRequest(
                         sessionId = "persisted-session-7",
                         modelId = "saved-model",
-                        llamaCppPort = 9091,
+                        llamaCppPort = 8081,
                         scenarioMarkdown = "# Harbor\nStorm signals",
                         history = listOf(
                             de.aidadventure.web.api.ChatEntry("player", "Watch the pier"),
