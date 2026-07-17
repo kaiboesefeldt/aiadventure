@@ -18,6 +18,7 @@
 ## Invariants
 
 - Keep the game-master prompt prefix deterministic: instruction, original scenario, history, new action.
+- Prompt caching is a release-blocking playability requirement. Any change to prompt construction, warmup/prefill/turn flow, coordinator lifecycle, leases, or slots must preserve the local cache-contract tests for new games, resumed games, and following turns. Those tests require both an exact prompt-prefix relationship and one retained warm llama.cpp slot; do not weaken or remove them without an equivalent proof.
 - Treat every LLM response as untrusted text.
 - Browser IndexedDB owns scenarios and sessions; the server remains stateless.
 - A prefill and its turn must use the same `sessionId`; only llama.cpp's returned

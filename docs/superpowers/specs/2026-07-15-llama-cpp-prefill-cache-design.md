@@ -41,6 +41,13 @@ inserted into this sequence. Prefill and regular turns must pass the same
 rendered prompt representation to llama.cpp for a given session, history, and
 action. The model output remains untrusted text.
 
+Prompt caching is a release-blocking playability requirement, not an optional
+optimization. Local tests must prove the logical predecessor is an exact prefix
+for a new-game warmup, a resumed-game warmup, and the prompt after a completed
+turn. These tests run without llama.cpp; they catch application-side prompt
+changes that would force native re-evaluation. Native cache metrics remain the
+runtime proof that llama.cpp reused the resulting prefix.
+
 ## llama.cpp contract
 
 The gateway owns all llama.cpp calls; the browser never connects to llama.cpp
@@ -174,7 +181,12 @@ remain generic and safe.
 Unit and integration tests cover:
 
 - deterministic equivalence of prefill and regular-turn prompt rendering;
+- local, llama.cpp-free prefix contracts for a new game, a resumed game, and a
+  following turn after a persisted game-master reply;
 - native llama.cpp requests carrying the same slot and `cache_prompt` flag;
+- local, llama.cpp-free coordinator lifecycle contracts proving that those
+  three flows acquire one slot, retain it warm through their handoffs, and
+  release it only during explicit cleanup or a documented failure path;
 - all coordinator transitions, newest-pending replacement, turn priority, and
   stale revision rejection;
 - no concurrent upstream request for one session slot;

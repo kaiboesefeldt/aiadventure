@@ -2,6 +2,7 @@ package de.aidadventure.server.prefill
 
 import de.aidadventure.server.llamacpp.CacheMetrics
 import de.aidadventure.server.llamacpp.LlamaCppSlot
+import de.aidadventure.server.model.ChatEntry
 import de.aidadventure.server.model.PrefillDisposition
 import de.aidadventure.server.model.PrefillRequest
 import de.aidadventure.server.model.TurnRequest
@@ -208,6 +209,63 @@ class PrefillCoordinatorTest {
     }
 
     @Test
+    fun `new game warmup keeps one warm slot through its first turn`() = runBlocking {
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+
+        coordinator.warmup(warmup())
+        fake.awaitWarmup()
+        fake.completeWarmup()
+        fake.awaitWarmupCompletion()
+        coordinator.beginTurn(turn("enter the inn")).toList()
+
+        assertWarmSlotLifecycle(fake, listOf("acquire", "warmup", "turn"))
+        coordinator.close()
+        assertEquals(listOf(LlamaCppSlot(1)), fake.releasedSlots)
+        assertEquals(listOf("acquire", "warmup", "turn", "release"), fake.slotLifecycle.map(SlotLifecycleEvent::operation))
+    }
+
+    @Test
+    fun `resumed game warmup keeps one warm slot through its first turn`() = runBlocking {
+        val history = listOf(ChatEntry("player", "inspect the pier"), ChatEntry("game-master", "Fog covers the water."))
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+
+        coordinator.warmup(warmup(history))
+        fake.awaitWarmup()
+        fake.completeWarmup()
+        fake.awaitWarmupCompletion()
+        coordinator.beginTurn(turn("follow the bell", history)).toList()
+
+        assertWarmSlotLifecycle(fake, listOf("acquire", "warmup", "turn"))
+        coordinator.close()
+        assertEquals(listOf(LlamaCppSlot(1)), fake.releasedSlots)
+        assertEquals(listOf("acquire", "warmup", "turn", "release"), fake.slotLifecycle.map(SlotLifecycleEvent::operation))
+    }
+
+    @Test
+    fun `following turn keeps the completed turn slot warm across prefill`() = runBlocking {
+        val history = listOf(
+            ChatEntry("player", "inspect the pier"),
+            ChatEntry("game-master", "Fog covers the water."),
+        )
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+
+        coordinator.beginTurn(turn("inspect the pier")).toList()
+        coordinator.submit(prefill(1, "follow the bell", history))
+        fake.awaitPrefill(1)
+        fake.completePrefill(1)
+        fake.awaitPrefillCompletion(1)
+        coordinator.beginTurn(turn("follow the bell", history)).toList()
+
+        assertWarmSlotLifecycle(fake, listOf("acquire", "turn", "prefill", "turn"))
+        coordinator.close()
+        assertEquals(listOf(LlamaCppSlot(1)), fake.releasedSlots)
+        assertEquals(listOf("acquire", "turn", "prefill", "turn", "release"), fake.slotLifecycle.map(SlotLifecycleEvent::operation))
+    }
+
+    @Test
     fun `closing cancels and joins a running turn before releasing its slot`() = runBlocking {
         val events = mutableListOf<String>()
         val streamStarted = CompletableDeferred<Unit>()
@@ -295,32 +353,41 @@ class PrefillCoordinatorTest {
         assertEquals(listOf(LlamaCppSlot(1)), fake.releasedSlots)
     }
 
-    private fun prefill(revision: Long, action: String) = PrefillRequest(
+    private fun prefill(revision: Long, action: String, history: List<ChatEntry> = emptyList()) = PrefillRequest(
         sessionId = "session",
         revision = revision,
         modelId = "model",
         llamaCppPort = 8081,
         scenarioMarkdown = "# Scenario",
-        history = emptyList(),
+        history = history,
         playerAction = action,
     )
 
-    private fun turn(action: String) = TurnRequest(
+    private fun turn(action: String, history: List<ChatEntry> = emptyList()) = TurnRequest(
         sessionId = "session",
         modelId = "model",
         llamaCppPort = 8081,
         scenarioMarkdown = "# Scenario",
-        history = emptyList(),
+        history = history,
         playerAction = action,
     )
 
-    private fun warmup() = WarmupRequest(
+    private fun warmup(history: List<ChatEntry> = emptyList()) = WarmupRequest(
         sessionId = "session",
         modelId = "model",
         llamaCppPort = 8081,
         scenarioMarkdown = "# Scenario",
-        history = emptyList(),
+        history = history,
     )
+
+    private fun assertWarmSlotLifecycle(fake: ControllableGateway, operations: List<String>) {
+        assertEquals(1, fake.acquiredSlots.size)
+        assertEquals(operations, fake.slotLifecycle.map(SlotLifecycleEvent::operation))
+        assertEquals(listOf(LlamaCppSlot(1)), fake.slotLifecycle.map(SlotLifecycleEvent::slot).distinct())
+        assertTrue(fake.releasedSlots.isEmpty())
+    }
+
+    private data class SlotLifecycleEvent(val operation: String, val slot: LlamaCppSlot)
 
     private class ControllableGateway(
         private val stream: (TurnRequest) -> Flow<TurnStreamEvent> = { flowOf() },
@@ -337,12 +404,18 @@ class PrefillCoordinatorTest {
         val prefillSlots = mutableListOf<LlamaCppSlot>()
         val warmupSlots = mutableListOf<LlamaCppSlot>()
         val turnSlots = mutableListOf<LlamaCppSlot>()
+        val acquiredSlots = mutableListOf<LlamaCppSlot>()
         val releasedSlots = mutableListOf<LlamaCppSlot>()
+        val slotLifecycle = mutableListOf<SlotLifecycleEvent>()
         var releaseAttempts = 0
             private set
 
         override fun acquireIdleSlot(port: Int, excludedSlots: Set<LlamaCppSlot>): LlamaCppSlot =
-            LlamaCppSlot(1).also { check(it !in excludedSlots) { "No idle slot" } }
+            LlamaCppSlot(1).also {
+                check(it !in excludedSlots) { "No idle slot" }
+                acquiredSlots += it
+                slotLifecycle += SlotLifecycleEvent("acquire", it)
+            }
 
         override fun releaseSlot(port: Int, slot: LlamaCppSlot) {
             releaseAttempts++
@@ -351,12 +424,14 @@ class PrefillCoordinatorTest {
                 error("release failed")
             }
             releasedSlots += slot
+            slotLifecycle += SlotLifecycleEvent("release", slot)
             onRelease()
         }
 
         override suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics {
             prefilledActions += request.playerAction
             prefillSlots += slot
+            slotLifecycle += SlotLifecycleEvent("prefill", slot)
             val revision = requestRevision(request)
             prefillStarted.getOrPut(revision) { CompletableDeferred() }.complete(Unit)
             return try {
@@ -371,6 +446,7 @@ class PrefillCoordinatorTest {
 
         override suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics {
             warmupSlots += slot
+            slotLifecycle += SlotLifecycleEvent("warmup", slot)
             warmupStarted.complete(Unit)
             return try {
                 warmup?.invoke(request) ?: run {
@@ -385,6 +461,7 @@ class PrefillCoordinatorTest {
         override fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> {
             turnedActions += request.playerAction
             turnSlots += slot
+            slotLifecycle += SlotLifecycleEvent("turn", slot)
             return stream(request)
         }
 
@@ -417,6 +494,7 @@ class PrefillCoordinatorTest {
             "open the" -> 2
             "open the door" -> 3
             "look" -> 4
+            "follow the bell" -> 1
             else -> error("Unexpected action")
         }
     }
