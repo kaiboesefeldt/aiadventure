@@ -6,6 +6,16 @@ import kotlin.test.assertFailsWith
 
 class ServerRuntimeConfigTest {
     @Test
+    fun `uses llama cpp port 8081 by default`() {
+        assertEquals(8081, ServerRuntimeConfig.from(emptyMap(), emptyArray()).llamaCppPort)
+    }
+
+    @Test
+    fun `uses the llama cpp port command line argument`() {
+        assertEquals(8082, ServerRuntimeConfig.from(emptyMap(), arrayOf("--llama-port=8082")).llamaCppPort)
+    }
+
+    @Test
     fun `binds loopback by default`() {
         assertEquals("127.0.0.1", ServerRuntimeConfig.from(emptyMap()).host)
     }

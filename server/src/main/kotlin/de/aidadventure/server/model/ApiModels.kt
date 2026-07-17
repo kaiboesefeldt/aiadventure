@@ -1,6 +1,7 @@
 package de.aidadventure.server.model
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 data class ChatEntry(
@@ -11,8 +12,8 @@ data class ChatEntry(
 @Serializable
 data class TurnRequest(
     val sessionId: String,
-    val modelId: String,
-    val llamaCppPort: Int,
+    @Transient val modelId: String = "",
+    @Transient val llamaCppPort: Int = 8081,
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val playerAction: String,
@@ -22,8 +23,8 @@ data class TurnRequest(
 data class PrefillRequest(
     val sessionId: String,
     val revision: Long,
-    val modelId: String,
-    val llamaCppPort: Int,
+    @Transient val modelId: String = "",
+    @Transient val llamaCppPort: Int = 8081,
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val playerAction: String,
@@ -32,8 +33,8 @@ data class PrefillRequest(
 @Serializable
 data class WarmupRequest(
     val sessionId: String,
-    val modelId: String,
-    val llamaCppPort: Int,
+    @Transient val modelId: String = "",
+    @Transient val llamaCppPort: Int = 8081,
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
 )

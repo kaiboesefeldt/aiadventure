@@ -61,29 +61,6 @@ class ApplicationTest {
     }
 
     @Test
-    fun `models discovers a llama cpp model on the selected port`() = testApplication {
-        llamaCppServer().use { llama ->
-            application { adventureModule(llamaCppGateway = LlamaCppGateway(), prefillRegistry = FakeRegistry()) }
-
-            val response = client.get("/api/models?port=${llama.port}")
-
-            assertEquals(HttpStatusCode.OK, response.status)
-            assertEquals("{\"models\":[\"local-model\"]}", response.bodyAsText())
-            assertEquals(1, llama.modelDiscoveryCalls)
-        }
-    }
-
-    @Test
-    fun `models rejects a missing port before discovery`() = testApplication {
-        val registry = FakeRegistry()
-        application { adventureModule(prefillRegistry = registry) }
-
-        val response = client.get("/api/models")
-
-        assertEquals(HttpStatusCode.BadRequest, response.status)
-    }
-
-    @Test
     fun `prefill accepts without waiting for evaluation`() = testApplication {
         val registry = FakeRegistry()
         application { adventureModule(prefillRegistry = registry) }
@@ -96,7 +73,7 @@ class ApplicationTest {
 
         assertEquals(HttpStatusCode.Accepted, response.status)
         assertEquals("{\"disposition\":\"STARTED\"}", response.bodyAsText())
-        assertEquals(listOf(CoordinatorKey("live-1", "local-model", 8081)), registry.keys)
+        assertEquals(listOf(CoordinatorKey("live-1", "configured-llama-cpp", 8081)), registry.keys)
         assertEquals(1, registry.coordinator.prefillRequests.size)
     }
 
@@ -114,7 +91,7 @@ class ApplicationTest {
 
         assertEquals(HttpStatusCode.Accepted, response.status)
         assertEquals("{\"disposition\":\"STARTED\"}", response.bodyAsText())
-        assertEquals(listOf(CoordinatorKey("live-1", "local-model", 8081)), registry.keys)
+        assertEquals(listOf(CoordinatorKey("live-1", "configured-llama-cpp", 8081)), registry.keys)
         assertEquals(listOf(request), registry.coordinator.warmupRequests)
     }
 
@@ -126,8 +103,6 @@ class ApplicationTest {
 
         listOf(
             WarmupRequest("", "local-model", 8081, "# Scenario", emptyList()),
-            WarmupRequest("live-1", "", 8081, "# Scenario", emptyList()),
-            WarmupRequest("live-1", "local-model", 0, "# Scenario", emptyList()),
             WarmupRequest("live-1", "local-model", 8081, "", emptyList()),
             WarmupRequest(
                 "live-1",
@@ -162,7 +137,7 @@ class ApplicationTest {
 
         assertEquals(HttpStatusCode.Accepted, response.status)
         assertEquals(listOf(1234L), registry.idleCleanupTimes)
-        assertEquals(listOf(CoordinatorKey("live-1", "local-model", 8081)), registry.keys)
+        assertEquals(listOf(CoordinatorKey("live-1", "configured-llama-cpp", 8081)), registry.keys)
     }
 
     @Test
@@ -226,7 +201,7 @@ class ApplicationTest {
                     "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1}}\n\n",
                 response.bodyAsText(),
             )
-            assertEquals(listOf(turnRequest(port = llama.port)), registry.coordinator.turnRequests)
+            assertEquals(listOf(turnRequest()), registry.coordinator.turnRequests)
         }
     }
 
@@ -261,7 +236,7 @@ class ApplicationTest {
     }
 
     @Test
-    fun `turn rejects an unavailable selected model before coordinator use`() = testApplication {
+    fun `turn ignores a browser-selected model and uses the configured model`() = testApplication {
         llamaCppServer().use { llama ->
             val registry = FakeRegistry()
             application { adventureModule(llamaCppGateway = LlamaCppGateway(), prefillRegistry = registry) }
@@ -272,22 +247,22 @@ class ApplicationTest {
                 setBody(turnRequest(modelId = "other", port = llama.port))
             }
 
-            assertEquals(HttpStatusCode.NotFound, response.status)
-            assertTrue(registry.coordinator.turnRequests.isEmpty())
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals("configured-llama-cpp", registry.coordinator.turnRequests.single().modelId)
         }
     }
 
     private fun prefillRequest(
         sessionId: String = "live-1",
         revision: Long = 0,
-    ) = PrefillRequest(sessionId, revision, "local-model", 8081, "# Scenario", emptyList(), "look")
+    ) = PrefillRequest(sessionId, revision, "configured-llama-cpp", 8081, "# Scenario", emptyList(), "look")
 
     private fun turnRequest(
-        modelId: String = "local-model",
+        modelId: String = "configured-llama-cpp",
         port: Int = 8081,
     ) = TurnRequest("live-1", modelId, port, "# Scenario", emptyList(), "look")
 
-    private fun warmupRequest() = WarmupRequest("live-1", "local-model", 8081, "# Scenario", emptyList())
+    private fun warmupRequest() = WarmupRequest("live-1", "configured-llama-cpp", 8081, "# Scenario", emptyList())
 
     private class FakeRegistry : PrefillRegistry {
         val keys = mutableListOf<CoordinatorKey>()

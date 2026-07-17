@@ -10,16 +10,18 @@ class RequestBodyEncodingTest {
     @Test
     fun `turn requests use their concrete serializer`() {
         val encoded = encodeTurnRequest(
-            TurnRequest("model", "# Scenario", emptyList(), "look", 8081, "session-1"),
+            TurnRequest("# Scenario", emptyList(), "look", "session-1"),
         )
 
         assertEquals("session-1", Json.parseToJsonElement(encoded).jsonObject["sessionId"]?.jsonPrimitive?.content)
+        assertEquals(null, Json.parseToJsonElement(encoded).jsonObject["modelId"])
+        assertEquals(null, Json.parseToJsonElement(encoded).jsonObject["llamaCppPort"])
     }
 
     @Test
     fun `prefill requests use their concrete serializer`() {
         val encoded = encodePrefillRequest(
-            PrefillRequest("session-1", 3, "model", 8081, "# Scenario", emptyList(), "look"),
+            PrefillRequest("session-1", 3, "# Scenario", emptyList(), "look"),
         )
 
         assertEquals("3", Json.parseToJsonElement(encoded).jsonObject["revision"]?.jsonPrimitive?.content)
@@ -28,7 +30,7 @@ class RequestBodyEncodingTest {
     @Test
     fun `warmup requests contain saved context but no player action`() {
         val encoded = encodeWarmupRequest(
-            WarmupRequest("session-1", "model", 8081, "# Scenario", emptyList()),
+            WarmupRequest("session-1", "# Scenario", emptyList()),
         )
 
         val body = Json.parseToJsonElement(encoded).jsonObject

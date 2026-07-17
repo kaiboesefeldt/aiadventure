@@ -29,7 +29,7 @@ import web.html.HTMLElement
 class AdventureAppNavigationTest {
     @OptIn(DelicateCoroutinesApi::class)
     @Test
-    fun `starting a new session renders the play view`() = GlobalScope.promise<Unit> {
+    fun `starting a new session renders the play view without model discovery`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
         val scenario = Scenario("scenario", "scenario.md", "# Scenario", 1)
@@ -39,7 +39,6 @@ class AdventureAppNavigationTest {
                     scenarioRepository = scenarioRepository(scenario)
                     sessionRepository = sessionRepository()
                     api = object : AdventureApi {
-                        override suspend fun models(port: Int) = listOf("local-model")
                         override suspend fun prefill(request: PrefillRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
                         override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
                         override suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics = error("unused")
@@ -50,11 +49,9 @@ class AdventureAppNavigationTest {
 
             container.clickButtonNamed(scenario.name)
             nextBrowserTick()
-            assertNotNull(container.buttonNamed("Find models"))
-            container.clickButtonNamed("Find models")
-            nextBrowserTick()
-            assertNotNull(container.buttonNamed("Start with local-model"))
-            container.clickButtonNamed("Start with local-model")
+            assertNull(container.buttonNamed("Find models"))
+            assertNotNull(container.buttonNamed("New session"))
+            container.clickButtonNamed("New session")
             nextBrowserTick()
             nextBrowserTick()
 
@@ -161,7 +158,6 @@ class AdventureAppNavigationTest {
     }
 
     private fun unusedApi() = object : AdventureApi {
-        override suspend fun models(port: Int) = listOf("local-model")
         override suspend fun prefill(request: PrefillRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
         override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
         override suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics = error("unused")
