@@ -39,7 +39,7 @@ class PrefillSubmissionTest {
             modelId = "saved-model",
             messages = listOf(
                 GameMessage("player", "Watch the pier", 1),
-                GameMessage("game_master", "A bell rings", 2),
+                GameMessage("game-master", "A bell rings", 2),
             ),
             createdAt = 1,
             updatedAt = 2,
