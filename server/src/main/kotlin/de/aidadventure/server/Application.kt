@@ -127,7 +127,7 @@ fun Application.adventureModule(
             val key = CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort)
             try {
                 prefillRegistry.removeIdle(clock())
-                call.respond(HttpStatusCode.Accepted, PrefillAccepted(prefillRegistry.coordinatorFor(key).warmup(request)))
+                call.respond(HttpStatusCode.Accepted, PrefillAccepted(prefillRegistry.coordinatorFor(key).warmup(request, call.callId ?: "unknown")))
             } catch (failure: IOException) {
                 call.respondLlamaUnavailable(logger, "warmup", failure)
             } catch (failure: RuntimeException) {

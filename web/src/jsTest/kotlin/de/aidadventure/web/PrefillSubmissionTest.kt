@@ -79,7 +79,7 @@ class PrefillSubmissionTest {
                         scenarioMarkdown = "# Harbor\nStorm signals",
                         history = listOf(
                             de.aidadventure.web.api.ChatEntry("player", "Watch the pier"),
-                            de.aidadventure.web.api.ChatEntry("game_master", "A bell rings"),
+                            de.aidadventure.web.api.ChatEntry("game-master", "A bell rings"),
                         ),
                     ),
                 ),

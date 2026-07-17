@@ -24,6 +24,7 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
@@ -70,6 +71,32 @@ class PrefillCoordinatorTest {
         fake.completePrefill(1)
         fake.awaitPrefillCompletion(1)
         assertTrue(fake.warmupSlots.isEmpty())
+        coordinator.close()
+    }
+
+    @Test
+    fun `failed warmup releases its slot before reporting only safe failure fields`() = runBlocking {
+        val events = mutableListOf<String>()
+        val failures = mutableListOf<WarmupFailure>()
+        val fake = ControllableGateway(
+            warmup = { error("secret scenario and game history") },
+            onRelease = { events += "released" },
+        )
+        val coordinator = SessionPrefillCoordinator(
+            gateway = fake,
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+            onWarmupFailure = {
+                events += "reported"
+                failures += it
+            },
+        )
+
+        assertEquals(PrefillDisposition.STARTED, coordinator.warmup(warmup(), "request-42"))
+        fake.awaitWarmupCompletion()
+
+        assertEquals(listOf("released", "reported"), events)
+        assertEquals(listOf(WarmupFailure("request-42", "warmup", "IllegalStateException")), failures)
+        assertFalse(failures.single().toString().contains("secret scenario"))
         coordinator.close()
     }
 
@@ -276,6 +303,7 @@ class PrefillCoordinatorTest {
     private class ControllableGateway(
         private val stream: (TurnRequest) -> Flow<TurnStreamEvent> = { flowOf() },
         private val prefill: (suspend (TurnRequest) -> CacheMetrics)? = null,
+        private val warmup: (suspend (WarmupRequest) -> CacheMetrics)? = null,
         private val onRelease: () -> Unit = {},
         private var releaseFailures: Int = 0,
     ) : PrefillGateway {
@@ -322,8 +350,14 @@ class PrefillCoordinatorTest {
         override suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics {
             warmupSlots += slot
             warmupStarted.complete(Unit)
-            warmupCompletion.await()
-            return CacheMetrics(null, null)
+            return try {
+                warmup?.invoke(request) ?: run {
+                    warmupCompletion.await()
+                    CacheMetrics(null, null)
+                }
+            } finally {
+                warmupFinished.complete(Unit)
+            }
         }
 
         override fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> {
@@ -346,12 +380,15 @@ class PrefillCoordinatorTest {
 
         private val warmupStarted = CompletableDeferred<Unit>()
         private val warmupCompletion = CompletableDeferred<Unit>()
+        private val warmupFinished = CompletableDeferred<Unit>()
 
         suspend fun awaitWarmup() = warmupStarted.await()
 
         fun completeWarmup() {
             warmupCompletion.complete(Unit)
         }
+
+        suspend fun awaitWarmupCompletion() = warmupFinished.await()
 
         private fun requestRevision(request: TurnRequest): Long = when (request.playerAction) {
             "open" -> 1

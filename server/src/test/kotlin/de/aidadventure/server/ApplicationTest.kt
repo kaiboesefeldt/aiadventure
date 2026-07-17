@@ -319,7 +319,7 @@ class ApplicationTest {
             return PrefillDisposition.STARTED
         }
 
-        override suspend fun warmup(request: WarmupRequest): PrefillDisposition {
+        override suspend fun warmup(request: WarmupRequest, requestId: String): PrefillDisposition {
             warmupRequests += request
             return PrefillDisposition.STARTED
         }

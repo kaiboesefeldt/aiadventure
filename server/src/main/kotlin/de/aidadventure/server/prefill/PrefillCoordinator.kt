@@ -28,12 +28,22 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.slf4j.LoggerFactory
 
 data class CoordinatorKey(val sessionId: String, val modelId: String, val port: Int)
 
+internal data class WarmupFailure(
+    val requestId: String,
+    val operation: String,
+    val failureCategory: String,
+)
+
 interface PrefillCoordinator {
     suspend fun submit(request: PrefillRequest): PrefillDisposition
-    suspend fun warmup(request: WarmupRequest): PrefillDisposition = error("Warmup is not supported by this coordinator.")
+    suspend fun warmup(
+        request: WarmupRequest,
+        requestId: String = "unknown",
+    ): PrefillDisposition = error("Warmup is not supported by this coordinator.")
     suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent>
     fun tryBeginIdleClose(): Boolean
     suspend fun close()
@@ -67,6 +77,14 @@ internal class SessionPrefillCoordinator(
     private val gateway: PrefillGateway,
     private val slotLeases: PrefillSlotLeaseManager = PrefillSlotLeaseManager(gateway),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    private val onWarmupFailure: (WarmupFailure) -> Unit = { failure ->
+        logger.warn(
+            "requestId={} operation={} result=llama_cpp_unavailable cause={}",
+            failure.requestId,
+            failure.operation,
+            failure.failureCategory,
+        )
+    },
 ) : PrefillCoordinator {
     private val mutex = Mutex()
     private var latestRevision = Long.MIN_VALUE
@@ -109,28 +127,28 @@ internal class SessionPrefillCoordinator(
         }
     }
 
-    override suspend fun warmup(request: WarmupRequest): PrefillDisposition = mutex.withLock {
+    override suspend fun warmup(request: WarmupRequest, requestId: String): PrefillDisposition = mutex.withLock {
         if (closed || state is State.Turning || state is State.TurnWaiting) {
             return@withLock PrefillDisposition.TURN_IN_PROGRESS
         }
 
         when (val current = state) {
             State.Idle -> {
-                startWarmupLocked(request)
+                startWarmupLocked(request, requestId)
                 PrefillDisposition.STARTED
             }
 
             is State.Prefilling -> PrefillDisposition.STALE
 
             is State.Ready -> {
-                startWarmupLocked(request, current.lease)
+                startWarmupLocked(request, requestId, current.lease)
                 PrefillDisposition.STARTED
             }
 
             is State.ReleasePending -> {
                 releaseLeaseLocked(current.lease)
                 state = State.Idle
-                startWarmupLocked(request)
+                startWarmupLocked(request, requestId)
                 PrefillDisposition.STARTED
             }
 
@@ -222,7 +240,11 @@ internal class SessionPrefillCoordinator(
         operation.job.start()
     }
 
-    private fun startWarmupLocked(request: WarmupRequest, existingLease: Lease? = null) {
+    private fun startWarmupLocked(
+        request: WarmupRequest,
+        requestId: String,
+        existingLease: Lease? = null,
+    ) {
         val lease = existingLease ?: acquireLease(request.llamaCppPort)
         val operation = PrefillOperation(++generation)
         state = State.Prefilling(lease, operation, pending = null)
@@ -236,6 +258,7 @@ internal class SessionPrefillCoordinator(
                 failure
             }
             prefillFinished(lease, operation, failure)
+            failure?.let { onWarmupFailure(WarmupFailure(requestId, "warmup", it.javaClass.simpleName)) }
         }
         operation.job.start()
     }
@@ -446,4 +469,8 @@ internal class SessionPrefillCoordinator(
         val jobs: List<Job>,
         val turnExecution: TurnExecution?,
     )
+
+    private companion object {
+        val logger = LoggerFactory.getLogger(SessionPrefillCoordinator::class.java)
+    }
 }
