@@ -12,10 +12,11 @@ Set `kotlin.js.yarn=false` in the repository's `gradle.properties`. Kotlin's
 Gradle plugin then uses npm rather than its default managed Yarn instance, so
 builds no longer contend for Yarn's global network mutex.
 
-Generate the resulting npm lock state through the Kotlin/JS Gradle task and
-commit every project-owned lockfile/store artifact required to reproduce that
-resolution. Do not version `node_modules`, Gradle caches, or generated build
-directories.
+Kotlin/JS invokes npm from generated package directories, so a repository-root
+`.npmrc` is not visible to it. Both Gradle wrappers must therefore export
+`npm_config_cache` to an ignored `.npm-cache` inside the active
+checkout/worktree. Do not version `node_modules`, npm caches, generated
+lockfiles, Gradle caches, or generated build directories.
 
 ## Workflow rule
 
