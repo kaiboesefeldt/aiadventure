@@ -45,7 +45,7 @@ fun `scenario deletion selects sessions with the matching scenario id`() {
 
 - [ ] **Step 2: Verify the test is red**
 
-Run: `./gradlew :web:jsTest --tests 'de.aidadventure.web.persistence.ScenarioImportTest'`
+Run: `./gradlew :web:browserTest --tests 'de.aidadventure.web.persistence.ScenarioImportTest'`
 
 Expected: compilation fails because the deletion contracts/helper do not yet exist.
 
@@ -55,7 +55,7 @@ Extend both repository interfaces with `suspend fun delete(id: String)`. Add `Re
 
 - [ ] **Step 4: Verify the test is green**
 
-Run: `./gradlew :web:jsTest --tests 'de.aidadventure.web.persistence.ScenarioImportTest'`
+Run: `./gradlew :web:browserTest --tests 'de.aidadventure.web.persistence.ScenarioImportTest'`
 
 Expected: exit 0.
 
@@ -92,7 +92,7 @@ Seed two sessions in a detail-view test, click the selected row's `Delete sessio
 
 - [ ] **Step 2: Verify the browser test is red**
 
-Run: `./gradlew :web:jsTest --tests 'de.aidadventure.web.AdventureAppNavigationTest'`
+Run: `./gradlew :web:browserTest --tests 'de.aidadventure.web.AdventureAppNavigationTest'`
 
 Expected: test fails because delete controls and callbacks do not exist.
 
@@ -104,7 +104,7 @@ Extend `DetailViewProps` with an asynchronous delete callback. Render a distinct
 
 - [ ] **Step 4: Verify the browser test is green**
 
-Run: `./gradlew :web:jsTest --tests 'de.aidadventure.web.AdventureAppNavigationTest'`
+Run: `./gradlew :web:browserTest --tests 'de.aidadventure.web.AdventureAppNavigationTest'`
 
 Expected: exit 0 and both scopes are asserted.
 
