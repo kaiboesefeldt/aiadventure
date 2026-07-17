@@ -27,6 +27,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.slf4j.LoggerFactory
+
+private val coordinatorLogger = LoggerFactory.getLogger(SessionPrefillCoordinator::class.java)
 
 data class CoordinatorKey(val sessionId: String, val modelId: String, val port: Int)
 
@@ -43,6 +46,13 @@ internal interface PrefillGateway {
     suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics
     fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent>
 }
+
+internal data class CoordinatorLeaseDiagnostic(
+    val coordinatorId: String,
+    val transition: String,
+    val slotId: Int,
+    val port: Int,
+)
 
 internal class LlamaCppPrefillGateway(
     private val gateway: LlamaCppGateway = LlamaCppGateway(),
@@ -61,8 +71,18 @@ internal class SessionPrefillCoordinator(
     private val gateway: PrefillGateway,
     private val slotLeases: PrefillSlotLeaseManager = PrefillSlotLeaseManager(gateway),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    private val diagnosticSink: (CoordinatorLeaseDiagnostic) -> Unit = { diagnostic ->
+        coordinatorLogger.debug(
+            "coordinator={} transition={} slot={} port={}",
+            diagnostic.coordinatorId,
+            diagnostic.transition,
+            diagnostic.slotId,
+            diagnostic.port,
+        )
+    },
 ) : PrefillCoordinator {
     private val mutex = Mutex()
+    private val coordinatorId = Integer.toHexString(System.identityHashCode(this))
     private var latestRevision = Long.MIN_VALUE
     private var generation = 0L
     private var closed = false
@@ -191,6 +211,7 @@ internal class SessionPrefillCoordinator(
         val lease = existingLease ?: acquireLease(request.llamaCppPort)
         val execution = TurnExecution(request).also(TurnExecution::initialize)
         state = State.Turning(lease, execution)
+        recordLeaseTransition("turn_handoff", lease)
         execution.handoff(lease)
         return execution.flow()
     }
@@ -218,6 +239,7 @@ internal class SessionPrefillCoordinator(
                         current.execution.fail(releaseFailure ?: failure)
                     } else {
                         state = State.Turning(lease, current.execution)
+                        recordLeaseTransition("turn_handoff", lease)
                         current.execution.handoff(lease)
                     }
                 }
@@ -240,6 +262,7 @@ internal class SessionPrefillCoordinator(
 
             is State.Turning -> if (current.execution === execution && current.lease === lease) {
                 state = State.Ready(current.lease)
+                recordLeaseTransition("turn_retained", current.lease)
                 null
             } else {
                 null
@@ -259,13 +282,18 @@ internal class SessionPrefillCoordinator(
     }
 
     private fun acquireLease(port: Int): Lease {
-        return Lease(port, slotLeases.acquire(port))
+        return Lease(port, slotLeases.acquire(port)).also { recordLeaseTransition("lease_acquired", it) }
+    }
+
+    private fun recordLeaseTransition(transition: String, lease: Lease) {
+        diagnosticSink(CoordinatorLeaseDiagnostic(coordinatorId, transition, lease.slot.id, lease.port))
     }
 
     private fun releaseLeaseLocked(lease: Lease) {
         if (lease.released) return
         slotLeases.release(lease.port, lease.slot)
         lease.released = true
+        recordLeaseTransition("lease_released", lease)
     }
 
     private fun rejectedTurn(message: String): Flow<TurnStreamEvent> = flow {
