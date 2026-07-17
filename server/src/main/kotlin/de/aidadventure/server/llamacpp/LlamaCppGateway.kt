@@ -4,6 +4,7 @@ import de.aidadventure.server.game.PromptFactory
 import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
+import de.aidadventure.server.model.WarmupRequest
 import dev.langchain4j.data.message.AiMessage
 import dev.langchain4j.data.message.ChatMessage
 import dev.langchain4j.data.message.SystemMessage
@@ -81,6 +82,19 @@ class LlamaCppGateway(
     }
 
     suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics = runInterruptible {
+        val port = requirePort(request.llamaCppPort)
+        val prompt = applyTemplate(request)
+        logDiagnostic("prepared", port, slot, prompt)
+        val response = postCompletion(
+            port,
+            CompletionRequest(prompt, slot.id, predictedTokens = 0, stream = false),
+        )
+        CacheMetrics(response.tokensCached, response.tokensEvaluated).also { metrics ->
+            logDiagnostic("completed", port, slot, prompt, metrics)
+        }
+    }
+
+    suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics = runInterruptible {
         val port = requirePort(request.llamaCppPort)
         val prompt = applyTemplate(request)
         logDiagnostic("prepared", port, slot, prompt)
@@ -239,13 +253,21 @@ class LlamaCppGateway(
     private fun endpoint(port: Int, path: String): URI = URI.create("http://localhost:${requirePort(port)}$path")
 
     private fun applyTemplate(request: TurnRequest): String {
+        return applyTemplate(request.llamaCppPort, promptFactory.build(request))
+    }
+
+    private fun applyTemplate(request: WarmupRequest): String {
+        return applyTemplate(request.llamaCppPort, promptFactory.buildWarmup(request))
+    }
+
+    private fun applyTemplate(port: Int, messages: List<ChatMessage>): String {
         val response = httpClient.send(
-            HttpRequest.newBuilder(endpoint(requirePort(request.llamaCppPort), "/apply-template"))
+            HttpRequest.newBuilder(endpoint(requirePort(port), "/apply-template"))
                 .timeout(requestTimeout)
                 .header("Content-Type", "application/json")
                 .POST(
                     HttpRequest.BodyPublishers.ofString(
-                        json.encodeToString(ApplyTemplateRequest(promptFactory.build(request).map(::toOpenAiMessage))),
+                        json.encodeToString(ApplyTemplateRequest(messages.map(::toOpenAiMessage))),
                     ),
                 )
                 .build(),

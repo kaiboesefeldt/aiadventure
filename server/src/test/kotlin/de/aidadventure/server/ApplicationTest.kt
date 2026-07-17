@@ -7,6 +7,7 @@ import de.aidadventure.server.model.PrefillRequest
 import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
+import de.aidadventure.server.model.WarmupRequest
 import de.aidadventure.server.prefill.CoordinatorKey
 import de.aidadventure.server.prefill.PrefillCoordinator
 import de.aidadventure.server.prefill.PrefillRegistry
@@ -97,6 +98,55 @@ class ApplicationTest {
         assertEquals("{\"disposition\":\"STARTED\"}", response.bodyAsText())
         assertEquals(listOf(CoordinatorKey("live-1", "local-model", 8081)), registry.keys)
         assertEquals(1, registry.coordinator.prefillRequests.size)
+    }
+
+    @Test
+    fun `warmup accepts and passes the request to the session coordinator`() = testApplication {
+        val registry = FakeRegistry()
+        application { adventureModule(prefillRegistry = registry) }
+        configureJsonClient()
+        val request = warmupRequest()
+
+        val response = client.post("/api/warmup") {
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+
+        assertEquals(HttpStatusCode.Accepted, response.status)
+        assertEquals("{\"disposition\":\"STARTED\"}", response.bodyAsText())
+        assertEquals(listOf(CoordinatorKey("live-1", "local-model", 8081)), registry.keys)
+        assertEquals(listOf(request), registry.coordinator.warmupRequests)
+    }
+
+    @Test
+    fun `invalid warmup context avoids registry and coordinator calls`() = testApplication {
+        val registry = FakeRegistry()
+        application { adventureModule(prefillRegistry = registry) }
+        configureJsonClient()
+
+        listOf(
+            WarmupRequest("", "local-model", 8081, "# Scenario", emptyList()),
+            WarmupRequest("live-1", "", 8081, "# Scenario", emptyList()),
+            WarmupRequest("live-1", "local-model", 0, "# Scenario", emptyList()),
+            WarmupRequest("live-1", "local-model", 8081, "", emptyList()),
+            WarmupRequest(
+                "live-1",
+                "local-model",
+                8081,
+                "# Scenario",
+                listOf(de.aidadventure.server.model.ChatEntry("invalid", "history")),
+            ),
+        ).forEach { request ->
+            val response = client.post("/api/warmup") {
+                contentType(ContentType.Application.Json)
+                setBody(request)
+            }
+            assertEquals(HttpStatusCode.BadRequest, response.status)
+        }
+
+        assertTrue(registry.idleCleanupTimes.isEmpty())
+        assertTrue(registry.keys.isEmpty())
+        assertTrue(registry.coordinator.warmupRequests.isEmpty())
     }
 
     @Test
@@ -237,6 +287,8 @@ class ApplicationTest {
         port: Int = 8081,
     ) = TurnRequest("live-1", modelId, port, "# Scenario", emptyList(), "look")
 
+    private fun warmupRequest() = WarmupRequest("live-1", "local-model", 8081, "# Scenario", emptyList())
+
     private class FakeRegistry : PrefillRegistry {
         val keys = mutableListOf<CoordinatorKey>()
         val idleCleanupTimes = mutableListOf<Long>()
@@ -256,6 +308,7 @@ class ApplicationTest {
 
     private class FakeCoordinator : PrefillCoordinator {
         val prefillRequests = mutableListOf<PrefillRequest>()
+        val warmupRequests = mutableListOf<WarmupRequest>()
         val turnRequests = mutableListOf<TurnRequest>()
         var submitFailure: Throwable? = null
         var beginTurnFailure: Throwable? = null
@@ -263,6 +316,11 @@ class ApplicationTest {
         override suspend fun submit(request: PrefillRequest): PrefillDisposition {
             prefillRequests += request
             submitFailure?.let { throw it }
+            return PrefillDisposition.STARTED
+        }
+
+        override suspend fun warmup(request: WarmupRequest, requestId: String): PrefillDisposition {
+            warmupRequests += request
             return PrefillDisposition.STARTED
         }
 

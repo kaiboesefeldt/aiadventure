@@ -24,4 +24,15 @@ class RequestBodyEncodingTest {
 
         assertEquals("3", Json.parseToJsonElement(encoded).jsonObject["revision"]?.jsonPrimitive?.content)
     }
+
+    @Test
+    fun `warmup requests contain saved context but no player action`() {
+        val encoded = encodeWarmupRequest(
+            WarmupRequest("session-1", "model", 8081, "# Scenario", emptyList()),
+        )
+
+        val body = Json.parseToJsonElement(encoded).jsonObject
+        assertEquals("session-1", body["sessionId"]?.jsonPrimitive?.content)
+        assertEquals(null, body["playerAction"])
+    }
 }

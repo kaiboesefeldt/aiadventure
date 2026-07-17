@@ -7,6 +7,7 @@ import de.aidadventure.server.model.PrefillDisposition
 import de.aidadventure.server.model.PrefillRequest
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
+import de.aidadventure.server.model.WarmupRequest
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -33,8 +34,25 @@ private val coordinatorLogger = LoggerFactory.getLogger(SessionPrefillCoordinato
 
 data class CoordinatorKey(val sessionId: String, val modelId: String, val port: Int)
 
+internal data class CoordinatorLeaseDiagnostic(
+    val coordinatorId: String,
+    val transition: String,
+    val slotId: Int,
+    val port: Int,
+)
+
+internal data class WarmupFailure(
+    val requestId: String,
+    val operation: String,
+    val failureCategory: String,
+)
+
 interface PrefillCoordinator {
     suspend fun submit(request: PrefillRequest): PrefillDisposition
+    suspend fun warmup(
+        request: WarmupRequest,
+        requestId: String = "unknown",
+    ): PrefillDisposition = error("Warmup is not supported by this coordinator.")
     suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent>
     fun tryBeginIdleClose(): Boolean
     suspend fun close()
@@ -44,15 +62,10 @@ internal interface PrefillGateway {
     fun acquireIdleSlot(port: Int, excludedSlots: Set<LlamaCppSlot>): LlamaCppSlot
     fun releaseSlot(port: Int, slot: LlamaCppSlot)
     suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics
+    suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics =
+        error("Warmup is not supported by this gateway.")
     fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent>
 }
-
-internal data class CoordinatorLeaseDiagnostic(
-    val coordinatorId: String,
-    val transition: String,
-    val slotId: Int,
-    val port: Int,
-)
 
 internal class LlamaCppPrefillGateway(
     private val gateway: LlamaCppGateway = LlamaCppGateway(),
@@ -64,6 +77,8 @@ internal class LlamaCppPrefillGateway(
 
     override suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics = gateway.prefill(request, slot)
 
+    override suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics = gateway.warmup(request, slot)
+
     override fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> = gateway.stream(request, slot)
 }
 
@@ -71,6 +86,14 @@ internal class SessionPrefillCoordinator(
     private val gateway: PrefillGateway,
     private val slotLeases: PrefillSlotLeaseManager = PrefillSlotLeaseManager(gateway),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    private val onWarmupFailure: (WarmupFailure) -> Unit = { failure ->
+        logger.warn(
+            "requestId={} operation={} result=llama_cpp_unavailable cause={}",
+            failure.requestId,
+            failure.operation,
+            failure.failureCategory,
+        )
+    },
     private val diagnosticSink: (CoordinatorLeaseDiagnostic) -> Unit = { diagnostic ->
         coordinatorLogger.debug(
             "coordinator={} transition={} slot={} port={}",
@@ -116,6 +139,35 @@ internal class SessionPrefillCoordinator(
                 releaseLeaseLocked(current.lease)
                 state = State.Idle
                 startPrefillLocked(request)
+                PrefillDisposition.STARTED
+            }
+
+            is State.Turning, is State.TurnWaiting -> PrefillDisposition.TURN_IN_PROGRESS
+        }
+    }
+
+    override suspend fun warmup(request: WarmupRequest, requestId: String): PrefillDisposition = mutex.withLock {
+        if (closed || state is State.Turning || state is State.TurnWaiting) {
+            return@withLock PrefillDisposition.TURN_IN_PROGRESS
+        }
+
+        when (val current = state) {
+            State.Idle -> {
+                startWarmupLocked(request, requestId)
+                PrefillDisposition.STARTED
+            }
+
+            is State.Prefilling -> PrefillDisposition.STALE
+
+            is State.Ready -> {
+                startWarmupLocked(request, requestId, current.lease)
+                PrefillDisposition.STARTED
+            }
+
+            is State.ReleasePending -> {
+                releaseLeaseLocked(current.lease)
+                state = State.Idle
+                startWarmupLocked(request, requestId)
                 PrefillDisposition.STARTED
             }
 
@@ -203,6 +255,29 @@ internal class SessionPrefillCoordinator(
                 failure
             }
             prefillFinished(lease, operation, failure)
+        }
+        operation.job.start()
+    }
+
+    private fun startWarmupLocked(
+        request: WarmupRequest,
+        requestId: String,
+        existingLease: Lease? = null,
+    ) {
+        val lease = existingLease ?: acquireLease(request.llamaCppPort)
+        val operation = PrefillOperation(++generation)
+        state = State.Prefilling(lease, operation, pending = null)
+        operation.job = scope.launch(start = CoroutineStart.LAZY) {
+            val failure = try {
+                gateway.warmup(request, lease.slot)
+                null
+            } catch (_: CancellationException) {
+                return@launch
+            } catch (failure: Throwable) {
+                failure
+            }
+            prefillFinished(lease, operation, failure)
+            failure?.let { onWarmupFailure(WarmupFailure(requestId, "warmup", it.javaClass.simpleName)) }
         }
         operation.job.start()
     }
@@ -421,4 +496,8 @@ internal class SessionPrefillCoordinator(
         val jobs: List<Job>,
         val turnExecution: TurnExecution?,
     )
+
+    private companion object {
+        val logger = LoggerFactory.getLogger(SessionPrefillCoordinator::class.java)
+    }
 }

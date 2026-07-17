@@ -2,6 +2,7 @@ package de.aidadventure.server.game
 
 import de.aidadventure.server.model.ChatEntry
 import de.aidadventure.server.model.TurnRequest
+import de.aidadventure.server.model.WarmupRequest
 import dev.langchain4j.data.message.SystemMessage
 import dev.langchain4j.data.message.UserMessage
 import kotlin.test.Test
@@ -28,5 +29,16 @@ class PromptFactoryTest {
                 TurnRequest("live-1", "test-model", 8081, "# Harbor", listOf(ChatEntry("narrator", "look")), "open door"),
             )
         }
+    }
+
+    @Test
+    fun `buildWarmup keeps immutable prefix and history without a synthetic player action`() {
+        val prompt = PromptFactory().buildWarmup(
+            WarmupRequest("live-1", "test-model", 8081, "# Harbor", listOf(ChatEntry("player", "look"))),
+        )
+
+        assertEquals(listOf("system", "system", "user"), prompt.map { it.type().name.lowercase() })
+        assertEquals("# Harbor", (prompt[1] as SystemMessage).text())
+        assertEquals("look", (prompt[2] as UserMessage).singleText())
     }
 }

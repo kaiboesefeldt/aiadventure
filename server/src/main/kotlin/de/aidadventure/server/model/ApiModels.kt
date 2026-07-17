@@ -30,6 +30,15 @@ data class PrefillRequest(
 )
 
 @Serializable
+data class WarmupRequest(
+    val sessionId: String,
+    val modelId: String,
+    val llamaCppPort: Int,
+    val scenarioMarkdown: String,
+    val history: List<ChatEntry>,
+)
+
+@Serializable
 enum class PrefillDisposition { STARTED, QUEUED, STALE, TURN_IN_PROGRESS }
 
 @Serializable

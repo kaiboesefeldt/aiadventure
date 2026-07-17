@@ -88,6 +88,11 @@ APP_BASE_NAME=${0##*/}
 # Discard cd standard output in case $CDPATH is set (https://github.com/gradle/gradle/issues/25036)
 APP_HOME=$( cd -P "${APP_HOME:-./}" > /dev/null && printf '%s\n' "$PWD" ) || exit
 
+# Kotlin/JS runs npm from generated package directories, so a repository-root
+# .npmrc is not discovered. Keep its cache in this checkout (and worktree)
+# instead of the user-wide cache, which may be unavailable in sandboxed runs.
+export npm_config_cache="$APP_HOME/.npm-cache"
+
 # Use the maximum available, or set MAX_FD != -1 to use that value.
 MAX_FD=maximum
 

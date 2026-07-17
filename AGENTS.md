@@ -7,6 +7,14 @@
 - `curl -fsS http://localhost:8080/api/health` — verify the API is reachable.
 - `curl -fsS 'http://localhost:8080/api/models?port=8081'` — list models exposed by local llama.cpp.
 
+## Build hygiene
+
+- Use `./gradlew` for Kotlin/JS work; it exports a project-local npm cache for
+  this checkout/worktree.
+- Serialize Gradle commands that can install Kotlin/JS dependencies per
+  checkout. After interrupting one, check for its child installer before retrying.
+- Final verification is `./gradlew check` without excluding dependency-install tasks.
+
 ## Invariants
 
 - Keep the game-master prompt prefix deterministic: instruction, original scenario, history, new action.

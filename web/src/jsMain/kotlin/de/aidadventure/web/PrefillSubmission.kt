@@ -2,6 +2,7 @@ package de.aidadventure.web
 
 import de.aidadventure.web.api.AdventureApi
 import de.aidadventure.web.api.PrefillRequestMapper
+import de.aidadventure.web.api.WarmupRequestMapper
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
 import kotlinx.browser.window
@@ -43,6 +44,12 @@ internal class PrefillSubmission(
 
     fun turnFinished() {
         turnActive = false
+    }
+}
+
+internal class WarmupSubmission(private val api: AdventureApi) {
+    suspend fun submit(session: GameSession, scenario: Scenario) {
+        api.warmup(WarmupRequestMapper.map(session, scenario))
     }
 }
 

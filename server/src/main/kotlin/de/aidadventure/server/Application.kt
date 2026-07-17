@@ -10,6 +10,7 @@ import de.aidadventure.server.model.StreamError
 import de.aidadventure.server.model.StreamToken
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
+import de.aidadventure.server.model.WarmupRequest
 import de.aidadventure.server.prefill.CoordinatorKey
 import de.aidadventure.server.prefill.ExpiringPrefillRegistry
 import de.aidadventure.server.prefill.PrefillRegistry
@@ -117,6 +118,23 @@ fun Application.adventureModule(
                 call.respondLlamaUnavailable(logger, "prefill", failure)
             }
         }
+        post("/api/warmup") {
+            val request = call.receive<WarmupRequest>()
+            RequestValidator.validate(request)?.let { error ->
+                call.respond(HttpStatusCode.BadRequest, error)
+                return@post
+            }
+            val key = CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort)
+            try {
+                prefillRegistry.removeIdle(clock())
+                call.respond(HttpStatusCode.Accepted, PrefillAccepted(prefillRegistry.coordinatorFor(key).warmup(request, call.callId ?: "unknown")))
+            } catch (failure: IOException) {
+                call.respondLlamaUnavailable(logger, "warmup", failure)
+            } catch (failure: RuntimeException) {
+                if (failure is CancellationException) throw failure
+                call.respondLlamaUnavailable(logger, "warmup", failure)
+            }
+        }
         post("/api/turn") {
             val request = call.receive<TurnRequest>()
             RequestValidator.validate(request)?.let { error ->
@@ -208,6 +226,14 @@ object RequestValidator {
         )
     }
 
+    fun validate(request: WarmupRequest): ApiError? = validateContext(
+        sessionId = request.sessionId,
+        modelId = request.modelId,
+        port = request.llamaCppPort,
+        scenarioMarkdown = request.scenarioMarkdown,
+        history = request.history,
+    )
+
     private fun validate(
         sessionId: String,
         modelId: String,
@@ -216,11 +242,22 @@ object RequestValidator {
         history: List<ChatEntry>,
         playerAction: String,
     ): ApiError? = when {
+        validateContext(sessionId, modelId, port, scenarioMarkdown, history) != null -> invalid()
+        playerAction.isBlank() || playerAction.length > MAX_TEXT_LENGTH -> invalid()
+        else -> null
+    }
+
+    private fun validateContext(
+        sessionId: String,
+        modelId: String,
+        port: Int,
+        scenarioMarkdown: String,
+        history: List<ChatEntry>,
+    ): ApiError? = when {
         sessionId.isBlank() || sessionId.length > MAX_SESSION_ID_LENGTH -> invalid()
         modelId.isBlank() || modelId.length > MAX_MODEL_ID_LENGTH -> invalid()
         port !in 1..65535 -> invalid()
         scenarioMarkdown.isBlank() || scenarioMarkdown.length > MAX_SCENARIO_LENGTH -> invalid()
-        playerAction.isBlank() || playerAction.length > MAX_TEXT_LENGTH -> invalid()
         history.size > MAX_HISTORY_ENTRIES -> invalid()
         history.any { !it.isValidHistoryEntry() } -> invalid()
         else -> null

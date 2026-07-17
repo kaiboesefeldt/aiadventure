@@ -37,7 +37,7 @@
 - Produces `PrefillCoordinator.warmup(request: WarmupRequest): PrefillDisposition` and `POST /api/warmup` returning `202 PrefillAccepted`.
 - Produces `PromptFactory.buildWarmup(request): List<ChatMessage>` containing instruction, scenario, and history only.
 
-- [ ] **Step 1: Write failing server tests**
+- [x] **Step 1: Write failing server tests**
 
   Add a prompt-factory test asserting the warmup role sequence has no final
   synthetic `UserMessage`; add a coordinator test that begins `warmup`, starts
@@ -45,7 +45,7 @@
   add an application test that posts a valid warmup and observes the injected
   coordinator's `warmup` call.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
   Run:
 
@@ -56,7 +56,7 @@
   Expected: compilation fails because `WarmupRequest`, `buildWarmup`, and
   `warmup` do not exist.
 
-- [ ] **Step 3: Implement the minimal warmup path**
+- [x] **Step 3: Implement the minimal warmup path**
 
   Add `WarmupRequest`, validate it with the existing common context checks but
   without `playerAction`, and route `POST /api/warmup` through the same
@@ -67,7 +67,7 @@
   `State.Prefilling`, hands its retained lease to a waiting turn, and finishes
   in `State.Ready`.
 
-- [ ] **Step 4: Run the focused tests and verify GREEN**
+- [x] **Step 4: Run the focused tests and verify GREEN**
 
   Repeat the Step 2 command. Expected: all selected tests pass.
 
@@ -86,13 +86,13 @@
 - Uses `WarmupRequestMapper.map(session, scenario)` with `session.id` as the
   request's `sessionId`.
 
-- [ ] **Step 1: Write failing browser tests**
+- [x] **Step 1: Write failing browser tests**
 
   Add an encoding test for `WarmupRequest`; add a submission test showing the
   resume warmup reaches the API once with the stored session ID and no player
   action.
 
-- [ ] **Step 2: Run the focused browser tests and verify RED**
+- [~] **Step 2: Run the focused browser tests and verify RED (blocked at shared Yarn installation)**
 
   Run:
 
@@ -103,7 +103,10 @@
   Expected: compilation fails because the web warmup API and mapper do not
   exist.
 
-- [ ] **Step 3: Implement the minimal browser request**
+  Blocked: the shared Yarn installation state prevented these browser tests
+  from running, so RED was not observed.
+
+- [x] **Step 3: Implement the minimal browser request**
 
   Add the serializable web `WarmupRequest`, encoder, mapper, and
   `AdventureApiClient.warmup` POST to `/api/warmup`. In `PlayView`, replace the
@@ -111,9 +114,12 @@
   mount-only `useEffect`; ignore its safe failure so typing and sending remain
   available.
 
-- [ ] **Step 4: Run the focused browser tests and verify GREEN**
+- [~] **Step 4: Run the focused browser tests and verify GREEN (blocked at shared Yarn installation)**
 
   Repeat the Step 2 command. Expected: all selected browser tests pass.
+
+  Blocked: the shared Yarn installation state prevented these browser tests
+  from running, so GREEN was not observed.
 
 ### Task 3: Verify and commit
 
@@ -121,7 +127,7 @@
 
 - Modify: `docs/superpowers/plans/2026-07-16-resume-cache-warmup.md`
 
-- [ ] **Step 1: Run server verification**
+- [x] **Step 1: Run server verification**
 
   ```bash
   ./gradlew :server:test -x kotlinNpmInstall -x kotlinStoreYarnLock -x :web:browserProductionWebpack --console=plain
@@ -130,7 +136,7 @@
 
   Expected: both commands exit 0.
 
-- [ ] **Step 2: Run the complete project check**
+- [x] **Step 2: Run the complete project check (attempted; blocked at shared Yarn installation)**
 
   ```bash
   ./gradlew check --console=plain
@@ -139,7 +145,7 @@
   Expected: exit 0. If the shared Yarn installation blocks, preserve its
   process state, report the blocker, and do not treat it as a product failure.
 
-- [ ] **Step 3: Commit implementation and plan**
+- [x] **Step 3: Commit implementation and plan**
 
   ```bash
   git add server web docs/superpowers/plans/2026-07-16-resume-cache-warmup.md

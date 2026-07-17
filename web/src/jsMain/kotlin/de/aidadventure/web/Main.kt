@@ -153,9 +153,12 @@ private val DetailView = FC<DetailViewProps> { props ->
 private external interface PlayViewProps : Props { var scenario: Scenario; var session: GameSession; var api: AdventureApi; var sessions: SessionRepository; var onBack: () -> Unit; var onSessionChanged: (GameSession) -> Unit }
 private val PlayView = FC<PlayViewProps> { props ->
     var action by useState(""); var pending by useState(false); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null)
-    val (liveId) = useState("live-${kotlin.random.Random.nextInt()}-${now()}")
+    val liveId = props.session.id
     val (prefill) = useState(PrefillSubmission(props.api))
     val displayed = sessionForDisplay(props.session, streamed)
+    useEffect(dependencies = emptyArray()) {
+        scope.launch { runCatching { WarmupSubmission(props.api).submit(props.session, props.scenario) } }
+    }
     fun submit() { val text = action.trim(); if (text.isBlank() || pending) return; prefill.turnStarted(); pending = true; action = ""; error = null; scope.launch { try {
         val completed = TurnSubmission(props.sessions, props.api).submit(props.session, props.scenario, text, { flushStreamUpdate { streamed = it } }, { flushStreamUpdate { streamed = it } }, liveId)
         metrics = completed.metrics; streamed = completed.session; props.onSessionChanged(completed.session)
