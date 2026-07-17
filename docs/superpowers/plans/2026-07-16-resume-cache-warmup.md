@@ -92,7 +92,7 @@
   resume warmup reaches the API once with the stored session ID and no player
   action.
 
-- [x] **Step 2: Run the focused browser tests and verify RED**
+- [~] **Step 2: Run the focused browser tests and verify RED (blocked at shared Yarn installation)**
 
   Run:
 
@@ -103,6 +103,9 @@
   Expected: compilation fails because the web warmup API and mapper do not
   exist.
 
+  Blocked: the shared Yarn installation state prevented these browser tests
+  from running, so RED was not observed.
+
 - [x] **Step 3: Implement the minimal browser request**
 
   Add the serializable web `WarmupRequest`, encoder, mapper, and
@@ -111,9 +114,12 @@
   mount-only `useEffect`; ignore its safe failure so typing and sending remain
   available.
 
-- [x] **Step 4: Run the focused browser tests and verify GREEN**
+- [~] **Step 4: Run the focused browser tests and verify GREEN (blocked at shared Yarn installation)**
 
   Repeat the Step 2 command. Expected: all selected browser tests pass.
+
+  Blocked: the shared Yarn installation state prevented these browser tests
+  from running, so GREEN was not observed.
 
 ### Task 3: Verify and commit
 
