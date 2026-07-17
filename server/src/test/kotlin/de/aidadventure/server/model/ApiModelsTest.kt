@@ -6,17 +6,18 @@ import kotlin.test.assertEquals
 
 class ApiModelsTest {
     @Test
-    fun `turn JSON carries a live session and llama port`() {
+    fun `turn JSON carries a live session without browser connection settings`() {
         val request = Json.decodeFromString<TurnRequest>("""
-            {"sessionId":"live-1","modelId":"small","llamaCppPort":8081,"scenarioMarkdown":"# S","history":[],"playerAction":"look"}
+            {"sessionId":"live-1","scenarioMarkdown":"# S","history":[],"playerAction":"look"}
         """)
 
         assertEquals("live-1", request.sessionId)
+        assertEquals("", request.modelId)
         assertEquals(8081, request.llamaCppPort)
     }
 
     @Test
     fun `prefill request carries an increasing revision`() {
-        assertEquals(7L, PrefillRequest("live-1", 7, "model", 8081, "# Scenario", emptyList(), "look").revision)
+        assertEquals(7L, PrefillRequest("live-1", 7, scenarioMarkdown = "# Scenario", history = emptyList(), playerAction = "look").revision)
     }
 }

@@ -24,6 +24,13 @@ Then start the application:
 ./gradlew :server:run
 ```
 
+The application connects to llama.cpp on `localhost:8081` by default. Override
+that port only when starting the application:
+
+```bash
+./gradlew :server:run --args='--llama-port=8082'
+```
+
 Open [http://127.0.0.1:8080/](http://127.0.0.1:8080/) in the browser. Stop the
 application with Ctrl-C in its Gradle terminal.
 
@@ -33,10 +40,9 @@ your LAN. Do not use that setting on an untrusted network.
 
 ### Connect to llama.cpp
 
-Import or open a scenario, enter the llama.cpp port (normally `8081`), select a
-discovered model, and start a session. Scenarios and sessions remain in this
-browser profile. Reopening a session verifies its saved llama.cpp connection before
-resuming.
+Import or open a scenario, then start a new session or resume a saved one. The
+server owns the localhost llama.cpp connection and its single model; scenarios
+and sessions remain in this browser profile.
 
 While typing an action, the browser silently sends a debounced `POST /api/prefill`
 for the current session. The server responds with `202 Accepted`; this does not add a
@@ -80,32 +86,29 @@ With the API running, check that it can reach local llama.cpp:
 
 ```bash
 curl -fsS http://localhost:8080/api/health
-curl -fsS 'http://localhost:8080/api/models?port=8081'
 ```
 
-The first command returns `{"status":"ok"}`. The second returns the locally
-installed model IDs; choose one of those IDs in the browser.
+The command returns `{"status":"ok"}`.
 
 A successful `POST /api/turn` is an SSE response: it sends one or more `token`
-frames followed by a terminal `done` frame. Check the stream directly with a
-model ID returned by `/api/models?port=8081`:
+frames followed by a terminal `done` frame:
 
 ```bash
 curl -N -X POST http://localhost:8080/api/turn \
   -H 'Content-Type: application/json' \
-  --data '{"sessionId":"manual-check","modelId":"YOUR_MODEL","llamaCppPort":8081,"scenarioMarkdown":"# Fog Harbor","history":[],"playerAction":"look"}'
+  --data '{"sessionId":"manual-check","scenarioMarkdown":"# Fog Harbor","history":[],"playerAction":"look"}'
 ```
 
 With `./gradlew :server:run` running, open http://127.0.0.1:8080/, import
-`harbor.md`, open **Fog Harbor**, choose a model, and start a session. Send a
-short action, reload the page, reopen the scenario, resume the saved session,
-then send a second short action without changing the scenario or model.
+`harbor.md`, open **Fog Harbor**, and start a session. Send a short action,
+reload the page, reopen the scenario, resume the saved session, then send a
+second short action without changing the scenario.
 Scenarios and sessions are stored in this browser's IndexedDB, so they persist
 across a reload of the same browser profile; the server has no session storage.
 
 For a request-level check, use the browser's Network panel: both `POST
-/api/turn` requests contain the same `scenarioMarkdown` and `modelId`; the
-second request's `history` contains the first completed turn. The server builds
+/api/turn` requests contain the same `scenarioMarkdown`; the second request's
+`history` contains the first completed turn. The server builds
 each game-master prompt in a fixed order: instruction, original scenario,
 history, then the new player action.
 

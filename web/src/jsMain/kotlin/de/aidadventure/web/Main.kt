@@ -98,9 +98,9 @@ internal val AdventureApp = FC<AdventureAppProps> { props ->
                 scenario = current.scenario; api = props.api
                 sessions = { props.sessionRepository.list().filter { it.scenarioId == current.scenario.id } }
                 onBack = { view = View.Library }
-                onCreate = { model, port -> scope.launch {
+                onCreate = { scope.launch {
                     val time = now(); val session = GameSession("session-$time-${kotlin.random.Random.nextInt()}", current.scenario.id,
-                        "${current.scenario.name} adventure", model, emptyList(), time, time, port)
+                        "${current.scenario.name} adventure", "configured-llama-cpp", emptyList(), time, time)
                     props.sessionRepository.save(session); view = View.Play(current.scenario, session)
                 } }
                 onResume = { session -> view = View.Play(current.scenario, session) }
@@ -133,22 +133,14 @@ private fun ChildrenBuilder.libraryView(scenarios: List<Scenario>, error: String
 
 private external interface DetailViewProps : Props {
     var scenario: Scenario; var api: AdventureApi; var sessions: suspend () -> List<GameSession>
-    var onBack: () -> Unit; var onCreate: (String, Int) -> Unit; var onResume: (GameSession) -> Unit; var onDeleteSession: suspend (GameSession) -> Unit
+    var onBack: () -> Unit; var onCreate: () -> Unit; var onResume: (GameSession) -> Unit; var onDeleteSession: suspend (GameSession) -> Unit
 }
 
 private val DetailView = FC<DetailViewProps> { props ->
-    var portText by useState(AdventureApiClient.DEFAULT_LLAMA_CPP_PORT.toString())
-    var models by useState<List<String>>(emptyList())
     var loadedSessions by useState<List<GameSession>>(emptyList())
-    var pending by useState(false)
     var deletingSessionId by useState<String?>(null)
     var error by useState<String?>(null)
     useEffect(dependencies = emptyArray()) { scope.launch { runCatching { props.sessions() }.onSuccess { loadedSessions = it }.onFailure { error = clientMessage(it) } } }
-    fun port() = portText.toIntOrNull()?.takeIf { it in 1..65535 }
-    fun discover(after: (List<String>) -> Unit) {
-        val port = port() ?: run { error = "Enter a valid llama.cpp port."; return }
-        pending = true; error = null; scope.launch { runCatching { props.api.models(port) }.onSuccess { list -> pending = false; models = list; after(list) }.onFailure { pending = false; error = clientMessage(it) } }
-    }
     fun deleteSession(session: GameSession) {
         deletingSessionId = session.id
         error = null
@@ -161,24 +153,15 @@ private val DetailView = FC<DetailViewProps> { props ->
             deletingSessionId = null
         }
     }
-    val busy = pending || deletingSessionId != null
+    val busy = deletingSessionId != null
     ReactHTML.section { className = ClassName("view-card")
         ReactHTML.button { className = ClassName("secondary-button"); disabled = busy; onClick = { props.onBack() }; +"Back to library" }
         ReactHTML.h2 { className = ClassName("view-title"); +props.scenario.name }
-        ReactHTML.label { className = ClassName("action-label"); +"llama.cpp port" }
-        ReactHTML.input { type = "number".unsafeCast<web.html.InputType>(); value = portText; disabled = busy; onChange = { portText = it.target.unsafeCast<HTMLInputElement>().value } }
-        ReactHTML.button { className = ClassName("secondary-button"); disabled = busy; onClick = { discover {} }; +"Find models" }
+        ReactHTML.button { className = ClassName("primary-button"); disabled = busy; onClick = { props.onCreate() }; +"New session" }
         error?.let { ReactHTML.p { className = ClassName("status-error"); +it } }
-        ReactHTML.div { className = ClassName("stack"); models.forEach { model -> ReactHTML.button { className = ClassName("action-row primary-button"); disabled = busy; onClick = { port()?.let { props.onCreate(model, it) } }; +"Start with $model" } } }
         ReactHTML.h3 { className = ClassName("section-title"); +"Saved sessions" }
         ReactHTML.div { className = ClassName("stack"); loadedSessions.forEach { session -> ReactHTML.div { className = ClassName("action-row")
-            ReactHTML.button { className = ClassName("action-row-open"); disabled = busy; onClick = {
-                val selectedPort = port()
-                if (selectedPort == null) error = "Enter a valid llama.cpp port." else discover { models ->
-                    if (models.contains(session.modelId)) props.onResume(session.copy(llamaCppPort = selectedPort))
-                    else error = "Saved model is unavailable on this port."
-                }
-            }; +session.title }
+            ReactHTML.button { className = ClassName("action-row-open"); disabled = busy; onClick = { props.onResume(session) }; +session.title }
             ReactHTML.button { className = ClassName("delete-button"); disabled = busy; onClick = { deleteSession(session) }; +"Delete session" }
         } } }
     }

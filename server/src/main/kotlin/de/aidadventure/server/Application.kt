@@ -47,14 +47,16 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
 
-fun main() {
-    val config = ServerRuntimeConfig.from(System.getenv())
-    embeddedServer(Netty, port = config.port, host = config.host, module = Application::adventureModule).start(wait = true)
+fun main(args: Array<String>) {
+    val config = ServerRuntimeConfig.from(System.getenv(), args)
+    embeddedServer(Netty, port = config.port, host = config.host) {
+        adventureModule(llamaCppPort = config.llamaCppPort)
+    }.start(wait = true)
 }
 
-data class ServerRuntimeConfig(val host: String, val port: Int) {
+data class ServerRuntimeConfig(val host: String, val port: Int, val llamaCppPort: Int) {
     companion object {
-        fun from(environment: Map<String, String>): ServerRuntimeConfig {
+        fun from(environment: Map<String, String>, args: Array<String> = emptyArray()): ServerRuntimeConfig {
             val exposeLan = environment["ADVENTURE_EXPOSE_LAN"] ?: "false"
             require(exposeLan == "true" || exposeLan == "false") {
                 "ADVENTURE_EXPOSE_LAN must be either true or false."
@@ -62,7 +64,18 @@ data class ServerRuntimeConfig(val host: String, val port: Int) {
             return ServerRuntimeConfig(
                 host = if (exposeLan == "true") "0.0.0.0" else "127.0.0.1",
                 port = environment["PORT"]?.toIntOrNull() ?: 8080,
+                llamaCppPort = parseLlamaCppPort(args),
             )
+        }
+
+        private fun parseLlamaCppPort(args: Array<String>): Int {
+            require(args.size <= 1 && args.firstOrNull()?.startsWith("--llama-port=") != false) {
+                "Usage: --llama-port=<1-65535>."
+            }
+            return args.firstOrNull()
+                ?.removePrefix("--llama-port=")
+                ?.let(de.aidadventure.server.llamacpp.LlamaCppPort::parse)
+                ?: de.aidadventure.server.llamacpp.LlamaCppPort.DEFAULT
         }
     }
 }
@@ -71,6 +84,7 @@ fun Application.adventureModule(
     llamaCppGateway: LlamaCppGateway = LlamaCppGateway(),
     prefillRegistry: PrefillRegistry = ExpiringPrefillRegistry(),
     clock: () -> Long = System::currentTimeMillis,
+    llamaCppPort: Int = LlamaCppPort.DEFAULT,
 ) {
     val logger = LoggerFactory.getLogger("de.aidadventure.server.AdventureApi")
     install(ContentNegotiation) { json() }
@@ -91,18 +105,8 @@ fun Application.adventureModule(
     }
     routing {
         get("/api/health") { call.respond(HealthResponse()) }
-        get("/api/models") {
-            val port = call.validLlamaCppPortOrRespond() ?: return@get
-            try {
-                call.respond(ModelsResponse(llamaCppGateway.availableModels(port)))
-            } catch (failure: RuntimeException) {
-                call.respondLlamaUnavailable(logger, "models", failure)
-            } catch (failure: IOException) {
-                call.respondLlamaUnavailable(logger, "models", failure)
-            }
-        }
         post("/api/prefill") {
-            val request = call.receive<PrefillRequest>()
+            val request = call.receive<PrefillRequest>().configuredFor(llamaCppPort)
             RequestValidator.validate(request)?.let { error ->
                 call.respond(HttpStatusCode.BadRequest, error)
                 return@post
@@ -119,7 +123,7 @@ fun Application.adventureModule(
             }
         }
         post("/api/warmup") {
-            val request = call.receive<WarmupRequest>()
+            val request = call.receive<WarmupRequest>().configuredFor(llamaCppPort)
             RequestValidator.validate(request)?.let { error ->
                 call.respond(HttpStatusCode.BadRequest, error)
                 return@post
@@ -136,24 +140,11 @@ fun Application.adventureModule(
             }
         }
         post("/api/turn") {
-            val request = call.receive<TurnRequest>()
+            val request = call.receive<TurnRequest>().configuredFor(llamaCppPort)
             RequestValidator.validate(request)?.let { error ->
                 call.respond(HttpStatusCode.BadRequest, error)
                 return@post
             }
-            try {
-                if (request.modelId !in llamaCppGateway.availableModels(request.llamaCppPort)) {
-                    call.respond(HttpStatusCode.NotFound, ApiError("model_not_found", "The requested model is unavailable."))
-                    return@post
-                }
-            } catch (failure: RuntimeException) {
-                call.respondLlamaUnavailable(logger, "model_validation", failure)
-                return@post
-            } catch (failure: IOException) {
-                call.respondLlamaUnavailable(logger, "model_validation", failure)
-                return@post
-            }
-
             call.respondTextWriter(contentType = ContentType.Text.EventStream) {
                 try {
                     sseComment("connected")
@@ -186,12 +177,11 @@ fun Application.adventureModule(
     }
 }
 
-private suspend fun io.ktor.server.application.ApplicationCall.validLlamaCppPortOrRespond(): Int? = try {
-    LlamaCppPort.parse(request.queryParameters["port"] ?: "")
-} catch (_: IllegalArgumentException) {
-    respond(HttpStatusCode.BadRequest, invalidRequestError())
-    null
-}
+private const val CONFIGURED_MODEL_ID = "configured-llama-cpp"
+
+private fun TurnRequest.configuredFor(port: Int) = copy(modelId = CONFIGURED_MODEL_ID, llamaCppPort = port)
+private fun PrefillRequest.configuredFor(port: Int) = copy(modelId = CONFIGURED_MODEL_ID, llamaCppPort = port)
+private fun WarmupRequest.configuredFor(port: Int) = copy(modelId = CONFIGURED_MODEL_ID, llamaCppPort = port)
 
 private suspend fun io.ktor.server.application.ApplicationCall.respondLlamaUnavailable(
     logger: org.slf4j.Logger,

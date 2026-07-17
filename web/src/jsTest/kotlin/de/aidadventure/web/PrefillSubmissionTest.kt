@@ -30,7 +30,7 @@ class PrefillSubmissionTest {
     @OptIn(DelicateCoroutinesApi::class)
     @Test
     fun `resuming a session renders PlayView and submits one complete warmup`() = GlobalScope.promise<Unit> {
-        val api = RecordingAdventureApi(models = listOf("saved-model"))
+        val api = RecordingAdventureApi()
         val scenario = Scenario("scenario-7", "harbor.md", "# Harbor\nStorm signals", 1)
         val savedSession = GameSession(
             id = "persisted-session-7",
@@ -61,9 +61,6 @@ class PrefillSubmissionTest {
 
             container.clickButtonNamed(scenario.name)
             nextBrowserTick()
-            assertNotNull(container.buttonNamed("Find models"))
-            container.clickButtonNamed("Find models")
-            nextBrowserTick()
             assertNotNull(container.buttonNamed(savedSession.title))
             container.clickButtonNamed(savedSession.title)
             nextBrowserTick()
@@ -74,8 +71,6 @@ class PrefillSubmissionTest {
                 listOf(
                     WarmupRequest(
                         sessionId = "persisted-session-7",
-                        modelId = "saved-model",
-                        llamaCppPort = 8081,
                         scenarioMarkdown = "# Harbor\nStorm signals",
                         history = listOf(
                             de.aidadventure.web.api.ChatEntry("player", "Watch the pier"),
@@ -235,15 +230,11 @@ private class ManualPrefillScheduler : PrefillScheduler {
     }
 }
 
-private class RecordingAdventureApi(
-    private val models: List<String> = emptyList(),
-) : AdventureApi {
+private class RecordingAdventureApi : AdventureApi {
     val prefilledActions = mutableListOf<String>()
     val prefillRevisions = mutableListOf<Long>()
     val warmupRequests = mutableListOf<WarmupRequest>()
     val warmedSessionIds get() = warmupRequests.map { it.sessionId }
-
-    override suspend fun models(port: Int): List<String> = models
 
     override suspend fun prefill(request: PrefillRequest): PrefillAccepted {
         prefilledActions += request.playerAction

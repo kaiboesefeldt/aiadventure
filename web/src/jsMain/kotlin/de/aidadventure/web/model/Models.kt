@@ -15,7 +15,7 @@ data class GameSession(
     val id: String,
     val scenarioId: String,
     val title: String,
-    val modelId: String,
+    val modelId: String = "configured-llama-cpp",
     val messages: List<GameMessage>,
     val createdAt: Long,
     val updatedAt: Long,

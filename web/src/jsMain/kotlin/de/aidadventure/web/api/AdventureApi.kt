@@ -10,7 +10,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 interface AdventureApi {
-    suspend fun models(port: Int): List<String>
     suspend fun prefill(request: PrefillRequest): PrefillAccepted
     suspend fun warmup(request: WarmupRequest): PrefillAccepted
     suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics
@@ -19,11 +18,6 @@ interface AdventureApi {
 class AdventureApiClient(
     private val baseUrl: String = resolveAdventureApiBaseUrl(window.location.hostname, window.location.port),
 ) : AdventureApi {
-    override suspend fun models(port: Int): List<String> {
-        val response = requireBrowserSuccess(window.fetch("$normalizedBaseUrl/api/models?port=$port").await())
-        return streamJson.decodeFromString<ModelsResponse>(response.text().unsafeCast<Promise<String>>().await()).models
-    }
-
     override suspend fun prefill(request: PrefillRequest): PrefillAccepted {
         val response = browserFetch("/api/prefill", encodePrefillRequest(request))
         if (response.status.unsafeCast<Int>() != 202) throw browserFailure(response)
@@ -77,9 +71,6 @@ class AdventureApiClient(
 
     private val normalizedBaseUrl = baseUrl.removeSuffix("/")
 
-    companion object {
-        const val DEFAULT_LLAMA_CPP_PORT = 8081
-    }
 }
 
 internal fun encodeTurnRequest(request: TurnRequest): String =
@@ -150,11 +141,9 @@ class SseFrameDecoder {
 
 object TurnRequestMapper {
     fun map(session: GameSession, scenario: Scenario, playerAction: String, sessionId: String = ""): TurnRequest = TurnRequest(
-        modelId = session.modelId,
         scenarioMarkdown = scenario.markdown,
         history = session.messages.map { ChatEntry(it.role, it.content) },
         playerAction = playerAction,
-        llamaCppPort = session.llamaCppPort,
         sessionId = sessionId,
     )
 }
@@ -163,8 +152,6 @@ object PrefillRequestMapper {
     fun map(session: GameSession, scenario: Scenario, sessionId: String, revision: Long, action: String): PrefillRequest = PrefillRequest(
         sessionId = sessionId,
         revision = revision,
-        modelId = session.modelId,
-        llamaCppPort = session.llamaCppPort,
         scenarioMarkdown = scenario.markdown,
         history = session.messages.map { ChatEntry(it.role, it.content) },
         playerAction = action,
@@ -174,8 +161,6 @@ object PrefillRequestMapper {
 object WarmupRequestMapper {
     fun map(session: GameSession, scenario: Scenario): WarmupRequest = WarmupRequest(
         sessionId = session.id,
-        modelId = session.modelId,
-        llamaCppPort = session.llamaCppPort,
         scenarioMarkdown = scenario.markdown,
         history = session.messages.map { ChatEntry(it.role, it.content) },
     )
@@ -186,11 +171,9 @@ data class ChatEntry(val role: String, val content: String)
 
 @Serializable
 data class TurnRequest(
-    val modelId: String,
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val playerAction: String,
-    val llamaCppPort: Int,
     val sessionId: String,
 )
 
@@ -198,8 +181,6 @@ data class TurnRequest(
 data class PrefillRequest(
     val sessionId: String,
     val revision: Long,
-    val modelId: String,
-    val llamaCppPort: Int,
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val playerAction: String,
@@ -208,8 +189,6 @@ data class PrefillRequest(
 @Serializable
 data class WarmupRequest(
     val sessionId: String,
-    val modelId: String,
-    val llamaCppPort: Int,
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
 )
