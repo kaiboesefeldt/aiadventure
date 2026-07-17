@@ -183,12 +183,14 @@ class PrefillSubmissionTest {
         override suspend fun list() = listOf(scenario)
         override suspend fun save(scenario: Scenario) = Unit
         override suspend fun find(id: String) = null
+        override suspend fun delete(id: String) = Unit
     }
 
     private fun staticSessionRepository(session: GameSession) = object : SessionRepository {
         override suspend fun list() = listOf(session)
         override suspend fun save(session: GameSession) = Unit
         override suspend fun find(id: String) = null
+        override suspend fun delete(id: String) = Unit
     }
 
     private fun HTMLElement.click(selector: String) {

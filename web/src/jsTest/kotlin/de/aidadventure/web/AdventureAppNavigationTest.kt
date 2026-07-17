@@ -66,12 +66,14 @@ class AdventureAppNavigationTest {
         override suspend fun list() = listOf(scenario)
         override suspend fun save(scenario: Scenario) = Unit
         override suspend fun find(id: String) = null
+        override suspend fun delete(id: String) = Unit
     }
 
     private fun sessionRepository() = object : SessionRepository {
         override suspend fun list() = emptyList<GameSession>()
         override suspend fun save(session: GameSession) = Unit
         override suspend fun find(id: String) = null
+        override suspend fun delete(id: String) = Unit
     }
 
     private fun HTMLElement.click(selector: String) {
