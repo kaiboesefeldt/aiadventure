@@ -25,6 +25,7 @@ class PromptFactory {
     private fun historyMessage(entry: ChatEntry): ChatMessage = when (entry.role) {
         "player", "user" -> UserMessage.from(entry.content)
         "game-master", "assistant", "ai" -> AiMessage.from(entry.content)
+        "runtime-fragment" -> SystemMessage.from(entry.content)
         else -> throw IllegalArgumentException("Unknown chat role: ${entry.role}")
     }
 

@@ -3,6 +3,7 @@ package de.aidadventure.web.api
 import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
+import de.aidadventure.web.persistence.ScenarioFrontmatter
 import kotlinx.browser.window
 import kotlinx.coroutines.await
 import kotlin.js.Promise
@@ -140,34 +141,49 @@ class SseFrameDecoder {
 }
 
 object TurnRequestMapper {
-    fun map(session: GameSession, scenario: Scenario, playerAction: String, sessionId: String = ""): TurnRequest = TurnRequest(
-        scenarioMarkdown = scenario.markdown,
-        history = session.messages.map { ChatEntry(it.role, it.content) },
-        playerAction = playerAction,
-        sessionId = sessionId,
-    )
+    fun map(session: GameSession, scenario: Scenario, playerAction: String, sessionId: String = ""): TurnRequest {
+        val parsed = ScenarioFrontmatter.parse(scenario.markdown)
+        return TurnRequest(
+            scenarioMarkdown = parsed.promptMarkdown,
+            history = session.messages.map { ChatEntry(it.role, it.content) },
+            playerAction = playerAction,
+            sessionId = sessionId,
+            runtimeFragments = parsed.runtimeFragments.map { RuntimeFragmentDefinition(it.matchText, it.fragment) },
+        )
+    }
 }
 
 object PrefillRequestMapper {
-    fun map(session: GameSession, scenario: Scenario, sessionId: String, revision: Long, action: String): PrefillRequest = PrefillRequest(
-        sessionId = sessionId,
-        revision = revision,
-        scenarioMarkdown = scenario.markdown,
-        history = session.messages.map { ChatEntry(it.role, it.content) },
-        playerAction = action,
-    )
+    fun map(session: GameSession, scenario: Scenario, sessionId: String, revision: Long, action: String): PrefillRequest {
+        val parsed = ScenarioFrontmatter.parse(scenario.markdown)
+        return PrefillRequest(
+            sessionId = sessionId,
+            revision = revision,
+            scenarioMarkdown = parsed.promptMarkdown,
+            history = session.messages.map { ChatEntry(it.role, it.content) },
+            playerAction = action,
+            runtimeFragments = parsed.runtimeFragments.map { RuntimeFragmentDefinition(it.matchText, it.fragment) },
+        )
+    }
 }
 
 object WarmupRequestMapper {
-    fun map(session: GameSession, scenario: Scenario): WarmupRequest = WarmupRequest(
-        sessionId = session.id,
-        scenarioMarkdown = scenario.markdown,
-        history = session.messages.map { ChatEntry(it.role, it.content) },
-    )
+    fun map(session: GameSession, scenario: Scenario): WarmupRequest {
+        val parsed = ScenarioFrontmatter.parse(scenario.markdown)
+        return WarmupRequest(
+            sessionId = session.id,
+            scenarioMarkdown = parsed.promptMarkdown,
+            history = session.messages.map { ChatEntry(it.role, it.content) },
+            runtimeFragments = parsed.runtimeFragments.map { RuntimeFragmentDefinition(it.matchText, it.fragment) },
+        )
+    }
 }
 
 @Serializable
 data class ChatEntry(val role: String, val content: String)
+
+@Serializable
+data class RuntimeFragmentDefinition(val matchText: String, val fragment: String)
 
 @Serializable
 data class TurnRequest(
@@ -175,6 +191,7 @@ data class TurnRequest(
     val history: List<ChatEntry>,
     val playerAction: String,
     val sessionId: String,
+    val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
 )
 
 @Serializable
@@ -184,6 +201,7 @@ data class PrefillRequest(
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val playerAction: String,
+    val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
 )
 
 @Serializable
@@ -191,6 +209,7 @@ data class WarmupRequest(
     val sessionId: String,
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
+    val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
 )
 
 @Serializable

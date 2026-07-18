@@ -155,6 +155,7 @@ fun Application.adventureModule(
                     stream.collect { event ->
                         when (event) {
                             is TurnStreamEvent.Token -> sse("token", eventJson.encodeToString(StreamToken(event.text)))
+                            is TurnStreamEvent.Fragment -> Unit
                             is TurnStreamEvent.Done -> sse("done", eventJson.encodeToString(StreamDone(event.metrics)))
                         }
                     }
@@ -202,6 +203,7 @@ object RequestValidator {
         scenarioMarkdown = request.scenarioMarkdown,
         history = request.history,
         playerAction = request.playerAction,
+        runtimeFragments = request.runtimeFragments,
     )
 
     fun validate(request: PrefillRequest): ApiError? = when {
@@ -213,6 +215,7 @@ object RequestValidator {
             scenarioMarkdown = request.scenarioMarkdown,
             history = request.history,
             playerAction = request.playerAction,
+            runtimeFragments = request.runtimeFragments,
         )
     }
 
@@ -222,6 +225,7 @@ object RequestValidator {
         port = request.llamaCppPort,
         scenarioMarkdown = request.scenarioMarkdown,
         history = request.history,
+        runtimeFragments = request.runtimeFragments,
     )
 
     private fun validate(
@@ -231,8 +235,9 @@ object RequestValidator {
         scenarioMarkdown: String,
         history: List<ChatEntry>,
         playerAction: String,
+        runtimeFragments: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
     ): ApiError? = when {
-        validateContext(sessionId, modelId, port, scenarioMarkdown, history) != null -> invalid()
+        validateContext(sessionId, modelId, port, scenarioMarkdown, history, runtimeFragments) != null -> invalid()
         playerAction.isBlank() || playerAction.length > MAX_TEXT_LENGTH -> invalid()
         else -> null
     }
@@ -243,6 +248,7 @@ object RequestValidator {
         port: Int,
         scenarioMarkdown: String,
         history: List<ChatEntry>,
+        runtimeFragments: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
     ): ApiError? = when {
         sessionId.isBlank() || sessionId.length > MAX_SESSION_ID_LENGTH -> invalid()
         modelId.isBlank() || modelId.length > MAX_MODEL_ID_LENGTH -> invalid()
@@ -250,11 +256,18 @@ object RequestValidator {
         scenarioMarkdown.isBlank() || scenarioMarkdown.length > MAX_SCENARIO_LENGTH -> invalid()
         history.size > MAX_HISTORY_ENTRIES -> invalid()
         history.any { !it.isValidHistoryEntry() } -> invalid()
+        runtimeFragments.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
+        runtimeFragments.any { !it.isValidRuntimeFragmentDefinition() } -> invalid()
+        runtimeFragments.map { it.matchText }.toSet().size != runtimeFragments.size -> invalid()
         else -> null
     }
 
     private fun ChatEntry.isValidHistoryEntry(): Boolean =
         role in ALLOWED_HISTORY_ROLES && content.isNotBlank() && content.length <= MAX_TEXT_LENGTH
+
+    private fun de.aidadventure.server.model.RuntimeFragmentDefinition.isValidRuntimeFragmentDefinition(): Boolean =
+        matchText.isNotBlank() && fragment.isNotBlank() &&
+            matchText.length <= MAX_TEXT_LENGTH && fragment.length <= MAX_TEXT_LENGTH
 
     private fun invalid() = invalidRequestError()
 
@@ -263,7 +276,8 @@ object RequestValidator {
     private const val MAX_SCENARIO_LENGTH = 200_000
     private const val MAX_TEXT_LENGTH = 20_000
     private const val MAX_HISTORY_ENTRIES = 200
-    private val ALLOWED_HISTORY_ROLES = setOf("player", "user", "game-master", "assistant", "ai")
+    private const val MAX_RUNTIME_FRAGMENT_DEFINITIONS = 200
+    private val ALLOWED_HISTORY_ROLES = setOf("player", "user", "game-master", "assistant", "ai", "runtime-fragment")
 }
 
 @Serializable

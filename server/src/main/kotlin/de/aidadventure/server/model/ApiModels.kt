@@ -10,6 +10,12 @@ data class ChatEntry(
 )
 
 @Serializable
+data class RuntimeFragmentDefinition(
+    val matchText: String,
+    val fragment: String,
+)
+
+@Serializable
 data class TurnRequest(
     val sessionId: String,
     @Transient val modelId: String = "",
@@ -17,6 +23,7 @@ data class TurnRequest(
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val playerAction: String,
+    val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
 )
 
 @Serializable
@@ -28,6 +35,7 @@ data class PrefillRequest(
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val playerAction: String,
+    val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
 )
 
 @Serializable
@@ -37,6 +45,7 @@ data class WarmupRequest(
     @Transient val llamaCppPort: Int = 8081,
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
+    val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
 )
 
 @Serializable
@@ -54,11 +63,15 @@ data class TurnMetrics(
 
 sealed interface TurnStreamEvent {
     data class Token(val text: String) : TurnStreamEvent
+    data class Fragment(val fragment: String) : TurnStreamEvent
     data class Done(val metrics: TurnMetrics) : TurnStreamEvent
 }
 
 @Serializable
 data class StreamToken(val text: String)
+
+@Serializable
+data class StreamFragment(val fragment: String)
 
 @Serializable
 data class StreamDone(val metrics: TurnMetrics)

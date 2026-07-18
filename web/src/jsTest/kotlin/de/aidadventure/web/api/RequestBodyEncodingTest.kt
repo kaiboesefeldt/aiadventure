@@ -1,7 +1,10 @@
 package de.aidadventure.web.api
 
+import de.aidadventure.web.model.GameSession
+import de.aidadventure.web.model.Scenario
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -36,5 +39,37 @@ class RequestBodyEncodingTest {
         val body = Json.parseToJsonElement(encoded).jsonObject
         assertEquals("session-1", body["sessionId"]?.jsonPrimitive?.content)
         assertEquals(null, body["playerAction"])
+    }
+
+    @Test
+    fun `turn requests encode runtime fragments`() {
+        val encoded = encodeTurnRequest(
+            TurnRequest("# Scenario", emptyList(), "look", "session-1", listOf(RuntimeFragmentDefinition("lighthouse", "Mira remembers it"))),
+        )
+
+        val body = Json.parseToJsonElement(encoded).jsonObject
+        assertEquals("Mira remembers it", body["runtimeFragments"]!!.jsonArray.single().jsonObject["fragment"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `request mappers strip frontmatter and carry its fragments`() {
+        val scenario = Scenario(
+            "scenario-1",
+            "Harbor",
+            "---\nruntime-fragments:\n  lighthouse:\n    fragment: Mira remembers it\n---\n# Harbor",
+            1,
+        )
+        val session = GameSession("session-1", scenario.id, "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+
+        val turn = TurnRequestMapper.map(session, scenario, "look", "live-1")
+        val prefill = PrefillRequestMapper.map(session, scenario, "live-1", 1, "look")
+        val warmup = WarmupRequestMapper.map(session, scenario)
+
+        assertEquals("# Harbor", turn.scenarioMarkdown)
+        assertEquals(listOf(RuntimeFragmentDefinition("lighthouse", "Mira remembers it")), turn.runtimeFragments)
+        assertEquals(turn.scenarioMarkdown, prefill.scenarioMarkdown)
+        assertEquals(turn.runtimeFragments, prefill.runtimeFragments)
+        assertEquals(turn.scenarioMarkdown, warmup.scenarioMarkdown)
+        assertEquals(turn.runtimeFragments, warmup.runtimeFragments)
     }
 }

@@ -34,6 +34,15 @@ class PromptFactoryTest {
     }
 
     @Test
+    fun `runtime fragment history maps to a system message`() {
+        val prompt = PromptFactory().build(
+            TurnRequest("live-1", "test-model", 8081, "# Harbor", listOf(ChatEntry("runtime-fragment", "keep quiet")), "look"),
+        )
+
+        assertEquals("keep quiet", (prompt[2] as SystemMessage).text())
+    }
+
+    @Test
     fun `buildWarmup keeps immutable prefix and history without a synthetic player action`() {
         val prompt = PromptFactory().buildWarmup(
             WarmupRequest("live-1", "test-model", 8081, "# Harbor", listOf(ChatEntry("player", "look"))),
