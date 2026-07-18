@@ -14,6 +14,11 @@ object ScenarioImport {
             return ImportResult.Rejected("Scenario files must use the .md or .markdown extension.")
         }
         if (markdown.isBlank()) return ImportResult.Rejected("Scenario file is empty.")
+        try {
+            ScenarioFrontmatter.parse(markdown)
+        } catch (_: IllegalArgumentException) {
+            return ImportResult.Rejected("Invalid scenario frontmatter.")
+        }
 
         val fingerprint = fingerprint(name, markdown)
         val existingScenario = existing.firstOrNull { fingerprint(it.name, it.markdown) == fingerprint }

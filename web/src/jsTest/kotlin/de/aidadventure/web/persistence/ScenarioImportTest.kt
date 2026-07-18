@@ -5,8 +5,23 @@ import de.aidadventure.web.model.GameSession
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class ScenarioImportTest {
+    @Test
+    fun `invalid fragments reject import and valid raw template remains`() {
+        assertEquals(
+            ImportResult.Rejected("Invalid scenario frontmatter."),
+            ScenarioImport.fromFile("x.md", "---\nruntime-fragments: []\n---\n# X", emptyList(), 1),
+        )
+
+        val created = assertIs<ImportResult.Created>(
+            ScenarioImport.fromFile("x.md", "---\nruntime-fragments: {}\n---\n# X", emptyList(), 1),
+        )
+
+        assertTrue(created.scenario.markdown.startsWith("---"))
+    }
+
     @Test
     fun `same filename and markdown updates existing scenario`() {
         val old = Scenario("id-1", "harbor.md", "# Harbor", 1)

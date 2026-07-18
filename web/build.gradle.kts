@@ -30,6 +30,7 @@ kotlin {
                 implementation("org.jetbrains.kotlin-wrappers:kotlin-react-dom:2025.12.2-19.2.1")
                 implementation(npm("react-markdown", "10.1.0"))
                 implementation(npm("remark-gfm", "4.0.1"))
+                implementation(npm("js-yaml", "4.1.0"))
                 implementation("io.ktor:ktor-client-core-js:3.4.1")
                 implementation("io.ktor:ktor-client-js:3.4.1")
                 implementation("io.ktor:ktor-client-content-negotiation:3.4.1")
