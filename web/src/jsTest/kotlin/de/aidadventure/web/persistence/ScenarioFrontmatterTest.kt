@@ -24,4 +24,12 @@ class ScenarioFrontmatterTest {
         assertEquals("# Harbor", parsed.promptMarkdown)
         assertEquals(emptyList(), parsed.runtimeFragments)
     }
+
+    @Test
+    fun frontmatterWithoutRuntimeFragmentsIsStrippedAndHasNoFragments() {
+        val parsed = ScenarioFrontmatter.parse("---\ntitle: Harbor\n---\n# Harbor")
+
+        assertEquals("# Harbor", parsed.promptMarkdown)
+        assertEquals(emptyList(), parsed.runtimeFragments)
+    }
 }

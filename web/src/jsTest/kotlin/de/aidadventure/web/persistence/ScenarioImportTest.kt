@@ -23,6 +23,15 @@ class ScenarioImportTest {
     }
 
     @Test
+    fun `frontmatter without runtime fragments is accepted`() {
+        val created = assertIs<ImportResult.Created>(
+            ScenarioImport.fromFile("harbor.md", "---\ntitle: Harbor\n---\n# Harbor", emptyList(), 1),
+        )
+
+        assertEquals("---\ntitle: Harbor\n---\n# Harbor", created.scenario.markdown)
+    }
+
+    @Test
     fun `same filename and markdown updates existing scenario`() {
         val old = Scenario("id-1", "harbor.md", "# Harbor", 1)
 

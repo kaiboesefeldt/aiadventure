@@ -26,7 +26,8 @@ object ScenarioFrontmatter {
             throw IllegalArgumentException("Invalid scenario frontmatter.", cause)
         }
         val rootEntries = mappingEntries(root) ?: invalidFrontmatter()
-        val fragments = rootEntries.firstOrNull { it[0] == "runtime-fragments" }?.get(1) ?: invalidFrontmatter()
+        val fragmentsEntry = rootEntries.firstOrNull { it[0] == "runtime-fragments" } ?: return emptyList()
+        val fragments = fragmentsEntry[1]
         val fragmentEntries = mappingEntries(fragments) ?: invalidFrontmatter()
 
         return fragmentEntries.map { entry ->
