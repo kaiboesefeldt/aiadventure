@@ -2,6 +2,7 @@
 // is installed in the generated test package. Give the helper access to that
 // package's dependencies before registering it as a Karma plugin.
 const path = require('path');
+const fs = require('fs');
 const Module = require('module');
 const testNodeModules = path.resolve(__dirname, 'node_modules');
 process.env.NODE_PATH = [testNodeModules, process.env.NODE_PATH].filter(Boolean).join(path.delimiter);
@@ -20,3 +21,17 @@ config.plugins.push(
   require('karma-sourcemap-loader'),
   require('karma-webpack'),
 );
+
+const lighthouseExamplePath = path.resolve(__dirname, '../../../../examples/test-game.md');
+function createLighthouseExampleMiddleware() {
+  return (request, response, next) => {
+    if (request.url.split('?')[0] != '/examples/test-game.md') return next();
+    response.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    response.end(fs.readFileSync(lighthouseExamplePath));
+  };
+}
+createLighthouseExampleMiddleware.$inject = [];
+config.plugins.push({
+  'middleware:lighthouse-example': ['factory', createLighthouseExampleMiddleware],
+});
+config.set({ beforeMiddleware: ['lighthouse-example'] });
