@@ -49,6 +49,10 @@ tasks.withType<JavaCompile>().configureEach {
     options.release.set(21)
 }
 
+tasks.test {
+    useJUnitPlatform()
+}
+
 application {
     mainClass.set("de.aidadventure.server.ApplicationKt")
 }
