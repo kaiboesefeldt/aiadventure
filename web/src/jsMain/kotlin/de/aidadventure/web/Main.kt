@@ -203,19 +203,24 @@ private val PlayView = FC<PlayViewProps> { props ->
                     ?.takeIf { it == message }
                     ?.let { runtimeFragmentForGameMaster(props.session.messages, index) }
                 fragment?.let { content ->
+                    val tooltipId = fragmentTooltipId(index)
+                    val isTooltipOpen = openFragmentIndex == index
                     ReactHTML.div {
                         id = fragmentTooltipContainerId(index).unsafeCast<web.dom.ElementId>()
                         className = ClassName("fragment-tooltip-container")
                         ReactHTML.button {
                             className = ClassName("fragment-info-button")
                             ariaLabel = "Fragment information"
+                            asDynamic()["aria-expanded"] = isTooltipOpen.toString()
+                            if (isTooltipOpen) asDynamic()["aria-describedby"] = tooltipId
                             onClick = { event ->
                                 event.stopPropagation()
                                 openFragmentIndex = if (openFragmentIndex == index) null else index
                             }
                             +"Info"
                         }
-                        if (openFragmentIndex == index) ReactHTML.div {
+                        if (isTooltipOpen) ReactHTML.div {
+                            id = tooltipId.unsafeCast<web.dom.ElementId>()
                             className = ClassName("fragment-tooltip")
                             asDynamic().role = "tooltip"
                             +content
@@ -241,5 +246,6 @@ internal fun runtimeFragmentForGameMaster(messages: List<GameMessage>, index: In
         ?.let { messages.getOrNull(index - 2)?.takeIf { it.role == "runtime-fragment" }?.content
             ?.takeIf { messages.getOrNull(index - 1)?.role == "player" } }
 private fun fragmentTooltipContainerId(index: Int) = "fragment-tooltip-container-$index"
+private fun fragmentTooltipId(index: Int) = "fragment-tooltip-$index"
 internal fun shouldSubmitOnEnter(key: String, shiftKey: Boolean, isComposing: Boolean, pending: Boolean, action: String) = key == "Enter" && !shiftKey && !isComposing && !pending && action.isNotBlank()
 internal fun now(): Long = (js("Date.now()") as Double).toLong()

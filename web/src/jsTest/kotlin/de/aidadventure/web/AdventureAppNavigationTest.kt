@@ -222,8 +222,10 @@ class AdventureAppNavigationTest {
             container.clickButtonNamed(session.title)
             nextBrowserTick()
 
-            assertNotNull(container.querySelector("button[aria-label='Fragment information']"))
+            val fragmentInformationButton = assertNotNull(container.querySelector("button[aria-label='Fragment information']"))
             assertEquals(1, container.querySelectorAll("button[aria-label='Fragment information']").length)
+            assertEquals("false", fragmentInformationButton.getAttribute("aria-expanded"))
+            assertNull(fragmentInformationButton.getAttribute("aria-describedby"))
             assertNull(container.querySelector("[role='tooltip']"))
             assertEquals(false, container.textContent?.contains("secret fragment"))
 
@@ -231,12 +233,17 @@ class AdventureAppNavigationTest {
             nextBrowserTick()
 
             assertEquals(true, container.textContent?.contains("secret fragment"))
-            assertNotNull(container.querySelector("[role='tooltip']"))
+            val tooltip = assertNotNull(container.querySelector("[role='tooltip']"))
+            assertEquals("true", fragmentInformationButton.getAttribute("aria-expanded"))
+            val tooltipId = assertNotNull(tooltip.getAttribute("id"))
+            assertEquals(tooltipId, fragmentInformationButton.getAttribute("aria-describedby"))
 
             document.body.asDynamic().dispatchEvent(js("new MouseEvent('click', { bubbles: true })"))
             nextBrowserTick()
 
             assertNull(container.querySelector("[role='tooltip']"))
+            assertEquals("false", fragmentInformationButton.getAttribute("aria-expanded"))
+            assertNull(fragmentInformationButton.getAttribute("aria-describedby"))
         } finally {
             container.remove()
         }
