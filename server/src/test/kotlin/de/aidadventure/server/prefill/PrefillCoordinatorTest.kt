@@ -27,6 +27,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
@@ -177,6 +178,26 @@ class PrefillCoordinatorTest {
         assertEquals(listOf(prefill.toTurnRequestForTest()), fake.prefillRequests)
         assertEquals("keep quiet", resolvedTurn.fragment)
         assertEquals(listOf(prefill.toTurnRequestForTest()), fake.turnRequests)
+        assertEquals(fake.prefillSlots.single(), fake.turnSlots.single())
+        coordinator.close()
+    }
+
+    @Test
+    fun `changed turn action does not reuse the prefilled resolved turn`() = runBlocking {
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake)
+        val prefill = prefill(1, "open", listOf(ChatEntry("runtime-fragment", "keep quiet")))
+        val currentTurn = turn("kick")
+
+        coordinator.submit(prefill, ResolvedTurn(prefill.toTurnRequestForTest(), "keep quiet"))
+        fake.awaitPrefill(1)
+        fake.completePrefill(1)
+        fake.awaitPrefillCompletion(1)
+
+        assertNull(coordinator.resolvedTurnFor(currentTurn))
+        coordinator.beginTurn(currentTurn).toList()
+
+        assertEquals(listOf(currentTurn), fake.turnRequests)
         assertEquals(fake.prefillSlots.single(), fake.turnSlots.single())
         coordinator.close()
     }

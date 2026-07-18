@@ -406,6 +406,7 @@ internal class SessionPrefillCoordinator(
             this.request.llamaCppPort == request.llamaCppPort &&
             this.request.scenarioMarkdown == request.scenarioMarkdown &&
             visibleHistory == request.history &&
+            this.request.playerAction == request.playerAction &&
             this.request.runtimeFragments == request.runtimeFragments
     }
 
