@@ -38,6 +38,26 @@ class RuntimeFragmentIndexRegistryTest {
         registry.close()
     }
 
+    @Test
+    fun overflowEvictsLeastRecentlyAccessedIndexWhenClockDoesNotAdvance() = runTest {
+        val clock = TestClock(Instant.EPOCH)
+        val registry = RuntimeFragmentIndexRegistry(clock = clock, maxIndexes = 2)
+        val embedding = CountingEmbeddingService()
+        val first = listOf(RuntimeFragmentDefinition("first", "first"))
+        val second = listOf(RuntimeFragmentDefinition("second", "second"))
+        val third = listOf(RuntimeFragmentDefinition("third", "third"))
+
+        registry.prepare(first, embedding)
+        registry.prepare(second, embedding)
+        registry.query(first, embedding, floatArrayOf(1f, 0f))
+        registry.prepare(third, embedding)
+        registry.prepare(first, embedding)
+        registry.prepare(second, embedding)
+
+        assertEquals(4, embedding.calls)
+        registry.close()
+    }
+
     private class CountingEmbeddingService : EmbeddingService {
         override val dimension = 2
         var calls = 0

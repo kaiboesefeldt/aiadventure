@@ -28,6 +28,7 @@ class RuntimeFragmentIndexRegistry(
 
     private val mutex = Mutex()
     private val indexes = mutableMapOf<String, IndexedDefinitions>()
+    private var accessSequence = 0L
 
     val indexCount: Int get() = indexes.size
 
@@ -42,7 +43,6 @@ class RuntimeFragmentIndexRegistry(
     ): String? =
         mutex.withLock {
             val index = indexForLocked(definitions, embedding)
-            index.lastAccessedMillis = clock.millis()
             index.store.query(VectorStore.Query(vector = queryVector)).resultsPage.firstOrNull()?.fields?.get(FRAGMENT_FIELD)
         }
 
@@ -58,7 +58,7 @@ class RuntimeFragmentIndexRegistry(
         evictIdleLocked()
         val fingerprint = fingerprintFor(definitions)
         indexes[fingerprint]?.let {
-            it.lastAccessedMillis = clock.millis()
+            touchLocked(it)
             return it
         }
         evictOverflowLocked()
@@ -83,7 +83,7 @@ class RuntimeFragmentIndexRegistry(
                         )
                     }
             }
-            return IndexedDefinitions(store, clock.millis()).also { indexes[fingerprint] = it }
+            return IndexedDefinitions(store, clock.millis(), nextAccessSequenceLocked()).also { indexes[fingerprint] = it }
         } catch (failure: Throwable) {
             store.close()
             throw failure
@@ -99,10 +99,17 @@ class RuntimeFragmentIndexRegistry(
 
     private fun evictOverflowLocked() {
         while (indexes.size >= maxIndexes) {
-            val leastRecentlyUsed = indexes.minBy { it.value.lastAccessedMillis }
+            val leastRecentlyUsed = indexes.minBy { it.value.lastAccessSequence }
             indexes.remove(leastRecentlyUsed.key)?.store?.close()
         }
     }
+
+    private fun touchLocked(index: IndexedDefinitions) {
+        index.lastAccessedMillis = clock.millis()
+        index.lastAccessSequence = nextAccessSequenceLocked()
+    }
+
+    private fun nextAccessSequenceLocked(): Long = ++accessSequence
 
     override fun close() {
         indexes.values.forEach { it.store.close() }
@@ -112,6 +119,7 @@ class RuntimeFragmentIndexRegistry(
     private data class IndexedDefinitions(
         val store: VectorStore,
         var lastAccessedMillis: Long,
+        var lastAccessSequence: Long,
     )
 
     companion object {
