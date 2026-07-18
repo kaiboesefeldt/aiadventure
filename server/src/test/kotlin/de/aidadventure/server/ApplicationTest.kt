@@ -2,6 +2,7 @@ package de.aidadventure.server
 
 import com.sun.net.httpserver.HttpServer
 import de.aidadventure.server.llamacpp.LlamaCppGateway
+import de.aidadventure.server.model.ChatEntry
 import de.aidadventure.server.model.PrefillDisposition
 import de.aidadventure.server.model.PrefillRequest
 import de.aidadventure.server.model.TurnMetrics
@@ -62,6 +63,76 @@ class ApplicationTest {
             visiblePair() + de.aidadventure.server.model.ChatEntry("runtime-fragment", "keep quiet"),
             registry.coordinator.turnRequests.single().history,
         )
+    }
+
+    @Test
+    fun `completed turn warms the next resolved fragment before later input prefill`() = testApplication {
+        val registry = FakeRegistry()
+        application {
+            adventureModule(
+                prefillRegistry = registry,
+                runtimeFragmentResolver = resolving("current fragment", "next fragment"),
+            )
+        }
+        configureJsonClient()
+
+        val response = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest(history = visiblePair()))
+        }
+
+        assertContains(response.bodyAsText(), "event: done")
+        assertEquals(
+            listOf(
+                ChatEntry("player", "ask Mira about the lighthouse"),
+                ChatEntry("game-master", "Mira looks away."),
+                ChatEntry("runtime-fragment", "current fragment"),
+                ChatEntry("player", "look"),
+                ChatEntry("game-master", "The door opens."),
+                ChatEntry("runtime-fragment", "next fragment"),
+            ),
+            registry.coordinator.warmupRequests.single().history,
+        )
+    }
+
+    @Test
+    fun `completed turn without a next fragment keeps the existing flow`() = testApplication {
+        val registry = FakeRegistry()
+        application {
+            adventureModule(
+                prefillRegistry = registry,
+                runtimeFragmentResolver = resolving("current fragment", null),
+            )
+        }
+        configureJsonClient()
+
+        val response = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest(history = visiblePair()))
+        }
+
+        assertContains(response.bodyAsText(), "event: done")
+        assertTrue(registry.coordinator.warmupRequests.isEmpty())
+    }
+
+    @Test
+    fun `post turn fragment resolution failure preserves the completed response`() = testApplication {
+        val registry = FakeRegistry()
+        application {
+            adventureModule(
+                prefillRegistry = registry,
+                runtimeFragmentResolver = resolverThatFailsAfterCurrentFragment(),
+            )
+        }
+        configureJsonClient()
+
+        val response = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest(history = visiblePair()))
+        }
+
+        assertContains(response.bodyAsText(), "event: done")
+        assertTrue(registry.coordinator.warmupRequests.isEmpty())
     }
     @Test
     fun `health returns ok`() = testApplication {
@@ -302,6 +373,28 @@ class ApplicationTest {
             history: List<de.aidadventure.server.model.ChatEntry>,
             definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
         ): String? = fragment
+    }
+
+    private fun resolving(vararg fragments: String?) = object : RuntimeFragmentResolver {
+        private val results = fragments.iterator()
+
+        override suspend fun prepare(definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>) = Unit
+
+        override suspend fun resolve(
+            history: List<de.aidadventure.server.model.ChatEntry>,
+            definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
+        ): String? = results.next()
+    }
+
+    private fun resolverThatFailsAfterCurrentFragment() = object : RuntimeFragmentResolver {
+        private var calls = 0
+
+        override suspend fun prepare(definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>) = Unit
+
+        override suspend fun resolve(
+            history: List<de.aidadventure.server.model.ChatEntry>,
+            definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
+        ): String? = if (++calls == 1) "current fragment" else error("secret fragment details")
     }
 
     private fun warmupRequest() = WarmupRequest("live-1", "configured-llama-cpp", 8081, "# Scenario", emptyList())
