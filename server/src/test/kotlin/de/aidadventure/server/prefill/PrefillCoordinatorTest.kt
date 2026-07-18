@@ -85,6 +85,28 @@ class PrefillCoordinatorTest {
     }
 
     @Test
+    fun `post turn fragment warmup queues later input prefill on its retained slot`() = runBlocking {
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake)
+        val fragmentWarmup = warmup(
+            history = listOf(
+                ChatEntry("player", "look"),
+                ChatEntry("game-master", "The bell rings."),
+                ChatEntry("runtime-fragment", "The keeper avoids the lighthouse."),
+            ),
+        )
+
+        assertEquals(PrefillDisposition.STARTED, coordinator.warmup(fragmentWarmup))
+        fake.awaitWarmup()
+        assertEquals(PrefillDisposition.QUEUED, coordinator.submit(prefill(1, "follow the bell")))
+        fake.completeWarmup()
+        fake.awaitPrefill(1)
+
+        assertEquals(fake.warmupSlots.single(), fake.prefillSlots.single())
+        coordinator.close()
+    }
+
+    @Test
     fun `warmup during an active prefill is ignored as stale`() = runBlocking {
         val fake = ControllableGateway()
         val coordinator = SessionPrefillCoordinator(fake)

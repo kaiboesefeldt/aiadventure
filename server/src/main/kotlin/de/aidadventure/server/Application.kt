@@ -10,6 +10,7 @@ import de.aidadventure.server.model.StreamError
 import de.aidadventure.server.model.StreamFragment
 import de.aidadventure.server.model.StreamToken
 import de.aidadventure.server.model.TurnRequest
+import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.model.WarmupRequest
 import de.aidadventure.server.prefill.CoordinatorKey
@@ -170,13 +171,50 @@ fun Application.adventureModule(
                         ?: request.resolveFragment(runtimeFragmentResolver, call.callId, "turn", logger)
                     val stream = coordinator
                         .beginTurn(resolved.request)
+                    val generated = StringBuilder()
+                    var completedMetrics: TurnMetrics? = null
                     resolved.fragment?.let { sse("fragment", eventJson.encodeToString(StreamFragment(it))) }
                     stream.collect { event ->
                         when (event) {
-                            is TurnStreamEvent.Token -> sse("token", eventJson.encodeToString(StreamToken(event.text)))
+                            is TurnStreamEvent.Token -> {
+                                generated.append(event.text)
+                                sse("token", eventJson.encodeToString(StreamToken(event.text)))
+                            }
                             is TurnStreamEvent.Fragment -> sse("fragment", eventJson.encodeToString(StreamFragment(event.fragment)))
-                            is TurnStreamEvent.Done -> sse("done", eventJson.encodeToString(StreamDone(event.metrics)))
+                            is TurnStreamEvent.Done -> completedMetrics = event.metrics
                         }
+                    }
+                    if (generated.isNotEmpty()) {
+                        try {
+                            val completedHistory = resolved.request.history +
+                                ChatEntry("player", resolved.request.playerAction) +
+                                ChatEntry("game-master", generated.toString())
+                            val nextFragment = runtimeFragmentResolver.resolve(completedHistory, resolved.request.runtimeFragments)
+                            if (!nextFragment.isNullOrBlank()) {
+                                coordinator.warmup(
+                                    WarmupRequest(
+                                        sessionId = resolved.request.sessionId,
+                                        modelId = resolved.request.modelId,
+                                        llamaCppPort = resolved.request.llamaCppPort,
+                                        scenarioMarkdown = resolved.request.scenarioMarkdown,
+                                        history = completedHistory + ChatEntry("runtime-fragment", nextFragment),
+                                        runtimeFragments = resolved.request.runtimeFragments,
+                                    ),
+                                    call.callId ?: "unknown",
+                                )
+                            }
+                        } catch (failure: Exception) {
+                            if (failure is CancellationException) throw failure
+                            logger.warn(
+                                "requestId={} operation={} failure={}",
+                                call.callId,
+                                "post_turn_fragment_warmup",
+                                failure.javaClass.simpleName,
+                            )
+                        }
+                    }
+                    completedMetrics?.let { metrics ->
+                        sse("done", eventJson.encodeToString(StreamDone(metrics)))
                     }
                 } catch (_: ClosedWriteChannelException) {
                     logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)

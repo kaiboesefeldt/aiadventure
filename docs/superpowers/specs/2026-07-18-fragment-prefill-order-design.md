@@ -2,42 +2,45 @@
 
 ## Goal
 
-After a completed LLM response produces a runtime fragment, warm that fragment in
-the session's llama.cpp prompt cache immediately. Do not submit later user-input
-prefills until that fragment warmup has finished.
+After a completed LLM response provides enough history to determine the next
+runtime fragment, warm that fragment in the session's llama.cpp prompt cache
+immediately. The coordinator queues later user-input prefills until that warmup
+has finished.
 
 ## Scope
 
-This changes only the post-turn path when a non-empty runtime fragment was
-selected. Turns without a fragment retain the current delayed user-input prefill
-behavior unchanged.
+This changes only the server post-turn path when the completed history resolves
+to a non-empty next fragment. Turns without a fragment retain the current
+delayed user-input prefill behavior unchanged. The browser API contract and its
+normal debounce behavior remain unchanged.
 
 ## Flow
 
-1. A turn completes and the associated runtime fragment is known.
-2. If the fragment is non-empty, submit a prefill for the prompt state including
-   that fragment, using the existing session ID and retained slot.
-3. Hold queued/debounced user-input prefill submissions while this fragment
-   prefill is in flight.
-4. Once it completes, release the most recent queued user-input prefill through
-   the existing submission path.
-5. If the fragment prefill fails, release that queued input prefill as well;
-   errors remain silent as in the current background-prefill behavior.
-6. If there is no fragment, skip steps 2-5 and keep the existing behavior.
+1. The turn route receives the completed token stream and builds completed
+   history from the resolved turn history, player action, and generated text.
+2. It resolves the next fragment from that completed history.
+3. If the fragment is non-empty, it calls the existing coordinator warmup with a
+   `WarmupRequest` whose history ends in that fragment, using the same session
+   ID and retained slot.
+4. While this asynchronous warmup is active, the existing coordinator state
+   queues a later user-input prefill and starts it after warmup completion.
+5. If no next fragment is resolved, skip steps 2-4 and retain the current path.
+6. If fragment resolution or warmup fails, log only request ID, operation, and
+   failure class; normal input prefill remains usable.
 
 ## Invariants
 
 - All prefill and turn operations retain the same session ID and llama.cpp slot.
-- The fragment prefill precedes any later user-input prefill, so it remains a
-  prefix of the later cached prompt.
-- Debouncing continues to coalesce input to the latest revision; no stale
-  user-input prefill is released after fragment warmup.
+- The server sends `done` only after it has started the fragment warmup, so a
+  subsequent user-input prefill reaches a coordinator already in `Prefilling`.
+- The coordinator's existing pending-prefill replacement continues to coalesce
+  input to the latest revision.
 - The fragment remains hidden from the ordinary transcript.
 
 ## Verification
 
-Add regression coverage for a completed fragment-bearing turn that queues a
-later user action: prove the fragment prefill is submitted first and that the
-latest queued input is submitted only after it completes. Also cover the
-no-fragment path to prove its current immediate/debounced behavior is unchanged,
-and the failure path to prove queued input is released.
+Add route-level coverage proving a completed turn resolves a next fragment and
+submits one warmup whose history contains the complete exchange followed by the
+new fragment. Add coordinator coverage proving a later prefill is queued behind
+that warmup and starts on the same retained slot. Cover no-fragment fallback and
+privacy-safe resolution failure logging.
