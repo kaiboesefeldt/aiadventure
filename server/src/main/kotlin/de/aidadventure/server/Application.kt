@@ -7,6 +7,7 @@ import de.aidadventure.server.model.PrefillAccepted
 import de.aidadventure.server.model.PrefillRequest
 import de.aidadventure.server.model.StreamDone
 import de.aidadventure.server.model.StreamError
+import de.aidadventure.server.model.StreamFragment
 import de.aidadventure.server.model.StreamToken
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
@@ -14,6 +15,9 @@ import de.aidadventure.server.model.WarmupRequest
 import de.aidadventure.server.prefill.CoordinatorKey
 import de.aidadventure.server.prefill.ExpiringPrefillRegistry
 import de.aidadventure.server.prefill.PrefillRegistry
+import de.aidadventure.server.runtimefragments.DefaultRuntimeFragmentResolver
+import de.aidadventure.server.runtimefragments.RuntimeFragmentResolver
+import de.aidadventure.server.embedding.OnnxLocalEmbeddingService
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -83,6 +87,7 @@ data class ServerRuntimeConfig(val host: String, val port: Int, val llamaCppPort
 fun Application.adventureModule(
     llamaCppGateway: LlamaCppGateway = LlamaCppGateway(),
     prefillRegistry: PrefillRegistry = ExpiringPrefillRegistry(),
+    runtimeFragmentResolver: RuntimeFragmentResolver = ProductionRuntimeFragmentResolver(),
     clock: () -> Long = System::currentTimeMillis,
     llamaCppPort: Int = LlamaCppPort.DEFAULT,
 ) {
@@ -114,7 +119,11 @@ fun Application.adventureModule(
             val key = CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort)
             try {
                 prefillRegistry.removeIdle(clock())
-                call.respond(HttpStatusCode.Accepted, PrefillAccepted(prefillRegistry.coordinatorFor(key).submit(request)))
+                val resolved = request.toTurnRequest().resolveFragment(runtimeFragmentResolver, call.callId, "prefill", logger)
+                call.respond(
+                    HttpStatusCode.Accepted,
+                    PrefillAccepted(prefillRegistry.coordinatorFor(key).submit(request.withResolvedTurn(resolved), resolved)),
+                )
             } catch (failure: IOException) {
                 call.respondLlamaUnavailable(logger, "prefill", failure)
             } catch (failure: RuntimeException) {
@@ -127,6 +136,12 @@ fun Application.adventureModule(
             RequestValidator.validate(request)?.let { error ->
                 call.respond(HttpStatusCode.BadRequest, error)
                 return@post
+            }
+            try {
+                runtimeFragmentResolver.prepare(request.runtimeFragments)
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                logger.warn("requestId={} operation={} failure={}", call.callId, "warmup", failure.javaClass.simpleName)
             }
             val key = CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort)
             try {
@@ -149,13 +164,17 @@ fun Application.adventureModule(
                 try {
                     sseComment("connected")
                     prefillRegistry.removeIdle(clock())
-                    val stream = prefillRegistry
+                    val coordinator = prefillRegistry
                         .coordinatorFor(CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort))
-                        .beginTurn(request)
+                    val resolved = coordinator.resolvedTurnFor(request)
+                        ?: request.resolveFragment(runtimeFragmentResolver, call.callId, "turn", logger)
+                    val stream = coordinator
+                        .beginTurn(resolved.request)
+                    resolved.fragment?.let { sse("fragment", eventJson.encodeToString(StreamFragment(it))) }
                     stream.collect { event ->
                         when (event) {
                             is TurnStreamEvent.Token -> sse("token", eventJson.encodeToString(StreamToken(event.text)))
-                            is TurnStreamEvent.Fragment -> Unit
+                            is TurnStreamEvent.Fragment -> sse("fragment", eventJson.encodeToString(StreamFragment(event.fragment)))
                             is TurnStreamEvent.Done -> sse("done", eventJson.encodeToString(StreamDone(event.metrics)))
                         }
                     }
@@ -180,9 +199,56 @@ fun Application.adventureModule(
 
 private const val CONFIGURED_MODEL_ID = "configured-llama-cpp"
 
+data class ResolvedTurn(val request: TurnRequest, val fragment: String?)
+
 private fun TurnRequest.configuredFor(port: Int) = copy(modelId = CONFIGURED_MODEL_ID, llamaCppPort = port)
 private fun PrefillRequest.configuredFor(port: Int) = copy(modelId = CONFIGURED_MODEL_ID, llamaCppPort = port)
 private fun WarmupRequest.configuredFor(port: Int) = copy(modelId = CONFIGURED_MODEL_ID, llamaCppPort = port)
+
+private fun PrefillRequest.toTurnRequest() = TurnRequest(
+    sessionId = sessionId,
+    modelId = modelId,
+    llamaCppPort = llamaCppPort,
+    scenarioMarkdown = scenarioMarkdown,
+    history = history,
+    playerAction = playerAction,
+    runtimeFragments = runtimeFragments,
+)
+
+private fun PrefillRequest.withResolvedTurn(resolved: ResolvedTurn) = copy(
+    history = resolved.request.history,
+    runtimeFragments = resolved.request.runtimeFragments,
+)
+
+private suspend fun TurnRequest.resolveFragment(
+    resolver: RuntimeFragmentResolver,
+    requestId: String?,
+    operation: String,
+    logger: org.slf4j.Logger,
+): ResolvedTurn = try {
+    val fragment = resolver.resolve(history, runtimeFragments)
+    ResolvedTurn(
+        request = if (fragment == null) this else copy(history = history + ChatEntry("runtime-fragment", fragment)),
+        fragment = fragment,
+    )
+} catch (failure: Exception) {
+    if (failure is CancellationException) throw failure
+    logger.warn("requestId={} operation={} failure={}", requestId, operation, failure.javaClass.simpleName)
+    ResolvedTurn(this, null)
+}
+
+private class ProductionRuntimeFragmentResolver : RuntimeFragmentResolver {
+    private val delegate by lazy { DefaultRuntimeFragmentResolver(OnnxLocalEmbeddingService.create()) }
+
+    override suspend fun prepare(definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>) {
+        if (definitions.isNotEmpty()) delegate.prepare(definitions)
+    }
+
+    override suspend fun resolve(
+        history: List<ChatEntry>,
+        definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
+    ): String? = if (definitions.isEmpty()) null else delegate.resolve(history, definitions)
+}
 
 private suspend fun io.ktor.server.application.ApplicationCall.respondLlamaUnavailable(
     logger: org.slf4j.Logger,

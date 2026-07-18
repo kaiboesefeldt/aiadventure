@@ -1,5 +1,6 @@
 package de.aidadventure.server.prefill
 
+import de.aidadventure.server.ResolvedTurn
 import de.aidadventure.server.llamacpp.CacheMetrics
 import de.aidadventure.server.llamacpp.LlamaCppSlot
 import de.aidadventure.server.model.ChatEntry
@@ -153,6 +154,29 @@ class PrefillCoordinatorTest {
 
         assertEquals(listOf("open"), fake.prefilledActions)
         assertEquals(listOf("open door"), fake.turnedActions)
+        assertEquals(fake.prefillSlots.single(), fake.turnSlots.single())
+        coordinator.close()
+    }
+
+    @Test
+    fun `prefill then turn uses the same enriched request on the same slot`() = runBlocking {
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake)
+        val enrichedHistory = listOf(ChatEntry("runtime-fragment", "keep quiet"))
+        val prefill = prefill(1, "open", enrichedHistory)
+        val turn = turn("open")
+        val resolvedPrefill = ResolvedTurn(prefill.toTurnRequestForTest(), "keep quiet")
+
+        coordinator.submit(prefill, resolvedPrefill)
+        fake.awaitPrefill(1)
+        fake.completePrefill(1)
+        fake.awaitPrefillCompletion(1)
+        val resolvedTurn = coordinator.resolvedTurnFor(turn)
+        coordinator.beginTurn(requireNotNull(resolvedTurn).request).toList()
+
+        assertEquals(listOf(prefill.toTurnRequestForTest()), fake.prefillRequests)
+        assertEquals("keep quiet", resolvedTurn.fragment)
+        assertEquals(listOf(prefill.toTurnRequestForTest()), fake.turnRequests)
         assertEquals(fake.prefillSlots.single(), fake.turnSlots.single())
         coordinator.close()
     }
@@ -380,6 +404,16 @@ class PrefillCoordinatorTest {
         history = history,
     )
 
+    private fun PrefillRequest.toTurnRequestForTest() = TurnRequest(
+        sessionId = sessionId,
+        modelId = modelId,
+        llamaCppPort = llamaCppPort,
+        scenarioMarkdown = scenarioMarkdown,
+        history = history,
+        playerAction = playerAction,
+        runtimeFragments = runtimeFragments,
+    )
+
     private fun assertWarmSlotLifecycle(fake: ControllableGateway, operations: List<String>) {
         assertEquals(1, fake.acquiredSlots.size)
         assertEquals(operations, fake.slotLifecycle.map(SlotLifecycleEvent::operation))
@@ -400,7 +434,9 @@ class PrefillCoordinatorTest {
         private val prefillStarted = mutableMapOf<Long, CompletableDeferred<Unit>>()
         private val prefillFinished = mutableMapOf<Long, CompletableDeferred<Unit>>()
         val prefilledActions = mutableListOf<String>()
+        val prefillRequests = mutableListOf<TurnRequest>()
         val turnedActions = mutableListOf<String>()
+        val turnRequests = mutableListOf<TurnRequest>()
         val prefillSlots = mutableListOf<LlamaCppSlot>()
         val warmupSlots = mutableListOf<LlamaCppSlot>()
         val turnSlots = mutableListOf<LlamaCppSlot>()
@@ -429,6 +465,7 @@ class PrefillCoordinatorTest {
         }
 
         override suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics {
+            prefillRequests += request
             prefilledActions += request.playerAction
             prefillSlots += slot
             slotLifecycle += SlotLifecycleEvent("prefill", slot)
@@ -459,6 +496,7 @@ class PrefillCoordinatorTest {
         }
 
         override fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> {
+            turnRequests += request
             turnedActions += request.playerAction
             turnSlots += slot
             slotLifecycle += SlotLifecycleEvent("turn", slot)

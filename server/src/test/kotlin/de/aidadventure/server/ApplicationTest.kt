@@ -11,6 +11,7 @@ import de.aidadventure.server.model.WarmupRequest
 import de.aidadventure.server.prefill.CoordinatorKey
 import de.aidadventure.server.prefill.PrefillCoordinator
 import de.aidadventure.server.prefill.PrefillRegistry
+import de.aidadventure.server.runtimefragments.RuntimeFragmentResolver
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -32,10 +33,36 @@ import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class ApplicationTest {
+    @Test
+    fun `turn streams selected fragment before token`() = testApplication {
+        val registry = FakeRegistry()
+        application {
+            adventureModule(
+                prefillRegistry = registry,
+                runtimeFragmentResolver = resolver("keep quiet"),
+            )
+        }
+        configureJsonClient()
+
+        val response = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest(history = visiblePair()))
+        }
+
+        assertContains(
+            response.bodyAsText(),
+            "event: fragment\ndata: {\"fragment\":\"keep quiet\"}\n\nevent: token",
+        )
+        assertEquals(
+            visiblePair() + de.aidadventure.server.model.ChatEntry("runtime-fragment", "keep quiet"),
+            registry.coordinator.turnRequests.single().history,
+        )
+    }
     @Test
     fun `health returns ok`() = testApplication {
         application { adventureModule(prefillRegistry = FakeRegistry()) }
@@ -260,7 +287,22 @@ class ApplicationTest {
     private fun turnRequest(
         modelId: String = "configured-llama-cpp",
         port: Int = 8081,
-    ) = TurnRequest("live-1", modelId, port, "# Scenario", emptyList(), "look")
+        history: List<de.aidadventure.server.model.ChatEntry> = emptyList(),
+    ) = TurnRequest("live-1", modelId, port, "# Scenario", history, "look")
+
+    private fun visiblePair() = listOf(
+        de.aidadventure.server.model.ChatEntry("player", "ask Mira about the lighthouse"),
+        de.aidadventure.server.model.ChatEntry("game-master", "Mira looks away."),
+    )
+
+    private fun resolver(fragment: String?) = object : RuntimeFragmentResolver {
+        override suspend fun prepare(definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>) = Unit
+
+        override suspend fun resolve(
+            history: List<de.aidadventure.server.model.ChatEntry>,
+            definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
+        ): String? = fragment
+    }
 
     private fun warmupRequest() = WarmupRequest("live-1", "configured-llama-cpp", 8081, "# Scenario", emptyList())
 

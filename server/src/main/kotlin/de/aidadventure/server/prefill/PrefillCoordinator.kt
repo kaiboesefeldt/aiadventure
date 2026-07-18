@@ -1,5 +1,6 @@
 package de.aidadventure.server.prefill
 
+import de.aidadventure.server.ResolvedTurn
 import de.aidadventure.server.llamacpp.CacheMetrics
 import de.aidadventure.server.llamacpp.LlamaCppGateway
 import de.aidadventure.server.llamacpp.LlamaCppSlot
@@ -32,6 +33,16 @@ import org.slf4j.LoggerFactory
 
 private val coordinatorLogger = LoggerFactory.getLogger(SessionPrefillCoordinator::class.java)
 
+private fun PrefillRequest.asTurnRequest() = TurnRequest(
+    sessionId = sessionId,
+    modelId = modelId,
+    llamaCppPort = llamaCppPort,
+    scenarioMarkdown = scenarioMarkdown,
+    history = history,
+    playerAction = playerAction,
+    runtimeFragments = runtimeFragments,
+)
+
 data class CoordinatorKey(val sessionId: String, val modelId: String, val port: Int)
 
 internal data class CoordinatorLeaseDiagnostic(
@@ -49,10 +60,12 @@ internal data class WarmupFailure(
 
 interface PrefillCoordinator {
     suspend fun submit(request: PrefillRequest): PrefillDisposition
+    suspend fun submit(request: PrefillRequest, resolvedTurn: ResolvedTurn): PrefillDisposition = submit(request)
     suspend fun warmup(
         request: WarmupRequest,
         requestId: String = "unknown",
     ): PrefillDisposition = error("Warmup is not supported by this coordinator.")
+    suspend fun resolvedTurnFor(request: TurnRequest): ResolvedTurn? = null
     suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent>
     fun tryBeginIdleClose(): Boolean
     suspend fun close()
@@ -112,7 +125,10 @@ internal class SessionPrefillCoordinator(
     private var shutdownComplete = false
     private var state: State = State.Idle
 
-    override suspend fun submit(request: PrefillRequest): PrefillDisposition = mutex.withLock {
+    override suspend fun submit(request: PrefillRequest): PrefillDisposition =
+        submit(request, ResolvedTurn(request.asTurnRequest(), null))
+
+    override suspend fun submit(request: PrefillRequest, resolvedTurn: ResolvedTurn): PrefillDisposition = mutex.withLock {
         if (closed || state is State.Turning || state is State.TurnWaiting) {
             return@withLock PrefillDisposition.TURN_IN_PROGRESS
         }
@@ -121,29 +137,33 @@ internal class SessionPrefillCoordinator(
         latestRevision = request.revision
         when (val current = state) {
             State.Idle -> {
-                startPrefillLocked(request)
+                startPrefillLocked(request, resolvedTurn)
                 PrefillDisposition.STARTED
             }
 
             is State.Prefilling -> {
-                state = current.copy(pending = request)
+                state = current.copy(pending = PendingPrefill(request, resolvedTurn))
                 PrefillDisposition.QUEUED
             }
 
             is State.Ready -> {
-                startPrefillLocked(request, current.lease)
+                startPrefillLocked(request, resolvedTurn, current.lease)
                 PrefillDisposition.STARTED
             }
 
             is State.ReleasePending -> {
                 releaseLeaseLocked(current.lease)
                 state = State.Idle
-                startPrefillLocked(request)
+                startPrefillLocked(request, resolvedTurn)
                 PrefillDisposition.STARTED
             }
 
             is State.Turning, is State.TurnWaiting -> PrefillDisposition.TURN_IN_PROGRESS
         }
+    }
+
+    override suspend fun resolvedTurnFor(request: TurnRequest): ResolvedTurn? = mutex.withLock {
+        state.resolvedTurnOrNull()?.takeIf { it.matches(request) }?.forRequest(request)
     }
 
     override suspend fun warmup(request: WarmupRequest, requestId: String): PrefillDisposition = mutex.withLock {
@@ -182,7 +202,7 @@ internal class SessionPrefillCoordinator(
             State.Idle -> startTurnLocked(request)
             is State.Prefilling -> {
                 val execution = TurnExecution(request).also(TurnExecution::initialize)
-                state = State.TurnWaiting(current.lease, current.operation, execution)
+                state = State.TurnWaiting(current.lease, current.operation, current.resolvedTurn, execution)
                 execution.flow()
             }
 
@@ -241,13 +261,17 @@ internal class SessionPrefillCoordinator(
         releaseFailure?.let { throw it }
     }
 
-    private fun startPrefillLocked(request: PrefillRequest, existingLease: Lease? = null) {
+    private fun startPrefillLocked(
+        request: PrefillRequest,
+        resolvedTurn: ResolvedTurn,
+        existingLease: Lease? = null,
+    ) {
         val lease = existingLease ?: acquireLease(request.llamaCppPort)
         val operation = PrefillOperation(++generation)
-        state = State.Prefilling(lease, operation, pending = null)
+        state = State.Prefilling(lease, operation, resolvedTurn, pending = null)
         operation.job = scope.launch(start = CoroutineStart.LAZY) {
             val failure = try {
-                gateway.prefill(request.toTurnRequest(), lease.slot)
+                gateway.prefill(request.asTurnRequest(), lease.slot)
                 null
             } catch (_: CancellationException) {
                 return@launch
@@ -266,7 +290,7 @@ internal class SessionPrefillCoordinator(
     ) {
         val lease = existingLease ?: acquireLease(request.llamaCppPort)
         val operation = PrefillOperation(++generation)
-        state = State.Prefilling(lease, operation, pending = null)
+        state = State.Prefilling(lease, operation, resolvedTurn = null, pending = null)
         operation.job = scope.launch(start = CoroutineStart.LAZY) {
             val failure = try {
                 gateway.warmup(request, lease.slot)
@@ -301,9 +325,9 @@ internal class SessionPrefillCoordinator(
                         generation++
                         releaseAfterFailureLocked(lease)
                     } else if (current.pending != null) {
-                        startPrefillLocked(current.pending, lease)
+                        startPrefillLocked(current.pending.request, current.pending.resolvedTurn, lease)
                     } else {
-                        state = State.Ready(lease)
+                        state = State.Ready(lease, current.resolvedTurn)
                     }
                 }
 
@@ -329,14 +353,14 @@ internal class SessionPrefillCoordinator(
 
         when (val current = state) {
             is State.TurnWaiting -> if (current.execution === execution) {
-                state = State.Prefilling(current.lease, current.operation, pending = null)
+                state = State.Prefilling(current.lease, current.operation, current.resolvedTurn, pending = null)
                 null
             } else {
                 null
             }
 
             is State.Turning -> if (current.execution === execution && current.lease === lease) {
-                state = State.Ready(current.lease)
+                state = State.Ready(current.lease, resolvedTurn = null)
                 recordLeaseTransition("turn_retained", current.lease)
                 null
             } else {
@@ -375,13 +399,18 @@ internal class SessionPrefillCoordinator(
         throw IllegalStateException(message)
     }
 
-    private fun PrefillRequest.toTurnRequest() = TurnRequest(
-        sessionId = sessionId,
-        modelId = modelId,
-        llamaCppPort = llamaCppPort,
-        scenarioMarkdown = scenarioMarkdown,
-        history = history,
-        playerAction = playerAction,
+    private fun ResolvedTurn.matches(request: TurnRequest): Boolean {
+        val visibleHistory = if (fragment == null) this.request.history else this.request.history.dropLast(1)
+        return this.request.sessionId == request.sessionId &&
+            this.request.modelId == request.modelId &&
+            this.request.llamaCppPort == request.llamaCppPort &&
+            this.request.scenarioMarkdown == request.scenarioMarkdown &&
+            visibleHistory == request.history &&
+            this.request.runtimeFragments == request.runtimeFragments
+    }
+
+    private fun ResolvedTurn.forRequest(request: TurnRequest): ResolvedTurn = copy(
+        request = request.copy(history = this.request.history),
     )
 
     private inner class TurnExecution(private val request: TurnRequest) {
@@ -445,13 +474,15 @@ internal class SessionPrefillCoordinator(
         data class Prefilling(
             val lease: Lease,
             val operation: PrefillOperation,
-            val pending: PrefillRequest?,
+            val resolvedTurn: ResolvedTurn?,
+            val pending: PendingPrefill?,
         ) : State
 
-        data class Ready(val lease: Lease) : State
+        data class Ready(val lease: Lease, val resolvedTurn: ResolvedTurn?) : State
         data class TurnWaiting(
             val lease: Lease,
             val operation: PrefillOperation,
+            val resolvedTurn: ResolvedTurn?,
             val execution: TurnExecution,
         ) : State
 
@@ -481,6 +512,13 @@ internal class SessionPrefillCoordinator(
         }
 
         fun isIdleForTtl(): Boolean = this is Idle || this is Ready || this is ReleasePending
+
+        fun resolvedTurnOrNull(): ResolvedTurn? = when (this) {
+            is Prefilling -> resolvedTurn
+            is Ready -> resolvedTurn
+            is TurnWaiting -> resolvedTurn
+            Idle, is Turning, is ReleasePending -> null
+        }
     }
 
     private class Lease(val port: Int, val slot: LlamaCppSlot) {
@@ -490,6 +528,8 @@ internal class SessionPrefillCoordinator(
     private class PrefillOperation(val generation: Long) {
         lateinit var job: Job
     }
+
+    private data class PendingPrefill(val request: PrefillRequest, val resolvedTurn: ResolvedTurn)
 
     private data class Shutdown(
         val lease: Lease?,
