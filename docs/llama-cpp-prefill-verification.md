@@ -16,22 +16,65 @@ output.
    The `--slot-save-path` directory must be writable: the application clears a
    slot before leasing it and after releasing it, preventing one session's
    cached context from being reused by another.
-3. Use an existing test scenario or a disposable scenario. Do not copy its
-   content into logs, screenshots, issue reports, or this checklist.
+3. Use the disposable scenario below. Do not copy its content into logs,
+   screenshots, or issue reports.
 
-## Procedure
+## Disposable template
 
-1. Start a new game session and note only the request ID and the aggregate
-   `tokens_cached` and `tokens_evaluated` counters returned by llama.cpp.
-2. Type an action, pause long enough for the browser's debounce, and confirm
-   that `POST /api/prefill` returns `202 Accepted`.
-3. Confirm that the prefill did not create a transcript message, error, or
-   disabled Send control.
-4. Send exactly that action. Confirm that its `POST /api/turn` uses the same
-   `sessionId` as the prefill, then record only its request ID and aggregate
-   cache/evaluated-token counters.
-5. In a new session, send an action without pausing for prefill. Record the
-   same aggregate counters and compare them with the prefetched case.
+Create and import this exact disposable template. It exercises the feature
+without placing real scenario material in the evidence record:
+
+```markdown
+---
+runtime-fragments:
+  "The brass compass points toward the old observatory":
+    fragment: "A sealed maintenance passage is relevant to the next decision."
+---
+# Verification Harbor
+
+Explore a quiet harbor and respond briefly to the player's actions.
+```
+
+Do not copy the template, player actions, prompts, history, model output, or
+model identifier into terminal logs, screenshots, issue reports, or evidence.
+
+## Acceptance checklist
+
+Perform these steps in one browser profile. Keep the same session selected
+through reload/resume; do not create a replacement session.
+
+1. Start a new session and complete a first short turn. Confirm that no
+   `fragment` SSE event is sent and no `runtime-fragment` entry exists in the
+   saved transcript. This proves the first turn has no fragment.
+2. Complete a second turn whose preceding visible player/game-master pair
+   matches the disposable template's retrieval text. Confirm the turn stream
+   sends its `fragment` event before token events, and that the saved history
+   contains exactly one `runtime-fragment` entry immediately before the second
+   player entry.
+3. Confirm that the selected fragment never appears in the visible transcript
+   before, during, or after completion. The player-facing UI must show only
+   player and game-master messages.
+4. Reload the page, reopen the imported template, and resume that same saved
+   session. Confirm the hidden entry remains persisted but remains invisible.
+5. Type a third short action, wait for the debounced `POST /api/prefill` to
+   return `202 Accepted`, then send that exact action. Confirm prefill and
+   turn use the same `sessionId`, then complete the following turn.
+6. While the session remains live, inspect `GET http://127.0.0.1:8081/slots`
+   before and after the prefill/turn handoff. Confirm the same retained slot
+   identity owns the session through the following turn. Do not include any
+   other slot metadata in evidence.
+7. For each completed turn, collect backend `tokens_cached` and
+   `tokens_evaluated`. Cache reuse for the following turn is proved only when
+   those backend metrics show the retained-prefix reuse; timing, a warm model,
+   or matching session IDs alone are not proof.
+
+Use a content-free evidence table:
+
+| Stage | Request ID | Slot identity | tokens_cached | tokens_evaluated |
+| --- | --- | --- | --- | --- |
+| first turn, no fragment | | | | |
+| selected later fragment | | | | |
+| reload/resume following turn | | | | |
 
 Cache reuse is demonstrated only by backend `tokens_cached` and
 `tokens_evaluated` values. Timing, an apparent warm model, or a subsequent
@@ -40,5 +83,6 @@ turn are not proof.
 ## Evidence boundary
 
 Never capture or log scenario text, player actions, prompt text, conversation
-history, model output, model identifiers, or slot IDs. Evidence contains only
-request IDs and aggregate cache/evaluated-token counters.
+history, model output, model identifiers, or other slot metadata. Evidence
+contains only request IDs, the retained slot identity, and aggregate
+cache/evaluated-token counters.

@@ -143,5 +143,18 @@ Automated tests must cover:
 - a live llama.cpp proof that prefill then turn use one slot and report
   `tokens_cached` / `tokens_evaluated` cache metrics.
 
+## Live acceptance evidence
+
+The live procedure is documented in
+[`docs/llama-cpp-prefill-verification.md`](../../llama-cpp-prefill-verification.md).
+It imports a disposable frontmatter template, proves that the first turn has no
+fragment, then proves that a selected later fragment is persisted but never
+rendered. It reloads and resumes the same browser-local session before a
+following prefill/turn handoff. The proof records only request IDs, retained
+slot identity, `tokens_cached`, and `tokens_evaluated`; it never records game
+content, prompts, history, or model output. A matching session ID or warm
+timing is insufficient: the same retained slot and llama.cpp metrics are both
+required to establish cache reuse.
+
 The final repository verification remains `./gradlew check` without excluding
 Kotlin/JS dependency installation tasks.

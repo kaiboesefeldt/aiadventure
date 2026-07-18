@@ -118,4 +118,8 @@ The UI displays optional duration, prompt-token, and cache-token metrics. Only
 the backend values `tokens_cached` and `tokens_evaluated` prove cache reuse;
 do not infer a cache hit from timing or from a second turn alone. See
 [`docs/llama-cpp-prefill-verification.md`](docs/llama-cpp-prefill-verification.md)
-for the privacy-safe live verification checklist.
+for the privacy-safe live verification checklist. That checklist uses a
+disposable frontmatter template and covers the first turn (no fragment), a
+later hidden fragment, reload/resume, and a following cache-reusing turn. Its
+evidence record contains only request IDs, the retained slot identity, and
+`tokens_cached` / `tokens_evaluated`.
