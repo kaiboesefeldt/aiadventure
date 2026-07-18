@@ -185,6 +185,63 @@ class AdventureAppNavigationTest {
         }
     }
 
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `completed game master response reveals runtime fragment only from its info control`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val scenario = Scenario("scenario", "scenario.md", "# Scenario", 1)
+        val session = GameSession(
+            "session", scenario.id, "Harbor", "local-model",
+            listOf(
+                de.aidadventure.web.model.GameMessage("runtime-fragment", "secret fragment", 1),
+                de.aidadventure.web.model.GameMessage("player", "look", 2),
+                de.aidadventure.web.model.GameMessage("game-master", "The lighthouse answers.", 3),
+                de.aidadventure.web.model.GameMessage("game-master", "Still streaming.", 4),
+            ),
+            1, 4,
+        )
+        val sessions = object : SessionRepository {
+            override suspend fun list() = listOf(session)
+            override suspend fun save(session: GameSession) = Unit
+            override suspend fun find(id: String) = session.takeIf { it.id == id }
+            override suspend fun delete(id: String) = Unit
+        }
+        try {
+            flushSync {
+                createRoot(container).render(AdventureApp.create {
+                    scenarioRepository = scenarioRepository(scenario)
+                    sessionRepository = sessions
+                    api = unusedApi()
+                    initialScenarios = listOf(scenario)
+                })
+            }
+
+            container.clickButtonNamed(scenario.name)
+            nextBrowserTick()
+            container.clickButtonNamed(session.title)
+            nextBrowserTick()
+
+            assertNotNull(container.querySelector("button[aria-label='Fragment information']"))
+            assertEquals(1, container.querySelectorAll("button[aria-label='Fragment information']").length)
+            assertNull(container.querySelector("[role='tooltip']"))
+            assertEquals(false, container.textContent?.contains("secret fragment"))
+
+            container.click("button[aria-label='Fragment information']")
+            nextBrowserTick()
+
+            assertEquals(true, container.textContent?.contains("secret fragment"))
+            assertNotNull(container.querySelector("[role='tooltip']"))
+
+            document.body.asDynamic().dispatchEvent(js("new MouseEvent('click', { bubbles: true })"))
+            nextBrowserTick()
+
+            assertNull(container.querySelector("[role='tooltip']"))
+        } finally {
+            container.remove()
+        }
+    }
+
     private fun scenarioRepository(scenario: Scenario) = object : ScenarioRepository {
         override suspend fun list() = listOf(scenario)
         override suspend fun save(scenario: Scenario) = Unit

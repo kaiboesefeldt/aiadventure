@@ -25,9 +25,11 @@ import react.dom.client.createRoot
 import react.dom.flushSync
 import react.dom.html.ReactHTML
 import react.useEffect
+import react.useEffectWithCleanup
 import react.useState
 import web.cssom.ClassName
 import web.dom.document
+import web.events.Event
 import web.file.File
 import web.html.HTMLInputElement
 import web.html.HTMLTextAreaElement
@@ -169,12 +171,23 @@ private val DetailView = FC<DetailViewProps> { props ->
 
 private external interface PlayViewProps : Props { var scenario: Scenario; var session: GameSession; var api: AdventureApi; var sessions: SessionRepository; var onBack: () -> Unit; var onSessionChanged: (GameSession) -> Unit }
 private val PlayView = FC<PlayViewProps> { props ->
-    var action by useState(""); var pending by useState(false); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null)
+    var action by useState(""); var pending by useState(false); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null); var openFragmentIndex by useState<Int?>(null)
     val liveId = props.session.id
     val (prefill) = useState(PrefillSubmission(props.api))
     val displayed = sessionForDisplay(props.session, streamed)
     useEffect(dependencies = emptyArray()) {
         scope.launch { runCatching { WarmupSubmission(props.api).submit(props.session, props.scenario) } }
+    }
+    useEffectWithCleanup(dependencies = arrayOf(openFragmentIndex)) {
+        openFragmentIndex?.let { index ->
+            val containerId = fragmentTooltipContainerId(index)
+            val outsideClick: (Event) -> Unit = { event ->
+                val container = document.getElementById(containerId.unsafeCast<web.dom.ElementId>())
+                if (container == null || !container.asDynamic().contains(event.target)) openFragmentIndex = null
+            }
+            document.asDynamic().addEventListener("click", outsideClick)
+            onCleanup { document.asDynamic().removeEventListener("click", outsideClick) }
+        }
     }
     fun submit() { val text = action.trim(); if (text.isBlank() || pending) return; prefill.turnStarted(); pending = true; action = ""; error = null; scope.launch { try {
         val completed = TurnSubmission(props.sessions, props.api).submit(props.session, props.scenario, text, { flushStreamUpdate { streamed = it } }, { flushStreamUpdate { streamed = it } }, liveId)
@@ -183,7 +196,35 @@ private val PlayView = FC<PlayViewProps> { props ->
     ReactHTML.section { className = ClassName("view-card")
         ReactHTML.button { className = ClassName("secondary-button"); disabled = pending; onClick = { props.onBack() }; +"Back to sessions" }
         ReactHTML.h2 { className = ClassName("view-title"); +displayed.title }
-        ReactHTML.div { className = ClassName("transcript"); displayed.messages.filter(::isVisibleTranscriptMessage).forEach { message -> ReactHTML.article { className = ClassName("message"); MarkdownMessage { content = message.content } } } }
+        ReactHTML.div { className = ClassName("transcript"); displayed.messages.forEachIndexed { index, message ->
+            if (isVisibleTranscriptMessage(message)) ReactHTML.article {
+                className = ClassName("message")
+                val fragment = props.session.messages.getOrNull(index)
+                    ?.takeIf { it == message }
+                    ?.let { runtimeFragmentForGameMaster(props.session.messages, index) }
+                fragment?.let { content ->
+                    ReactHTML.div {
+                        id = fragmentTooltipContainerId(index).unsafeCast<web.dom.ElementId>()
+                        className = ClassName("fragment-tooltip-container")
+                        ReactHTML.button {
+                            className = ClassName("fragment-info-button")
+                            ariaLabel = "Fragment information"
+                            onClick = { event ->
+                                event.stopPropagation()
+                                openFragmentIndex = if (openFragmentIndex == index) null else index
+                            }
+                            +"Info"
+                        }
+                        if (openFragmentIndex == index) ReactHTML.div {
+                            className = ClassName("fragment-tooltip")
+                            asDynamic().role = "tooltip"
+                            +content
+                        }
+                    }
+                }
+                MarkdownMessage { content = message.content }
+            }
+        } }
         metrics?.let { renderMetrics(it) }; error?.let { ReactHTML.p { className = ClassName("status-error"); +it } }
         ReactHTML.textarea { id = "player-action".unsafeCast<web.dom.ElementId>(); className = ClassName("action-input"); value = action; disabled = pending; onChange = { action = it.target.unsafeCast<HTMLTextAreaElement>().value; prefill.changed(props.session, props.scenario, liveId, action) }; onKeyDown = { event -> if (shouldSubmitOnEnter(event.key, event.shiftKey, event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>(), pending, action)) { event.preventDefault(); submit() } } }
         ReactHTML.button { className = ClassName("primary-button"); disabled = pending || action.isBlank(); onClick = { submit() }; +(if (pending) "Sending…" else "Send") }
@@ -195,5 +236,10 @@ private fun clientMessage(cause: Throwable) = cause.message ?: "Something went w
 internal fun flushStreamUpdate(update: () -> Unit) = flushSync(update)
 internal fun sessionForDisplay(persisted: GameSession, streamed: GameSession?) = streamed ?: persisted
 internal fun isVisibleTranscriptMessage(message: GameMessage) = message.role != "runtime-fragment"
+internal fun runtimeFragmentForGameMaster(messages: List<GameMessage>, index: Int): String? =
+    messages.getOrNull(index)?.takeIf { it.role == "game-master" }
+        ?.let { messages.getOrNull(index - 2)?.takeIf { it.role == "runtime-fragment" }?.content
+            ?.takeIf { messages.getOrNull(index - 1)?.role == "player" } }
+private fun fragmentTooltipContainerId(index: Int) = "fragment-tooltip-container-$index"
 internal fun shouldSubmitOnEnter(key: String, shiftKey: Boolean, isComposing: Boolean, pending: Boolean, action: String) = key == "Enter" && !shiftKey && !isComposing && !pending && action.isNotBlank()
 internal fun now(): Long = (js("Date.now()") as Double).toLong()
