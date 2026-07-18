@@ -247,5 +247,5 @@ private class RecordingAdventureApi : AdventureApi {
         return PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
     }
 
-    override suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics = error("unused")
+    override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnMetrics = error("unused")
 }

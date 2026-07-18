@@ -13,7 +13,7 @@ import kotlinx.serialization.json.Json
 interface AdventureApi {
     suspend fun prefill(request: PrefillRequest): PrefillAccepted
     suspend fun warmup(request: WarmupRequest): PrefillAccepted
-    suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics
+    suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnMetrics
 }
 
 class AdventureApiClient(
@@ -31,7 +31,7 @@ class AdventureApiClient(
         return streamJson.decodeFromString(response.text().unsafeCast<Promise<String>>().await())
     }
 
-    override suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics {
+    override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnMetrics {
         val response = requireBrowserSuccess(browserFetchTurn(request))
         val reader = response.body?.getReader() ?: throw AdventureApiException("The model response ended unexpectedly.")
         val textDecoder = js("new TextDecoder()")
@@ -40,9 +40,9 @@ class AdventureApiClient(
         while (true) {
             val result = reader.read().unsafeCast<Promise<dynamic>>().await()
             if (result.done.unsafeCast<Boolean>()) break
-            processTurnStreamChunk(decoder, decodeText(textDecoder, result.value, stream = true), onToken)?.let { return it }
+            processTurnStreamChunk(decoder, decodeText(textDecoder, result.value, stream = true), onFragment, onToken)?.let { return it }
         }
-        processTurnStreamChunk(decoder, decodeText(textDecoder, null, stream = false), onToken)?.let { return it }
+        processTurnStreamChunk(decoder, decodeText(textDecoder, null, stream = false), onFragment, onToken)?.let { return it }
         throw AdventureApiException("The model response ended unexpectedly.")
     }
 
@@ -91,10 +91,12 @@ internal fun resolveAdventureApiBaseUrl(hostname: String, port: String): String 
 internal fun processTurnStreamChunk(
     decoder: SseFrameDecoder,
     chunk: String,
+    onFragment: (String) -> Unit,
     onToken: (String) -> Unit,
 ): TurnMetrics? {
     for (frame in decoder.push(chunk)) {
         when (frame.event) {
+            "fragment" -> onFragment(streamJson.decodeFromString<StreamFragment>(frame.data).fragment)
             "token" -> onToken(streamJson.decodeFromString<StreamToken>(frame.data).text)
             "done" -> return streamJson.decodeFromString<StreamDone>(frame.data).metrics
             "error" -> throw AdventureApiException(streamJson.decodeFromString<StreamError>(frame.data).message)
@@ -227,6 +229,9 @@ data class TurnMetrics(
 
 @Serializable
 private data class StreamToken(val text: String)
+
+@Serializable
+private data class StreamFragment(val fragment: String)
 
 @Serializable
 private data class StreamDone(val metrics: TurnMetrics)

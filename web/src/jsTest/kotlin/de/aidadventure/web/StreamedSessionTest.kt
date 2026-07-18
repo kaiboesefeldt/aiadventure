@@ -4,6 +4,7 @@ import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 class StreamedSessionTest {
     @Test
@@ -19,6 +20,11 @@ class StreamedSessionTest {
         val persisted = session(messages = emptyList())
 
         assertEquals(persisted, sessionForDisplay(persisted, null))
+    }
+
+    @Test
+    fun `runtime fragment is excluded from transcript`() {
+        assertFalse(isVisibleTranscriptMessage(GameMessage("runtime-fragment", "secret", 1)))
     }
 
     private fun session(messages: List<GameMessage>) = GameSession(

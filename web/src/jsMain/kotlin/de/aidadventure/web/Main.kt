@@ -183,7 +183,7 @@ private val PlayView = FC<PlayViewProps> { props ->
     ReactHTML.section { className = ClassName("view-card")
         ReactHTML.button { className = ClassName("secondary-button"); disabled = pending; onClick = { props.onBack() }; +"Back to sessions" }
         ReactHTML.h2 { className = ClassName("view-title"); +displayed.title }
-        ReactHTML.div { className = ClassName("transcript"); displayed.messages.forEach { message -> ReactHTML.article { className = ClassName("message"); MarkdownMessage { content = message.content } } } }
+        ReactHTML.div { className = ClassName("transcript"); displayed.messages.filter(::isVisibleTranscriptMessage).forEach { message -> ReactHTML.article { className = ClassName("message"); MarkdownMessage { content = message.content } } } }
         metrics?.let { renderMetrics(it) }; error?.let { ReactHTML.p { className = ClassName("status-error"); +it } }
         ReactHTML.textarea { id = "player-action".unsafeCast<web.dom.ElementId>(); className = ClassName("action-input"); value = action; disabled = pending; onChange = { action = it.target.unsafeCast<HTMLTextAreaElement>().value; prefill.changed(props.session, props.scenario, liveId, action) }; onKeyDown = { event -> if (shouldSubmitOnEnter(event.key, event.shiftKey, event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>(), pending, action)) { event.preventDefault(); submit() } } }
         ReactHTML.button { className = ClassName("primary-button"); disabled = pending || action.isBlank(); onClick = { submit() }; +(if (pending) "Sending…" else "Send") }
@@ -194,5 +194,6 @@ private fun ChildrenBuilder.renderMetrics(metrics: TurnMetrics) { listOfNotNull(
 private fun clientMessage(cause: Throwable) = cause.message ?: "Something went wrong. Please try again."
 internal fun flushStreamUpdate(update: () -> Unit) = flushSync(update)
 internal fun sessionForDisplay(persisted: GameSession, streamed: GameSession?) = streamed ?: persisted
+internal fun isVisibleTranscriptMessage(message: GameMessage) = message.role != "runtime-fragment"
 internal fun shouldSubmitOnEnter(key: String, shiftKey: Boolean, isComposing: Boolean, pending: Boolean, action: String) = key == "Enter" && !shiftKey && !isComposing && !pending && action.isNotBlank()
 internal fun now(): Long = (js("Date.now()") as Double).toLong()

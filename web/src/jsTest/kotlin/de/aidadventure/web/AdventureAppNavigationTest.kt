@@ -41,7 +41,7 @@ class AdventureAppNavigationTest {
                     api = object : AdventureApi {
                         override suspend fun prefill(request: PrefillRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
                         override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
-                        override suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics = error("unused")
+                        override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnMetrics = error("unused")
                     }
                     initialScenarios = listOf(scenario)
                 })
@@ -143,6 +143,48 @@ class AdventureAppNavigationTest {
         }
     }
 
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `play transcript does not render persisted runtime fragments`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val scenario = Scenario("scenario", "scenario.md", "# Scenario", 1)
+        val session = GameSession(
+            "session", scenario.id, "Harbor", "local-model",
+            listOf(
+                de.aidadventure.web.model.GameMessage("runtime-fragment", "secret fragment", 1),
+                de.aidadventure.web.model.GameMessage("player", "look", 2),
+            ),
+            1, 2,
+        )
+        val sessions = object : SessionRepository {
+            override suspend fun list() = listOf(session)
+            override suspend fun save(session: GameSession) = Unit
+            override suspend fun find(id: String) = session.takeIf { it.id == id }
+            override suspend fun delete(id: String) = Unit
+        }
+        try {
+            flushSync {
+                createRoot(container).render(AdventureApp.create {
+                    scenarioRepository = scenarioRepository(scenario)
+                    sessionRepository = sessions
+                    api = unusedApi()
+                    initialScenarios = listOf(scenario)
+                })
+            }
+
+            container.clickButtonNamed(scenario.name)
+            nextBrowserTick()
+            container.clickButtonNamed(session.title)
+            nextBrowserTick()
+
+            assertEquals(false, container.textContent?.contains("secret fragment"))
+            assertEquals(true, container.textContent?.contains("look"))
+        } finally {
+            container.remove()
+        }
+    }
+
     private fun scenarioRepository(scenario: Scenario) = object : ScenarioRepository {
         override suspend fun list() = listOf(scenario)
         override suspend fun save(scenario: Scenario) = Unit
@@ -160,7 +202,7 @@ class AdventureAppNavigationTest {
     private fun unusedApi() = object : AdventureApi {
         override suspend fun prefill(request: PrefillRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
         override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
-        override suspend fun play(request: TurnRequest, onToken: (String) -> Unit): TurnMetrics = error("unused")
+        override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnMetrics = error("unused")
     }
 
     private fun HTMLElement.click(selector: String) {
