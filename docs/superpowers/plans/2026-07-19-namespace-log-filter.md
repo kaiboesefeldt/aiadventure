@@ -2,15 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Suppress all non-`de.aiadventure` INFO, DEBUG, and TRACE records while preserving the requested low-level logging for AiAdventure code.
+**Goal:** Suppress all non-`de.aidadventure` INFO, DEBUG, and TRACE records while preserving the requested low-level logging for AiAdventure code.
 
-**Architecture:** Set SLF4J Simple's global default to `warn` before Ktor starts, then set `de.aiadventure` to the validated CLI level. Keep that property mutation in a small testable Kotlin unit.
+**Architecture:** Set SLF4J Simple's global default to `warn` before Ktor starts, then set `de.aidadventure` to the validated CLI level. Keep that property mutation in a small testable Kotlin unit.
 
 **Tech Stack:** Kotlin/JVM 21, SLF4J Simple 2.0.17, kotlin.test, Gradle.
 
 ## Global Constraints
 
-- Only logger names beginning with `de.aiadventure` may emit INFO, DEBUG, or TRACE records.
+- Only logger names beginning with `de.aidadventure` may emit INFO, DEBUG, or TRACE records.
 - WARN and ERROR remain visible from every logger namespace.
 - The existing `--log-level` parsing and default `info` remain unchanged.
 - No API, prompt, llama.cpp, slot, or cache behavior changes.
@@ -29,7 +29,7 @@ and asserts:
 
 ```kotlin
 assertEquals("warn", System.getProperty("org.slf4j.simpleLogger.defaultLogLevel"))
-assertEquals("trace", System.getProperty("org.slf4j.simpleLogger.log.de.aiadventure"))
+assertEquals("trace", System.getProperty("org.slf4j.simpleLogger.log.de.aidadventure"))
 ```
 
 - [x] **Step 2: Verify the test fails before production code exists**
@@ -48,7 +48,7 @@ Observed: `Unresolved reference 'ServerLogging'`.
 internal object ServerLogging {
     fun configure(logLevel: String) {
         System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", "warn")
-        System.setProperty("org.slf4j.simpleLogger.log.de.aiadventure", logLevel)
+        System.setProperty("org.slf4j.simpleLogger.log.de.aidadventure", logLevel)
     }
 }
 ```

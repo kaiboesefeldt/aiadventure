@@ -264,6 +264,15 @@ class LlamaCppGatewayTest {
     }
 
     @Test
+    fun `prefill waits beyond the standard request timeout for template application`() = runBlocking {
+        nativeServer(templateDelayMillis = 5_500).use { server ->
+            val metrics = LlamaCppGateway().prefill(request(server.port), LlamaCppSlot(2))
+
+            assertEquals(CacheMetrics(17, 3), metrics)
+        }
+    }
+
+    @Test
     fun `turn uses the same slot and maps cache metrics`() = runBlocking {
         nativeServer().use { server ->
             val gateway = LlamaCppGateway(promptFactory = PromptFactory())
@@ -330,12 +339,13 @@ class LlamaCppGatewayTest {
 
     private fun nativeServer(
         templatePrompt: String = "templated prompt",
+        templateDelayMillis: Long = 0,
         completionDelayMillis: Long = 0,
         completionContent: String? = null,
         streamContents: List<String> = listOf("Hello"),
     ): NativeServer {
         val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
-        return NativeServer(server, templatePrompt, completionDelayMillis, completionContent, streamContents).also { it.start() }
+        return NativeServer(server, templatePrompt, templateDelayMillis, completionDelayMillis, completionContent, streamContents).also { it.start() }
     }
 
     private fun chatServer(streamContents: List<String>): ChatServer {
@@ -346,6 +356,7 @@ class LlamaCppGatewayTest {
     private class NativeServer(
         private val server: HttpServer,
         private val templatePrompt: String,
+        private val templateDelayMillis: Long,
         private val completionDelayMillis: Long,
         private val completionContent: String?,
         private val streamContents: List<String>,
@@ -365,6 +376,7 @@ class LlamaCppGatewayTest {
             server.createContext("/apply-template") { exchange ->
                 record(exchange)
                 templateBodies += exchange.requestBody.bufferedReader().use { it.readText() }
+                if (templateDelayMillis > 0) Thread.sleep(templateDelayMillis)
                 exchange.respondJson(Json.encodeToString(mapOf("prompt" to templatePrompt)))
             }
             server.createContext("/completion") { exchange ->

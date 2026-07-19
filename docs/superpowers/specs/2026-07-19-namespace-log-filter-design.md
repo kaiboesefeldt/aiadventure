@@ -3,14 +3,14 @@
 ## Goal
 
 At levels below WARN, emit only logs whose SLF4J logger name starts with
-`de.aiadventure`. Logs from all other namespaces must remain suppressed even
+`de.aidadventure`. Logs from all other namespaces must remain suppressed even
 when the server is started with `--log-level=TRACE`, `DEBUG`, or `INFO`.
 
 ## Configuration
 
 Server startup configures SLF4J Simple before Ktor and its dependencies create
 loggers. It sets the global default level to `warn` and sets the
-`de.aiadventure` namespace level to the validated value from `--log-level`.
+`de.aidadventure` namespace level to the validated value from `--log-level`.
 
 Consequently, both application and dependency logs at WARN or ERROR remain
 visible. At TRACE, DEBUG, or INFO, only the application namespace is allowed

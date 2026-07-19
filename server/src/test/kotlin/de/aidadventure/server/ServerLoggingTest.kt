@@ -6,7 +6,7 @@ import kotlin.test.assertEquals
 
 class ServerLoggingTest {
     private val defaultLevelKey = "org.slf4j.simpleLogger.defaultLogLevel"
-    private val aiAdventureLevelKey = "org.slf4j.simpleLogger.log.de.aiadventure"
+    private val aiAdventureLevelKey = "org.slf4j.simpleLogger.log.de.aidadventure"
     private val originalProperties = mapOf(
         defaultLevelKey to System.getProperty(defaultLevelKey),
         aiAdventureLevelKey to System.getProperty(aiAdventureLevelKey),
