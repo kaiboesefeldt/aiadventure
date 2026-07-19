@@ -373,7 +373,7 @@ class LlamaCppGateway private constructor(
         tracePrompt(operation, sessionId, semanticMessages)
         val response = httpClient.send(
             HttpRequest.newBuilder(endpoint(requirePort(port), "/apply-template"))
-                .timeout(requestTimeout)
+                .timeout(PREFILL_TIMEOUT)
                 .header("Content-Type", "application/json")
                 .POST(
                     HttpRequest.BodyPublishers.ofString(
