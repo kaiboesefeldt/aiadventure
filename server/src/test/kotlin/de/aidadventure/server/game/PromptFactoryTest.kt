@@ -11,6 +11,7 @@ import dev.langchain4j.data.message.UserMessage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 
 class PromptFactoryTest {
     @Test
@@ -105,6 +106,35 @@ class PromptFactoryTest {
         val nextTurn = factory.build(TurnRequest("live-1", "test-model", 8081, "# Harbor", persistedHistory, "follow the bell"))
 
         assertCachePrefix(completedTurn + AiMessage.from("Fog covers the water."), nextTurn)
+    }
+
+    @Test
+    fun `accepted reranking warmup is a prefix of the next turn without temporary analysis context`() {
+        val factory = PromptFactory()
+        val history = listOf(
+            ChatEntry("player", "inspect the pier"),
+            ChatEntry("game-master", "Fog covers the water."),
+            ChatEntry("runtime-fragment", "The keeper avoids the lighthouse."),
+        )
+        val warmup = factory.buildWarmup(WarmupRequest("live-1", "test-model", 8081, "# Harbor", history))
+        val nextTurn = factory.build(TurnRequest("live-1", "test-model", 8081, "# Harbor", history, "follow the bell"))
+
+        assertCachePrefix(warmup, nextTurn)
+        assertFalse(warmup.any { segment(it).second == "lighthouse" || segment(it).second == PromptFactory.FRAGMENT_RELEVANCE_PROMPT })
+    }
+
+    @Test
+    fun `rejected reranking warmup is a prefix of the next turn without temporary analysis context`() {
+        val factory = PromptFactory()
+        val history = listOf(
+            ChatEntry("player", "inspect the pier"),
+            ChatEntry("game-master", "Fog covers the water."),
+        )
+        val warmup = factory.buildWarmup(WarmupRequest("live-1", "test-model", 8081, "# Harbor", history))
+        val nextTurn = factory.build(TurnRequest("live-1", "test-model", 8081, "# Harbor", history, "follow the bell"))
+
+        assertCachePrefix(warmup, nextTurn)
+        assertFalse(warmup.any { segment(it).second == "lighthouse" || segment(it).second == PromptFactory.FRAGMENT_RELEVANCE_PROMPT })
     }
 
     private fun assertCachePrefix(expectedPrefix: List<ChatMessage>, actual: List<ChatMessage>) {

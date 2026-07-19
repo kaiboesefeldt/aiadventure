@@ -436,6 +436,31 @@ class PrefillCoordinatorTest {
     }
 
     @Test
+    fun `reranking keeps the completed turn slot warm through the following turn`() = runBlocking {
+        val history = listOf(
+            ChatEntry("player", "look"),
+            ChatEntry("game-master", "The bell rings."),
+        )
+        val fake = ControllableGateway(
+            score = { "5" },
+            warmup = { CacheMetrics(null, null) },
+        )
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+
+        coordinator.beginTurn(turn("look")).toList()
+        assertEquals(PrefillDisposition.STARTED, coordinator.rerankAndWarmup(warmup(history), candidate(), "request-42"))
+        fake.awaitWarmupCompletion()
+        coordinator.submit(prefill(1, "follow the bell", history + ChatEntry("runtime-fragment", "fragment text")))
+        fake.awaitPrefill(1)
+        fake.completePrefill(1)
+        fake.awaitPrefillCompletion(1)
+        coordinator.beginTurn(turn("follow the bell", history + ChatEntry("runtime-fragment", "fragment text"))).toList()
+
+        assertWarmSlotLifecycle(fake, listOf("acquire", "turn", "score", "warmup", "prefill", "turn"))
+        coordinator.close()
+    }
+
+    @Test
     fun `closing cancels and joins a running turn before releasing its slot`() = runBlocking {
         val events = mutableListOf<String>()
         val streamStarted = CompletableDeferred<Unit>()
