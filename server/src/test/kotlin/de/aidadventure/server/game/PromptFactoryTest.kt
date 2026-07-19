@@ -1,6 +1,7 @@
 package de.aidadventure.server.game
 
 import de.aidadventure.server.model.ChatEntry
+import de.aidadventure.server.model.FragmentRelevanceRequest
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.WarmupRequest
 import dev.langchain4j.data.message.AiMessage
@@ -10,6 +11,7 @@ import dev.langchain4j.data.message.UserMessage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 
 class PromptFactoryTest {
     @Test
@@ -54,6 +56,27 @@ class PromptFactoryTest {
     }
 
     @Test
+    fun `buildRelevance appends the candidate key as system context before its fixed analysis action`() {
+        val prompt = PromptFactory().buildRelevance(
+            FragmentRelevanceRequest(
+                sessionId = "live-1",
+                modelId = "test-model",
+                llamaCppPort = 8081,
+                scenarioMarkdown = "# Harbor",
+                history = listOf(ChatEntry("player", "look")),
+                candidateKey = "lighthouse",
+            ),
+        )
+
+        assertEquals(listOf("system", "system", "user", "system", "user"), prompt.map { it.type().name.lowercase() })
+        assertEquals("lighthouse", (prompt[3] as SystemMessage).text())
+        assertEquals(
+            "Rate how well the preceding key fits the current game situation. Reply with exactly one digit from 0 to 9; 0 means no fit and 9 means perfect fit.",
+            (prompt[4] as UserMessage).singleText(),
+        )
+    }
+
+    @Test
     fun `new game warmup is a prefix of its first turn`() {
         val factory = PromptFactory()
         val warmup = factory.buildWarmup(WarmupRequest("live-1", "test-model", 8081, "# Harbor", emptyList()))
@@ -83,6 +106,35 @@ class PromptFactoryTest {
         val nextTurn = factory.build(TurnRequest("live-1", "test-model", 8081, "# Harbor", persistedHistory, "follow the bell"))
 
         assertCachePrefix(completedTurn + AiMessage.from("Fog covers the water."), nextTurn)
+    }
+
+    @Test
+    fun `accepted reranking warmup is a prefix of the next turn without temporary analysis context`() {
+        val factory = PromptFactory()
+        val history = listOf(
+            ChatEntry("player", "inspect the pier"),
+            ChatEntry("game-master", "Fog covers the water."),
+            ChatEntry("runtime-fragment", "The keeper avoids the lighthouse."),
+        )
+        val warmup = factory.buildWarmup(WarmupRequest("live-1", "test-model", 8081, "# Harbor", history))
+        val nextTurn = factory.build(TurnRequest("live-1", "test-model", 8081, "# Harbor", history, "follow the bell"))
+
+        assertCachePrefix(warmup, nextTurn)
+        assertFalse(warmup.any { segment(it).second == "lighthouse" || segment(it).second == PromptFactory.FRAGMENT_RELEVANCE_PROMPT })
+    }
+
+    @Test
+    fun `rejected reranking warmup is a prefix of the next turn without temporary analysis context`() {
+        val factory = PromptFactory()
+        val history = listOf(
+            ChatEntry("player", "inspect the pier"),
+            ChatEntry("game-master", "Fog covers the water."),
+        )
+        val warmup = factory.buildWarmup(WarmupRequest("live-1", "test-model", 8081, "# Harbor", history))
+        val nextTurn = factory.build(TurnRequest("live-1", "test-model", 8081, "# Harbor", history, "follow the bell"))
+
+        assertCachePrefix(warmup, nextTurn)
+        assertFalse(warmup.any { segment(it).second == "lighthouse" || segment(it).second == PromptFactory.FRAGMENT_RELEVANCE_PROMPT })
     }
 
     private fun assertCachePrefix(expectedPrefix: List<ChatMessage>, actual: List<ChatMessage>) {

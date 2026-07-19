@@ -7,7 +7,7 @@ import de.aidadventure.server.model.RuntimeFragmentDefinition
 interface RuntimeFragmentResolver {
     suspend fun prepare(definitions: List<RuntimeFragmentDefinition>)
 
-    suspend fun resolve(history: List<ChatEntry>, definitions: List<RuntimeFragmentDefinition>): String?
+    suspend fun resolve(history: List<ChatEntry>, definitions: List<RuntimeFragmentDefinition>): RuntimeFragmentDefinition?
 }
 
 class DefaultRuntimeFragmentResolver(
@@ -21,7 +21,7 @@ class DefaultRuntimeFragmentResolver(
     override suspend fun resolve(
         history: List<ChatEntry>,
         definitions: List<RuntimeFragmentDefinition>,
-    ): String? {
+    ): RuntimeFragmentDefinition? {
         if (definitions.isEmpty()) return null
         val visibleHistory = history.filter { it.role != RUNTIME_FRAGMENT_ROLE }
         val lastPlayer = visibleHistory.lastOrNull { it.role == PLAYER_ROLE } ?: return null

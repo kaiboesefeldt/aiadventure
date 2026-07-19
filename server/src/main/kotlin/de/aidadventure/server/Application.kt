@@ -24,6 +24,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
@@ -47,6 +48,13 @@ import java.io.IOException
 import java.io.Writer
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -93,6 +101,8 @@ fun Application.adventureModule(
     llamaCppPort: Int = LlamaCppPort.DEFAULT,
 ) {
     val logger = LoggerFactory.getLogger("de.aidadventure.server.AdventureApi")
+    val postTurnScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    monitor.subscribe(ApplicationStopped) { postTurnScope.cancel() }
     install(ContentNegotiation) { json() }
     install(CORS) {
         allowHost("localhost:8088", schemes = listOf("http"))
@@ -184,36 +194,64 @@ fun Application.adventureModule(
                             is TurnStreamEvent.Done -> completedMetrics = event.metrics
                         }
                     }
-                    if (generated.isNotEmpty()) {
+                    val metrics = completedMetrics
+                    if (generated.isNotEmpty() && metrics != null) {
+                        val requestId = call.callId ?: "unknown"
+                        val completedHistory = resolved.request.history +
+                            ChatEntry("player", resolved.request.playerAction) +
+                            ChatEntry("game-master", generated.toString())
+                        val warmupRequest = WarmupRequest(
+                            sessionId = resolved.request.sessionId,
+                            modelId = resolved.request.modelId,
+                            llamaCppPort = resolved.request.llamaCppPort,
+                            scenarioMarkdown = resolved.request.scenarioMarkdown,
+                            history = completedHistory,
+                            runtimeFragments = resolved.request.runtimeFragments,
+                        )
+                        var reservation: de.aidadventure.server.prefill.RerankReservation? = null
                         try {
-                            val completedHistory = resolved.request.history +
-                                ChatEntry("player", resolved.request.playerAction) +
-                                ChatEntry("game-master", generated.toString())
-                            val nextFragment = runtimeFragmentResolver.resolve(completedHistory, resolved.request.runtimeFragments)
-                            if (!nextFragment.isNullOrBlank()) {
-                                coordinator.warmup(
-                                    WarmupRequest(
-                                        sessionId = resolved.request.sessionId,
-                                        modelId = resolved.request.modelId,
-                                        llamaCppPort = resolved.request.llamaCppPort,
-                                        scenarioMarkdown = resolved.request.scenarioMarkdown,
-                                        history = completedHistory + ChatEntry("runtime-fragment", nextFragment),
-                                        runtimeFragments = resolved.request.runtimeFragments,
-                                    ),
-                                    call.callId ?: "unknown",
+                            reservation = try {
+                                coordinator.reserveRerank(warmupRequest, requestId)
+                            } catch (failure: Exception) {
+                                if (failure is CancellationException) throw failure
+                                logger.warn(
+                                    "requestId={} operation={} failure={}",
+                                    requestId,
+                                    "post_turn_fragment_rerank",
+                                    failure.javaClass.simpleName,
                                 )
+                                null
+                            }
+                            sse("done", eventJson.encodeToString(StreamDone(metrics)))
+                            reservation?.let { rerankReservation ->
+                                postTurnScope.launch {
+                                    var candidate: de.aidadventure.server.model.RuntimeFragmentDefinition? = null
+                                    try {
+                                        candidate = runtimeFragmentResolver.resolve(completedHistory, resolved.request.runtimeFragments)
+                                    } catch (failure: Exception) {
+                                        if (failure is CancellationException) throw failure
+                                        logger.warn(
+                                            "requestId={} operation={} failure={}",
+                                            requestId,
+                                            "post_turn_fragment_rerank",
+                                            failure.javaClass.simpleName,
+                                        )
+                                    } finally {
+                                        withContext(NonCancellable) {
+                                            coordinator.completeReservedRerank(rerankReservation, candidate)
+                                        }
+                                    }
+                                }.invokeOnCompletion { rerankReservation.complete(null) }
                             }
                         } catch (failure: Exception) {
-                            if (failure is CancellationException) throw failure
-                            logger.warn(
-                                "requestId={} operation={} failure={}",
-                                call.callId,
-                                "post_turn_fragment_warmup",
-                                failure.javaClass.simpleName,
-                            )
+                            reservation?.let { rerankReservation ->
+                                withContext(NonCancellable) {
+                                    coordinator.completeReservedRerank(rerankReservation, null)
+                                }
+                            }
+                            throw failure
                         }
-                    }
-                    completedMetrics?.let { metrics ->
+                    } else if (metrics != null) {
                         sse("done", eventJson.encodeToString(StreamDone(metrics)))
                     }
                 } catch (_: ClosedWriteChannelException) {
@@ -264,7 +302,8 @@ private suspend fun TurnRequest.resolveFragment(
     operation: String,
     logger: org.slf4j.Logger,
 ): ResolvedTurn = try {
-    val fragment = resolver.resolve(history, runtimeFragments)
+    val candidate = resolver.resolve(history, runtimeFragments)
+    val fragment = candidate?.fragment
     ResolvedTurn(
         request = if (fragment == null) this else copy(history = history + ChatEntry("runtime-fragment", fragment)),
         fragment = fragment,
@@ -285,7 +324,8 @@ private class ProductionRuntimeFragmentResolver : RuntimeFragmentResolver {
     override suspend fun resolve(
         history: List<ChatEntry>,
         definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
-    ): String? = if (definitions.isEmpty()) null else delegate.resolve(history, definitions)
+    ): de.aidadventure.server.model.RuntimeFragmentDefinition? =
+        if (definitions.isEmpty()) null else delegate.resolve(history, definitions)
 }
 
 private suspend fun io.ktor.server.application.ApplicationCall.respondLlamaUnavailable(

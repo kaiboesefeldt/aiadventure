@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import de.aidadventure.server.game.PromptFactory
 import de.aidadventure.server.model.ChatEntry
+import de.aidadventure.server.model.FragmentRelevanceRequest
 import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
@@ -27,6 +28,21 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class LlamaCppGatewayTest {
+    @Test
+    fun `fragment scoring generates exactly one token on the retained slot`() = runBlocking {
+        nativeServer(completionContent = "7").use { server ->
+            val gateway = LlamaCppGateway(promptFactory = PromptFactory())
+
+            assertEquals("7", gateway.scoreFragment(relevanceRequest(server.port), LlamaCppSlot(2)))
+
+            assertEquals(listOf("/apply-template", "/completion"), server.paths)
+            val completionBody = server.completionBodies.single().jsonObject
+            assertEquals(2, completionBody.getValue("id_slot").jsonPrimitive.int)
+            assertEquals(1, completionBody.getValue("n_predict").jsonPrimitive.int)
+            assertEquals(false, completionBody.getValue("stream").jsonPrimitive.boolean)
+        }
+    }
+
     @Test
     fun `prompt fingerprint is deterministic HMAC prefix without prompt text`() {
         val prompt = "The hidden vault opens only at dusk."
@@ -149,18 +165,29 @@ class LlamaCppGatewayTest {
         history = emptyList(),
     )
 
+    private fun relevanceRequest(port: Int) = FragmentRelevanceRequest(
+        sessionId = "live-1",
+        modelId = "local-model",
+        llamaCppPort = port,
+        scenarioMarkdown = "# Forest",
+        history = listOf(ChatEntry("player", "Look around")),
+        candidateKey = "candidate key",
+    )
+
     private fun nativeServer(
         templatePrompt: String = "templated prompt",
         completionDelayMillis: Long = 0,
+        completionContent: String? = null,
     ): NativeServer {
         val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
-        return NativeServer(server, templatePrompt, completionDelayMillis).also { it.start() }
+        return NativeServer(server, templatePrompt, completionDelayMillis, completionContent).also { it.start() }
     }
 
     private class NativeServer(
         private val server: HttpServer,
         private val templatePrompt: String,
         private val completionDelayMillis: Long,
+        private val completionContent: String?,
     ) : AutoCloseable {
         private val executor = Executors.newSingleThreadExecutor()
         val paths = mutableListOf<String>()
@@ -193,7 +220,8 @@ class LlamaCppGatewayTest {
                         writer.flush()
                     }
                 } else {
-                    exchange.respondJson("{\"tokens_cached\":17,\"tokens_evaluated\":3}")
+                    val content = completionContent?.let { ",\"content\":\"$it\"" }.orEmpty()
+                    exchange.respondJson("{\"tokens_cached\":17,\"tokens_evaluated\":3$content}")
                 }
             }
         }

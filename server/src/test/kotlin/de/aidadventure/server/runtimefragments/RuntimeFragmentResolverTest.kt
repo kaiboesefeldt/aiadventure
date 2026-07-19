@@ -14,13 +14,12 @@ class RuntimeFragmentResolverTest {
         val embedding = RecordingEmbeddingService()
         val resolver = DefaultRuntimeFragmentResolver(embedding)
 
-        assertEquals(
-            "Mira tells the story",
-            resolver.resolve(
-                listOf(ChatEntry("player", "lighthouse"), ChatEntry("game-master", "sunset")),
-                listOf(RuntimeFragmentDefinition("match", "Mira tells the story")),
-            ),
+        val resolved = resolver.resolve(
+            listOf(ChatEntry("player", "lighthouse"), ChatEntry("game-master", "sunset")),
+            listOf(RuntimeFragmentDefinition("lighthouse", "Mira avoids it.")),
         )
+
+        assertEquals(RuntimeFragmentDefinition("lighthouse", "Mira avoids it."), resolved)
         assertEquals("lighthouse\nsunset", embedding.inputs.last())
     }
 
@@ -30,7 +29,7 @@ class RuntimeFragmentResolverTest {
 
         assertNull(resolver.resolve(listOf(ChatEntry("player", "look")), definitions()))
         assertEquals(
-            "fragment",
+            RuntimeFragmentDefinition("match", "fragment"),
             resolver.resolve(
                 listOf(
                     ChatEntry("player", "match"),
@@ -55,7 +54,7 @@ class RuntimeFragmentResolverTest {
             definitions,
         )
 
-        assertEquals(definitions.minBy { RuntimeFragmentIndexRegistry.documentIdFor(it) }.fragment, resolved)
+        assertEquals(definitions.minBy { RuntimeFragmentIndexRegistry.documentIdFor(it) }, resolved)
     }
 
     private fun definitions() = listOf(RuntimeFragmentDefinition("match", "fragment"))
