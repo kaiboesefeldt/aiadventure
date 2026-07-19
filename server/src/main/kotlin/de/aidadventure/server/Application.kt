@@ -190,14 +190,14 @@ fun Application.adventureModule(
                                 ChatEntry("player", resolved.request.playerAction) +
                                 ChatEntry("game-master", generated.toString())
                             val nextFragment = runtimeFragmentResolver.resolve(completedHistory, resolved.request.runtimeFragments)
-                            if (!nextFragment.isNullOrBlank()) {
+                            if (nextFragment != null) {
                                 coordinator.warmup(
                                     WarmupRequest(
                                         sessionId = resolved.request.sessionId,
                                         modelId = resolved.request.modelId,
                                         llamaCppPort = resolved.request.llamaCppPort,
                                         scenarioMarkdown = resolved.request.scenarioMarkdown,
-                                        history = completedHistory + ChatEntry("runtime-fragment", nextFragment),
+                                        history = completedHistory + ChatEntry("runtime-fragment", nextFragment.fragment),
                                         runtimeFragments = resolved.request.runtimeFragments,
                                     ),
                                     call.callId ?: "unknown",
@@ -264,7 +264,8 @@ private suspend fun TurnRequest.resolveFragment(
     operation: String,
     logger: org.slf4j.Logger,
 ): ResolvedTurn = try {
-    val fragment = resolver.resolve(history, runtimeFragments)
+    val candidate = resolver.resolve(history, runtimeFragments)
+    val fragment = candidate?.fragment
     ResolvedTurn(
         request = if (fragment == null) this else copy(history = history + ChatEntry("runtime-fragment", fragment)),
         fragment = fragment,
@@ -285,7 +286,8 @@ private class ProductionRuntimeFragmentResolver : RuntimeFragmentResolver {
     override suspend fun resolve(
         history: List<ChatEntry>,
         definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
-    ): String? = if (definitions.isEmpty()) null else delegate.resolve(history, definitions)
+    ): de.aidadventure.server.model.RuntimeFragmentDefinition? =
+        if (definitions.isEmpty()) null else delegate.resolve(history, definitions)
 }
 
 private suspend fun io.ktor.server.application.ApplicationCall.respondLlamaUnavailable(

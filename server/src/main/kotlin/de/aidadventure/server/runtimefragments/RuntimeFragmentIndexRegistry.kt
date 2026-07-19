@@ -40,10 +40,15 @@ class RuntimeFragmentIndexRegistry(
         definitions: List<RuntimeFragmentDefinition>,
         embedding: EmbeddingService,
         queryVector: FloatArray,
-    ): String? =
+    ): RuntimeFragmentDefinition? =
         mutex.withLock {
             val index = indexForLocked(definitions, embedding)
-            index.store.query(VectorStore.Query(vector = queryVector)).resultsPage.firstOrNull()?.fields?.get(FRAGMENT_FIELD)
+            index.store.query(VectorStore.Query(vector = queryVector)).resultsPage.firstOrNull()?.fields?.let { fields ->
+                RuntimeFragmentDefinition(
+                    matchText = requireNotNull(fields[MATCH_TEXT_FIELD]),
+                    fragment = requireNotNull(fields[FRAGMENT_FIELD]),
+                )
+            }
         }
 
     private suspend fun indexFor(
@@ -78,7 +83,10 @@ class RuntimeFragmentIndexRegistry(
                         add(
                             id = documentIdFor(definition),
                             text = definition.matchText,
-                            fields = mapOf(FRAGMENT_FIELD to definition.fragment),
+                            fields = mapOf(
+                                MATCH_TEXT_FIELD to definition.matchText,
+                                FRAGMENT_FIELD to definition.fragment,
+                            ),
                             vector = embedding.embed(definition.matchText),
                         )
                     }
@@ -123,6 +131,7 @@ class RuntimeFragmentIndexRegistry(
     )
 
     companion object {
+        internal const val MATCH_TEXT_FIELD = "runtimeFragmentMatchText"
         internal const val FRAGMENT_FIELD = "runtimeFragment"
 
         fun documentIdFor(definition: RuntimeFragmentDefinition): String =

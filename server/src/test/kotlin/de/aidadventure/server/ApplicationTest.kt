@@ -372,7 +372,8 @@ class ApplicationTest {
         override suspend fun resolve(
             history: List<de.aidadventure.server.model.ChatEntry>,
             definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
-        ): String? = fragment
+        ): de.aidadventure.server.model.RuntimeFragmentDefinition? =
+            fragment?.let { de.aidadventure.server.model.RuntimeFragmentDefinition("match", it) }
     }
 
     private fun resolving(vararg fragments: String?) = object : RuntimeFragmentResolver {
@@ -383,7 +384,8 @@ class ApplicationTest {
         override suspend fun resolve(
             history: List<de.aidadventure.server.model.ChatEntry>,
             definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
-        ): String? = results.next()
+        ): de.aidadventure.server.model.RuntimeFragmentDefinition? =
+            results.next()?.let { de.aidadventure.server.model.RuntimeFragmentDefinition("match", it) }
     }
 
     private fun resolverThatFailsAfterCurrentFragment() = object : RuntimeFragmentResolver {
@@ -394,7 +396,9 @@ class ApplicationTest {
         override suspend fun resolve(
             history: List<de.aidadventure.server.model.ChatEntry>,
             definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
-        ): String? = if (++calls == 1) "current fragment" else error("secret fragment details")
+        ): de.aidadventure.server.model.RuntimeFragmentDefinition? =
+            if (++calls == 1) de.aidadventure.server.model.RuntimeFragmentDefinition("match", "current fragment")
+            else error("secret fragment details")
     }
 
     private fun warmupRequest() = WarmupRequest("live-1", "configured-llama-cpp", 8081, "# Scenario", emptyList())
