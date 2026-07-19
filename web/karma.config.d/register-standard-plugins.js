@@ -7,7 +7,14 @@ const Module = require('module');
 const testNodeModules = path.resolve(__dirname, 'node_modules');
 process.env.NODE_PATH = [testNodeModules, process.env.NODE_PATH].filter(Boolean).join(path.delimiter);
 Module._initPaths();
-const kotlinHelpers = path.resolve(__dirname, '../../node_modules/kotlin-web-helpers/dist');
+const kotlinHelperPaths = [
+  path.resolve(__dirname, '../../node_modules/kotlin-web-helpers/dist'),
+  path.resolve(testNodeModules, 'kotlin-web-helpers/dist'),
+];
+const kotlinHelpers = kotlinHelperPaths.find(fs.existsSync);
+if (!kotlinHelpers) {
+  throw new Error('Cannot find kotlin-web-helpers in: ' + kotlinHelperPaths.join(', '));
+}
 
 config.plugins = config.plugins.filter((plugin) => ![
   'kotlin-web-helpers/dist/karma-kotlin-reporter.js',
