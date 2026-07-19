@@ -1,6 +1,7 @@
 package de.aidadventure.server.game
 
 import de.aidadventure.server.model.ChatEntry
+import de.aidadventure.server.model.FragmentRelevanceRequest
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.WarmupRequest
 import dev.langchain4j.data.message.AiMessage
@@ -51,6 +52,27 @@ class PromptFactoryTest {
         assertEquals(listOf("system", "system", "user"), prompt.map { it.type().name.lowercase() })
         assertEquals("# Harbor", (prompt[1] as SystemMessage).text())
         assertEquals("look", (prompt[2] as UserMessage).singleText())
+    }
+
+    @Test
+    fun `buildRelevance appends the candidate key as system context before its fixed analysis action`() {
+        val prompt = PromptFactory().buildRelevance(
+            FragmentRelevanceRequest(
+                sessionId = "live-1",
+                modelId = "test-model",
+                llamaCppPort = 8081,
+                scenarioMarkdown = "# Harbor",
+                history = listOf(ChatEntry("player", "look")),
+                candidateKey = "lighthouse",
+            ),
+        )
+
+        assertEquals(listOf("system", "system", "user", "system", "user"), prompt.map { it.type().name.lowercase() })
+        assertEquals("lighthouse", (prompt[3] as SystemMessage).text())
+        assertEquals(
+            "Rate how well the preceding key fits the current game situation. Reply with exactly one digit from 0 to 9; 0 means no fit and 9 means perfect fit.",
+            (prompt[4] as UserMessage).singleText(),
+        )
     }
 
     @Test

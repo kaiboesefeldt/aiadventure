@@ -15,6 +15,15 @@ data class RuntimeFragmentDefinition(
     val fragment: String,
 )
 
+data class FragmentRelevanceRequest(
+    val sessionId: String,
+    val modelId: String = "",
+    val llamaCppPort: Int = 8081,
+    val scenarioMarkdown: String,
+    val history: List<ChatEntry>,
+    val candidateKey: String,
+)
+
 @Serializable
 data class TurnRequest(
     val sessionId: String,
