@@ -283,7 +283,6 @@ class LlamaCppGateway private constructor(
     fun stream(request: TurnRequest): Flow<TurnStreamEvent> {
         val port = requirePort(request.llamaCppPort)
         val messages = promptFactory.build(request).map(::toOpenAiMessage)
-        tracePrompt("chat_completion", request.sessionId, messages)
         val payload = ChatCompletionRequest(
             model = request.modelId,
             messages = messages,
@@ -295,6 +294,7 @@ class LlamaCppGateway private constructor(
             val reader = launch(Dispatchers.IO) {
                 try {
                     val response = runInterruptible {
+                        tracePrompt("chat_completion", request.sessionId, messages)
                         val received = httpClient.send(
                             HttpRequest.newBuilder(endpoint(port, "/v1/chat/completions"))
                                 .header("Accept", "text/event-stream")

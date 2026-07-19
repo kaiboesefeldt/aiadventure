@@ -88,6 +88,29 @@ class LlamaCppGatewayTest {
     }
 
     @Test
+    fun `uncollected chat stream does not advance trace cursor for a later request`() = runBlocking {
+        chatServer(streamContents = listOf("Hello")).use { server ->
+            val trace = RecordingTraceLogger()
+            val gateway = LlamaCppGateway(traceLogger = trace)
+
+            gateway.stream(request(server.port))
+            gateway.stream(request(server.port)).toList()
+
+            assertEquals(
+                listOf(
+                    LlmTraceMessage("system", PromptFactory.GAME_MASTER_INSTRUCTION),
+                    LlmTraceMessage("system", "# Forest"),
+                    LlmTraceMessage("user", "Look around"),
+                    LlmTraceMessage("assistant", "Misty trees surround you."),
+                    LlmTraceMessage("user", "Follow the path"),
+                ),
+                trace.prompts.last().historyDelta,
+            )
+            assertEquals(1, trace.prompts.size)
+        }
+    }
+
+    @Test
     fun `streams complete without a final response trace when output is blank`() = runBlocking {
         nativeServer(streamContents = emptyList()).use { native ->
             chatServer(streamContents = emptyList()).use { chat ->
