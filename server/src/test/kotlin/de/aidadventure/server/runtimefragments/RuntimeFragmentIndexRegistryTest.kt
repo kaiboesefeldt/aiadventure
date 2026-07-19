@@ -58,6 +58,27 @@ class RuntimeFragmentIndexRegistryTest {
         registry.close()
     }
 
+    @Test
+    fun `query traces selected fragment and similarity only when trace is enabled`() = runTest {
+        val trace = RecordingTraceSink(isTraceEnabled = true)
+        val registry = RuntimeFragmentIndexRegistry(traceSink = trace)
+        val embedding = CountingEmbeddingService()
+        val definition = RuntimeFragmentDefinition("match", "fragment\\nwith tab\\t")
+
+        registry.query(listOf(definition), embedding, floatArrayOf(1f, 0f))
+        registry.query(emptyList(), embedding, floatArrayOf(1f, 0f))
+
+        assertEquals(listOf(TracedResult(definition.fragment, 1.0f)), trace.results)
+        registry.close()
+
+        val disabledTrace = RecordingTraceSink(isTraceEnabled = false)
+        val disabledRegistry = RuntimeFragmentIndexRegistry(traceSink = disabledTrace)
+        disabledRegistry.query(listOf(definition), embedding, floatArrayOf(1f, 0f))
+
+        assertEquals(emptyList(), disabledTrace.results)
+        disabledRegistry.close()
+    }
+
     private class CountingEmbeddingService : EmbeddingService {
         override val dimension = 2
         var calls = 0
@@ -67,4 +88,14 @@ class RuntimeFragmentIndexRegistryTest {
             return floatArrayOf(1f, 0f)
         }
     }
+
+    private class RecordingTraceSink(override val isTraceEnabled: Boolean) : RuntimeFragmentTraceSink {
+        val results = mutableListOf<TracedResult>()
+
+        override fun selected(fragment: String, similarity: Float) {
+            results += TracedResult(fragment, similarity)
+        }
+    }
+
+    private data class TracedResult(val fragment: String, val similarity: Float)
 }
