@@ -1,7 +1,11 @@
 package de.aidadventure.server.llamacpp
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class LlmTraceTranscriptTest {
     @Test
@@ -44,6 +48,10 @@ class LlmTraceTranscriptTest {
         transcript.nextPrompt("session-1", full)
 
         assertEquals(emptyList(), transcript.nextPrompt("session-1", shortened))
+        assertEquals(
+            listOf(message("user", "walk onward")),
+            transcript.nextPrompt("session-1", shortened + message("user", "walk onward")),
+        )
     }
 
     @Test
@@ -76,6 +84,36 @@ class LlmTraceTranscriptTest {
         assertEquals(
             listOf(final),
             transcript.nextPrompt("session-1", prompt + final + final),
+        )
+    }
+
+    @Test
+    fun `interleaved prompt and final output keep one atomic same-session cursor`() {
+        val transcript = LlmTraceTranscript()
+        val prompt = listOf(message("system", "rules"), message("user", "look"))
+        val final = message("assistant", "trees")
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+
+        transcript.nextPrompt("session-1", prompt)
+        val nextPrompt = executor.submit<List<LlmTraceMessage>> {
+            assertTrue(start.await(5, TimeUnit.SECONDS))
+            transcript.nextPrompt("session-1", prompt + final)
+        }
+        val recordFinal = executor.submit {
+            assertTrue(start.await(5, TimeUnit.SECONDS))
+            transcript.recordFinalAssistantMessage("session-1", final.content)
+        }
+
+        start.countDown()
+        val returnedDuringInterleave = nextPrompt.get(5, TimeUnit.SECONDS)
+        recordFinal.get(5, TimeUnit.SECONDS)
+        executor.shutdownNow()
+
+        assertTrue(returnedDuringInterleave == emptyList<LlmTraceMessage>() || returnedDuringInterleave == listOf(final))
+        assertEquals(
+            listOf(message("user", "walk onward")),
+            transcript.nextPrompt("session-1", prompt + final + message("user", "walk onward")),
         )
     }
 
