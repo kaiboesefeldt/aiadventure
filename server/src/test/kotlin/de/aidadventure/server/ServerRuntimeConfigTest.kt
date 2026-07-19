@@ -27,14 +27,46 @@ class ServerRuntimeConfigTest {
 
     @Test
     fun `parses log level with llama cpp port in either order`() {
-        assertEquals("debug", ServerRuntimeConfig.from(emptyMap(), arrayOf("--llama-port=8082", "--log-level=DEBUG")).logLevel)
-        assertEquals(8082, ServerRuntimeConfig.from(emptyMap(), arrayOf("--log-level=DEBUG", "--llama-port=8082")).llamaCppPort)
+        val portThenLogLevel = ServerRuntimeConfig.from(
+            emptyMap(),
+            arrayOf("--llama-port=8082", "--log-level=DEBUG"),
+        )
+        assertEquals(8082, portThenLogLevel.llamaCppPort)
+        assertEquals("debug", portThenLogLevel.logLevel)
+
+        val logLevelThenPort = ServerRuntimeConfig.from(
+            emptyMap(),
+            arrayOf("--log-level=DEBUG", "--llama-port=8082"),
+        )
+        assertEquals(8082, logLevelThenPort.llamaCppPort)
+        assertEquals("debug", logLevelThenPort.logLevel)
     }
 
     @Test
     fun `rejects invalid log level`() {
         assertFailsWith<IllegalArgumentException> {
             ServerRuntimeConfig.from(emptyMap(), arrayOf("--log-level=VERBOSE"))
+        }
+    }
+
+    @Test
+    fun `rejects unknown command line options`() {
+        assertFailsWith<IllegalArgumentException> {
+            ServerRuntimeConfig.from(emptyMap(), arrayOf("--unknown=value"))
+        }
+    }
+
+    @Test
+    fun `rejects duplicate log level option`() {
+        assertFailsWith<IllegalArgumentException> {
+            ServerRuntimeConfig.from(emptyMap(), arrayOf("--log-level=INFO", "--log-level=DEBUG"))
+        }
+    }
+
+    @Test
+    fun `rejects duplicate llama cpp port option`() {
+        assertFailsWith<IllegalArgumentException> {
+            ServerRuntimeConfig.from(emptyMap(), arrayOf("--llama-port=8081", "--llama-port=8082"))
         }
     }
 
