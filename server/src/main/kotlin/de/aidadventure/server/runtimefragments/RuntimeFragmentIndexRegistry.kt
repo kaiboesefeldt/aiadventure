@@ -2,6 +2,7 @@ package de.aidadventure.server.runtimefragments
 
 import de.aidadventure.server.EmbeddingService
 import de.aidadventure.server.VectorStore
+import de.aidadventure.server.llamacpp.escapeForLlmTrace
 import de.aidadventure.server.model.RuntimeFragmentDefinition
 import de.aidadventure.server.vectorstore.LuceneIndexAccess
 import de.aidadventure.server.vectorstore.LuceneLocalVectorStore
@@ -10,17 +11,33 @@ import de.aidadventure.server.vectorstore.QueryOnRegistry
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.apache.lucene.store.ByteBuffersDirectory
+import org.slf4j.LoggerFactory
 import java.nio.charset.StandardCharsets.UTF_8
 import java.security.MessageDigest
 import java.time.Clock
 import java.time.Duration
 
 /** A bounded, process-local cache of Lucene indexes for runtime-fragment definitions. */
-class RuntimeFragmentIndexRegistry(
+class RuntimeFragmentIndexRegistry private constructor(
     private val clock: Clock = Clock.systemUTC(),
     private val idleTtl: Duration = Duration.ofMinutes(15),
     private val maxIndexes: Int = 32,
+    private val traceSink: RuntimeFragmentTraceSink,
+    @Suppress("UNUSED_PARAMETER") private val internalConstructorMarker: Unit,
 ) : AutoCloseable {
+    constructor(
+        clock: Clock = Clock.systemUTC(),
+        idleTtl: Duration = Duration.ofMinutes(15),
+        maxIndexes: Int = 32,
+    ) : this(clock, idleTtl, maxIndexes, Slf4jRuntimeFragmentTraceSink(logger), Unit)
+
+    internal constructor(
+        clock: Clock = Clock.systemUTC(),
+        idleTtl: Duration = Duration.ofMinutes(15),
+        maxIndexes: Int = 32,
+        traceSink: RuntimeFragmentTraceSink,
+    ) : this(clock, idleTtl, maxIndexes, traceSink, Unit)
+
     init {
         require(!idleTtl.isNegative && !idleTtl.isZero) { "idleTtl must be positive" }
         require(maxIndexes >= 1) { "maxIndexes must be at least one" }
@@ -43,7 +60,11 @@ class RuntimeFragmentIndexRegistry(
     ): RuntimeFragmentDefinition? =
         mutex.withLock {
             val index = indexForLocked(definitions, embedding)
-            index.store.query(VectorStore.Query(vector = queryVector)).resultsPage.firstOrNull()?.fields?.let { fields ->
+            val result = index.store.query(VectorStore.Query(vector = queryVector)).resultsPage.firstOrNull()
+            if (traceSink.isTraceEnabled && result != null) {
+                traceSink.selected(requireNotNull(result.fields[FRAGMENT_FIELD]), result.similarity)
+            }
+            result?.fields?.let { fields ->
                 RuntimeFragmentDefinition(
                     matchText = requireNotNull(fields[MATCH_TEXT_FIELD]),
                     fragment = requireNotNull(fields[FRAGMENT_FIELD]),
@@ -131,6 +152,8 @@ class RuntimeFragmentIndexRegistry(
     )
 
     companion object {
+        private val logger = LoggerFactory.getLogger(RuntimeFragmentIndexRegistry::class.java)
+
         internal const val MATCH_TEXT_FIELD = "runtimeFragmentMatchText"
         internal const val FRAGMENT_FIELD = "runtimeFragment"
 
@@ -144,5 +167,23 @@ class RuntimeFragmentIndexRegistry(
 
         private fun sha256(value: String): String =
             MessageDigest.getInstance("SHA-256").digest(value.toByteArray(UTF_8)).joinToString("") { "%02x".format(it) }
+    }
+}
+
+internal interface RuntimeFragmentTraceSink {
+    val isTraceEnabled: Boolean
+
+    fun selected(fragment: String, similarity: Float)
+}
+
+private class Slf4jRuntimeFragmentTraceSink(private val logger: org.slf4j.Logger) : RuntimeFragmentTraceSink {
+    override val isTraceEnabled: Boolean get() = logger.isTraceEnabled
+
+    override fun selected(fragment: String, similarity: Float) {
+        logger.trace(
+            "operation=runtime_fragment_query fragment=\"{}\" similarity={}",
+            fragment.escapeForLlmTrace(),
+            similarity,
+        )
     }
 }
