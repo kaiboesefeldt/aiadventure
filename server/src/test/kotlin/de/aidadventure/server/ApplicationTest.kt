@@ -31,8 +31,11 @@ import io.ktor.serialization.kotlinx.json.json
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -66,7 +69,7 @@ class ApplicationTest {
     }
 
     @Test
-    fun `completed turn warms the next resolved fragment before later input prefill`() = testApplication {
+    fun `completed turn reranks the next resolved fragment before later input prefill`() = testApplication {
         val registry = FakeRegistry()
         application {
             adventureModule(
@@ -82,6 +85,11 @@ class ApplicationTest {
         }
 
         assertContains(response.bodyAsText(), "event: done")
+        runBlocking { withTimeout(1_000) { registry.coordinator.rerankCompleted.await() } }
+        assertEquals(
+            de.aidadventure.server.model.RuntimeFragmentDefinition("match", "next fragment"),
+            registry.coordinator.rerankCandidates.single(),
+        )
         assertEquals(
             listOf(
                 ChatEntry("player", "ask Mira about the lighthouse"),
@@ -89,14 +97,14 @@ class ApplicationTest {
                 ChatEntry("runtime-fragment", "current fragment"),
                 ChatEntry("player", "look"),
                 ChatEntry("game-master", "The door opens."),
-                ChatEntry("runtime-fragment", "next fragment"),
             ),
-            registry.coordinator.warmupRequests.single().history,
+            registry.coordinator.rerankRequests.single().history,
         )
+        assertTrue(registry.coordinator.warmupRequests.isEmpty())
     }
 
     @Test
-    fun `completed turn without a next fragment keeps the existing flow`() = testApplication {
+    fun `completed turn without a next fragment reserves canonical background warmup`() = testApplication {
         val registry = FakeRegistry()
         application {
             adventureModule(
@@ -112,7 +120,9 @@ class ApplicationTest {
         }
 
         assertContains(response.bodyAsText(), "event: done")
+        runBlocking { withTimeout(1_000) { registry.coordinator.rerankCompleted.await() } }
         assertTrue(registry.coordinator.warmupRequests.isEmpty())
+        assertEquals(listOf<de.aidadventure.server.model.RuntimeFragmentDefinition?>(null), registry.coordinator.rerankCandidates)
     }
 
     @Test
@@ -132,7 +142,37 @@ class ApplicationTest {
         }
 
         assertContains(response.bodyAsText(), "event: done")
+        runBlocking { withTimeout(1_000) { registry.coordinator.rerankCompleted.await() } }
         assertTrue(registry.coordinator.warmupRequests.isEmpty())
+        assertEquals(listOf<de.aidadventure.server.model.RuntimeFragmentDefinition?>(null), registry.coordinator.rerankCandidates)
+    }
+
+    @Test
+    fun `completed turn emits done before background reranking resolution completes`() = testApplication {
+        val registry = FakeRegistry()
+        val resolver = blockingResolverAfterCurrentFragment()
+        application {
+            adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolver)
+        }
+        configureJsonClient()
+
+        val response = runBlocking {
+            withTimeout(1_000) {
+                client.post("/api/turn") {
+                    contentType(ContentType.Application.Json)
+                    setBody(turnRequest(history = visiblePair()))
+                }
+            }
+        }
+
+        try {
+            assertContains(response.bodyAsText(), "event: done")
+            runBlocking { withTimeout(1_000) { resolver.rerankStarted.await() } }
+            assertEquals(1, registry.coordinator.rerankRequests.size)
+            assertTrue(registry.coordinator.rerankCandidates.isEmpty())
+        } finally {
+            resolver.allowRerank.complete(Unit)
+        }
     }
     @Test
     fun `health returns ok`() = testApplication {
@@ -401,6 +441,28 @@ class ApplicationTest {
             else error("secret fragment details")
     }
 
+    private class BlockingResolverAfterCurrentFragment : RuntimeFragmentResolver {
+        val rerankStarted = CompletableDeferred<Unit>()
+        val allowRerank = CompletableDeferred<Unit>()
+        private var calls = 0
+
+        override suspend fun prepare(definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>) = Unit
+
+        override suspend fun resolve(
+            history: List<de.aidadventure.server.model.ChatEntry>,
+            definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
+        ): de.aidadventure.server.model.RuntimeFragmentDefinition? =
+            if (++calls == 1) {
+                de.aidadventure.server.model.RuntimeFragmentDefinition("match", "current fragment")
+            } else {
+                rerankStarted.complete(Unit)
+                allowRerank.await()
+                de.aidadventure.server.model.RuntimeFragmentDefinition("next match", "next fragment")
+            }
+    }
+
+    private fun blockingResolverAfterCurrentFragment() = BlockingResolverAfterCurrentFragment()
+
     private fun warmupRequest() = WarmupRequest("live-1", "configured-llama-cpp", 8081, "# Scenario", emptyList())
 
     private class FakeRegistry : PrefillRegistry {
@@ -423,6 +485,9 @@ class ApplicationTest {
     private class FakeCoordinator : PrefillCoordinator {
         val prefillRequests = mutableListOf<PrefillRequest>()
         val warmupRequests = mutableListOf<WarmupRequest>()
+        val rerankRequests = mutableListOf<WarmupRequest>()
+        val rerankCandidates = mutableListOf<de.aidadventure.server.model.RuntimeFragmentDefinition?>()
+        val rerankCompleted = CompletableDeferred<Unit>()
         val turnRequests = mutableListOf<TurnRequest>()
         var submitFailure: Throwable? = null
         var beginTurnFailure: Throwable? = null
@@ -436,6 +501,33 @@ class ApplicationTest {
         override suspend fun warmup(request: WarmupRequest, requestId: String): PrefillDisposition {
             warmupRequests += request
             return PrefillDisposition.STARTED
+        }
+
+        override suspend fun rerankAndWarmup(
+            request: WarmupRequest,
+            candidate: de.aidadventure.server.model.RuntimeFragmentDefinition,
+            requestId: String,
+        ): PrefillDisposition {
+            rerankRequests += request
+            rerankCandidates += candidate
+            return PrefillDisposition.STARTED
+        }
+
+        override suspend fun reserveRerank(
+            request: WarmupRequest,
+            requestId: String,
+        ): de.aidadventure.server.prefill.RerankReservation {
+            rerankRequests += request
+            return de.aidadventure.server.prefill.RerankReservation(1)
+        }
+
+        override suspend fun completeReservedRerank(
+            reservation: de.aidadventure.server.prefill.RerankReservation,
+            candidate: de.aidadventure.server.model.RuntimeFragmentDefinition?,
+        ): Boolean {
+            rerankCandidates += candidate
+            rerankCompleted.complete(Unit)
+            return true
         }
 
         override suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent> {

@@ -83,6 +83,39 @@ class PrefillCoordinatorTest {
     }
 
     @Test
+    fun `reserved reranking queues a later prefill until canonical warmup completes`() = runBlocking {
+        val fake = ControllableGateway(score = { "5" })
+        val coordinator = SessionPrefillCoordinator(fake)
+        val reservation = requireNotNull(coordinator.reserveRerank(warmup(), "request-42"))
+
+        assertEquals(PrefillDisposition.QUEUED, coordinator.submit(prefill(1, "follow the bell")))
+        assertTrue(coordinator.completeReservedRerank(reservation, candidate()))
+        fake.awaitWarmup()
+        fake.completeWarmup()
+        fake.awaitPrefill(1)
+
+        assertEquals(fake.scoreSlots.single(), fake.warmupSlots.single())
+        assertEquals(fake.warmupSlots.single(), fake.prefillSlots.single())
+        coordinator.close()
+    }
+
+    @Test
+    fun `reserved reranking without a candidate warms only canonical history`() = runBlocking {
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake)
+        val request = warmup(listOf(ChatEntry("player", "look")))
+        val reservation = requireNotNull(coordinator.reserveRerank(request, "request-42"))
+
+        assertTrue(coordinator.completeReservedRerank(reservation, null))
+        fake.awaitWarmup()
+
+        assertEquals(request.history, fake.warmupRequests.single().history)
+        assertTrue(fake.scoreSlots.isEmpty())
+        fake.completeWarmup()
+        coordinator.close()
+    }
+
+    @Test
     fun `failed reranking releases slot and reports only safe failure fields`() = runBlocking {
         val failures = mutableListOf<WarmupFailure>()
         val fake = ControllableGateway(score = { error("secret scenario and game history") })

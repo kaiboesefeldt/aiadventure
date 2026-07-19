@@ -48,6 +48,13 @@ private fun PrefillRequest.asTurnRequest() = TurnRequest(
 
 data class CoordinatorKey(val sessionId: String, val modelId: String, val port: Int)
 
+class RerankReservation internal constructor(internal val generation: Long) {
+    private val candidate = CompletableDeferred<RuntimeFragmentDefinition?>()
+
+    internal suspend fun awaitCandidate(): RuntimeFragmentDefinition? = candidate.await()
+    internal fun complete(candidate: RuntimeFragmentDefinition?): Boolean = this.candidate.complete(candidate)
+}
+
 internal data class CoordinatorLeaseDiagnostic(
     val coordinatorId: String,
     val transition: String,
@@ -73,6 +80,11 @@ interface PrefillCoordinator {
         candidate: RuntimeFragmentDefinition,
         requestId: String = "unknown",
     ): PrefillDisposition = error("Fragment reranking is not supported by this coordinator.")
+    suspend fun reserveRerank(request: WarmupRequest, requestId: String = "unknown"): RerankReservation? = null
+    suspend fun completeReservedRerank(
+        reservation: RerankReservation,
+        candidate: RuntimeFragmentDefinition?,
+    ): Boolean = false
     suspend fun resolvedTurnFor(request: TurnRequest): ResolvedTurn? = null
     suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent>
     fun tryBeginIdleClose(): Boolean
@@ -219,26 +231,55 @@ internal class SessionPrefillCoordinator(
 
         when (val current = state) {
             State.Idle -> {
-                startRerankingLocked(request, candidate, requestId)
+                startRerankingLocked(request, requestId).reservation.complete(candidate)
                 PrefillDisposition.STARTED
             }
 
             is State.Prefilling -> PrefillDisposition.STALE
 
             is State.Ready -> {
-                startRerankingLocked(request, candidate, requestId, current.lease)
+                startRerankingLocked(request, requestId, current.lease).reservation.complete(candidate)
                 PrefillDisposition.STARTED
             }
 
             is State.ReleasePending -> {
                 releaseLeaseLocked(current.lease)
                 state = State.Idle
-                startRerankingLocked(request, candidate, requestId)
+                startRerankingLocked(request, requestId).reservation.complete(candidate)
                 PrefillDisposition.STARTED
             }
 
             is State.Turning, is State.TurnWaiting -> PrefillDisposition.TURN_IN_PROGRESS
         }
+    }
+
+    override suspend fun reserveRerank(request: WarmupRequest, requestId: String): RerankReservation? = mutex.withLock {
+        if (closed || state is State.Turning || state is State.TurnWaiting || state is State.Prefilling) {
+            return@withLock null
+        }
+
+        val operation = when (val current = state) {
+            State.Idle -> startRerankingLocked(request, requestId)
+            is State.Ready -> startRerankingLocked(request, requestId, current.lease)
+            is State.ReleasePending -> {
+                releaseLeaseLocked(current.lease)
+                state = State.Idle
+                startRerankingLocked(request, requestId)
+            }
+
+            is State.Prefilling, is State.Turning, is State.TurnWaiting -> return@withLock null
+        }
+        operation.reservation
+    }
+
+    override suspend fun completeReservedRerank(
+        reservation: RerankReservation,
+        candidate: RuntimeFragmentDefinition?,
+    ): Boolean = mutex.withLock {
+        val current = state as? State.Prefilling ?: return@withLock false
+        val operation = current.operation as? RerankingOperation ?: return@withLock false
+        if (operation.reservation !== reservation) return@withLock false
+        reservation.complete(candidate)
     }
 
     override suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent> = mutex.withLock {
@@ -354,26 +395,28 @@ internal class SessionPrefillCoordinator(
 
     private fun startRerankingLocked(
         request: WarmupRequest,
-        candidate: RuntimeFragmentDefinition,
         requestId: String,
         existingLease: Lease? = null,
-    ) {
+    ): RerankingOperation {
         val lease = existingLease ?: acquireLease(request.llamaCppPort)
-        val operation = RerankingOperation(++generation)
+        val operation = RerankingOperation(RerankReservation(++generation))
         state = State.Prefilling(lease, operation, resolvedTurn = null, pending = null)
         operation.job = scope.launch(start = CoroutineStart.LAZY) {
             val failure = try {
-                val relevanceRequest = FragmentRelevanceRequest(
-                    sessionId = request.sessionId,
-                    modelId = request.modelId,
-                    llamaCppPort = request.llamaCppPort,
-                    scenarioMarkdown = request.scenarioMarkdown,
-                    history = request.history,
-                    candidateKey = candidate.matchText,
-                )
-                val score = parseFragmentRelevance(gateway.scoreFragment(relevanceRequest, lease.slot))
+                val candidate = operation.reservation.awaitCandidate()
+                val score = candidate?.let {
+                    val relevanceRequest = FragmentRelevanceRequest(
+                        sessionId = request.sessionId,
+                        modelId = request.modelId,
+                        llamaCppPort = request.llamaCppPort,
+                        scenarioMarkdown = request.scenarioMarkdown,
+                        history = request.history,
+                        candidateKey = it.matchText,
+                    )
+                    parseFragmentRelevance(gateway.scoreFragment(relevanceRequest, lease.slot))
+                }
                 val canonicalWarmup = request.copy(
-                    history = if (score != null && score >= 5) {
+                    history = if (candidate != null && score != null && score >= 5) {
                         request.history + ChatEntry("runtime-fragment", candidate.fragment)
                     } else {
                         request.history
@@ -390,6 +433,7 @@ internal class SessionPrefillCoordinator(
             failure?.let { onWarmupFailure(WarmupFailure(requestId, "rerank", it.javaClass.simpleName)) }
         }
         operation.job.start()
+        return operation
     }
 
     private fun startTurnLocked(request: TurnRequest, existingLease: Lease? = null): Flow<TurnStreamEvent> {
@@ -621,7 +665,8 @@ internal class SessionPrefillCoordinator(
         override lateinit var job: Job
     }
 
-    private class RerankingOperation(override val generation: Long) : Operation {
+    private class RerankingOperation(val reservation: RerankReservation) : Operation {
+        override val generation: Long get() = reservation.generation
         override lateinit var job: Job
     }
 
