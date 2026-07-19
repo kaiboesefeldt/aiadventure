@@ -6,6 +6,9 @@ import de.aidadventure.server.llamacpp.LlamaCppGateway
 import de.aidadventure.server.llamacpp.LlamaCppSlot
 import de.aidadventure.server.model.PrefillDisposition
 import de.aidadventure.server.model.PrefillRequest
+import de.aidadventure.server.model.FragmentRelevanceRequest
+import de.aidadventure.server.model.RuntimeFragmentDefinition
+import de.aidadventure.server.model.ChatEntry
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.model.WarmupRequest
@@ -65,6 +68,11 @@ interface PrefillCoordinator {
         request: WarmupRequest,
         requestId: String = "unknown",
     ): PrefillDisposition = error("Warmup is not supported by this coordinator.")
+    suspend fun rerankAndWarmup(
+        request: WarmupRequest,
+        candidate: RuntimeFragmentDefinition,
+        requestId: String = "unknown",
+    ): PrefillDisposition = error("Fragment reranking is not supported by this coordinator.")
     suspend fun resolvedTurnFor(request: TurnRequest): ResolvedTurn? = null
     suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent>
     fun tryBeginIdleClose(): Boolean
@@ -77,6 +85,8 @@ internal interface PrefillGateway {
     suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics
     suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics =
         error("Warmup is not supported by this gateway.")
+    suspend fun scoreFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String =
+        error("Fragment scoring is not supported by this gateway.")
     fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent>
 }
 
@@ -91,6 +101,9 @@ internal class LlamaCppPrefillGateway(
     override suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics = gateway.prefill(request, slot)
 
     override suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics = gateway.warmup(request, slot)
+
+    override suspend fun scoreFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String =
+        gateway.scoreFragment(request, slot)
 
     override fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> = gateway.stream(request, slot)
 }
@@ -188,6 +201,39 @@ internal class SessionPrefillCoordinator(
                 releaseLeaseLocked(current.lease)
                 state = State.Idle
                 startWarmupLocked(request, requestId)
+                PrefillDisposition.STARTED
+            }
+
+            is State.Turning, is State.TurnWaiting -> PrefillDisposition.TURN_IN_PROGRESS
+        }
+    }
+
+    override suspend fun rerankAndWarmup(
+        request: WarmupRequest,
+        candidate: RuntimeFragmentDefinition,
+        requestId: String,
+    ): PrefillDisposition = mutex.withLock {
+        if (closed || state is State.Turning || state is State.TurnWaiting) {
+            return@withLock PrefillDisposition.TURN_IN_PROGRESS
+        }
+
+        when (val current = state) {
+            State.Idle -> {
+                startRerankingLocked(request, candidate, requestId)
+                PrefillDisposition.STARTED
+            }
+
+            is State.Prefilling -> PrefillDisposition.STALE
+
+            is State.Ready -> {
+                startRerankingLocked(request, candidate, requestId, current.lease)
+                PrefillDisposition.STARTED
+            }
+
+            is State.ReleasePending -> {
+                releaseLeaseLocked(current.lease)
+                state = State.Idle
+                startRerankingLocked(request, candidate, requestId)
                 PrefillDisposition.STARTED
             }
 
@@ -306,6 +352,46 @@ internal class SessionPrefillCoordinator(
         operation.job.start()
     }
 
+    private fun startRerankingLocked(
+        request: WarmupRequest,
+        candidate: RuntimeFragmentDefinition,
+        requestId: String,
+        existingLease: Lease? = null,
+    ) {
+        val lease = existingLease ?: acquireLease(request.llamaCppPort)
+        val operation = RerankingOperation(++generation)
+        state = State.Prefilling(lease, operation, resolvedTurn = null, pending = null)
+        operation.job = scope.launch(start = CoroutineStart.LAZY) {
+            val failure = try {
+                val relevanceRequest = FragmentRelevanceRequest(
+                    sessionId = request.sessionId,
+                    modelId = request.modelId,
+                    llamaCppPort = request.llamaCppPort,
+                    scenarioMarkdown = request.scenarioMarkdown,
+                    history = request.history,
+                    candidateKey = candidate.matchText,
+                )
+                val score = parseFragmentRelevance(gateway.scoreFragment(relevanceRequest, lease.slot))
+                val canonicalWarmup = request.copy(
+                    history = if (score != null && score >= 5) {
+                        request.history + ChatEntry("runtime-fragment", candidate.fragment)
+                    } else {
+                        request.history
+                    },
+                )
+                gateway.warmup(canonicalWarmup, lease.slot)
+                null
+            } catch (_: CancellationException) {
+                return@launch
+            } catch (failure: Throwable) {
+                failure
+            }
+            prefillFinished(lease, operation, failure)
+            failure?.let { onWarmupFailure(WarmupFailure(requestId, "rerank", it.javaClass.simpleName)) }
+        }
+        operation.job.start()
+    }
+
     private fun startTurnLocked(request: TurnRequest, existingLease: Lease? = null): Flow<TurnStreamEvent> {
         val lease = existingLease ?: acquireLease(request.llamaCppPort)
         val execution = TurnExecution(request).also(TurnExecution::initialize)
@@ -315,7 +401,7 @@ internal class SessionPrefillCoordinator(
         return execution.flow()
     }
 
-    private suspend fun prefillFinished(lease: Lease, operation: PrefillOperation, failure: Throwable?) {
+    private suspend fun prefillFinished(lease: Lease, operation: Operation, failure: Throwable?) {
         mutex.withLock {
             if (closed || operation.generation != generation) return@withLock
 
@@ -474,7 +560,7 @@ internal class SessionPrefillCoordinator(
         data object Idle : State
         data class Prefilling(
             val lease: Lease,
-            val operation: PrefillOperation,
+            val operation: Operation,
             val resolvedTurn: ResolvedTurn?,
             val pending: PendingPrefill?,
         ) : State
@@ -482,7 +568,7 @@ internal class SessionPrefillCoordinator(
         data class Ready(val lease: Lease, val resolvedTurn: ResolvedTurn?) : State
         data class TurnWaiting(
             val lease: Lease,
-            val operation: PrefillOperation,
+            val operation: Operation,
             val resolvedTurn: ResolvedTurn?,
             val execution: TurnExecution,
         ) : State
@@ -526,8 +612,17 @@ internal class SessionPrefillCoordinator(
         var released = false
     }
 
-    private class PrefillOperation(val generation: Long) {
-        lateinit var job: Job
+    private interface Operation {
+        val generation: Long
+        var job: Job
+    }
+
+    private class PrefillOperation(override val generation: Long) : Operation {
+        override lateinit var job: Job
+    }
+
+    private class RerankingOperation(override val generation: Long) : Operation {
+        override lateinit var job: Job
     }
 
     private data class PendingPrefill(val request: PrefillRequest, val resolvedTurn: ResolvedTurn)

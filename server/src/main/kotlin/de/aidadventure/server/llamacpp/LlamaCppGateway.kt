@@ -5,6 +5,7 @@ import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.model.WarmupRequest
+import de.aidadventure.server.model.FragmentRelevanceRequest
 import dev.langchain4j.data.message.AiMessage
 import dev.langchain4j.data.message.ChatMessage
 import dev.langchain4j.data.message.SystemMessage
@@ -105,6 +106,17 @@ class LlamaCppGateway(
         CacheMetrics(response.tokensCached, response.tokensEvaluated).also { metrics ->
             logDiagnostic("completed", port, slot, prompt, metrics)
         }
+    }
+
+    suspend fun scoreFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String = runInterruptible {
+        val port = requirePort(request.llamaCppPort)
+        val prompt = applyTemplate(port, promptFactory.buildRelevance(request))
+        logDiagnostic("prepared", port, slot, prompt)
+        val response = postCompletion(
+            port,
+            CompletionRequest(prompt, slot.id, predictedTokens = 1, stream = false),
+        )
+        requireNotNull(response.content) { "llama.cpp fragment relevance response did not include content." }
     }
 
     fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> = callbackFlow {
@@ -362,6 +374,7 @@ class LlamaCppGateway(
 
     @Serializable
     private data class NativeCompletionResponse(
+        val content: String? = null,
         @SerialName("tokens_cached") val tokensCached: Int? = null,
         @SerialName("tokens_evaluated") val tokensEvaluated: Int? = null,
     )
