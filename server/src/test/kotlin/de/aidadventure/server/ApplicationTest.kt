@@ -174,6 +174,25 @@ class ApplicationTest {
             resolver.allowRerank.complete(Unit)
         }
     }
+
+    @Test
+    fun `turn without done does not reserve background reranking`() = testApplication {
+        val registry = FakeRegistry().also {
+            it.coordinator.turnEvents = flowOf(TurnStreamEvent.Token("The door opens."))
+        }
+        application {
+            adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolver("current fragment"))
+        }
+        configureJsonClient()
+
+        val response = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest(history = visiblePair()))
+        }
+
+        assertContains(response.bodyAsText(), "event: token")
+        assertTrue(registry.coordinator.rerankRequests.isEmpty())
+    }
     @Test
     fun `health returns ok`() = testApplication {
         application { adventureModule(prefillRegistry = FakeRegistry()) }
@@ -489,6 +508,7 @@ class ApplicationTest {
         val rerankCandidates = mutableListOf<de.aidadventure.server.model.RuntimeFragmentDefinition?>()
         val rerankCompleted = CompletableDeferred<Unit>()
         val turnRequests = mutableListOf<TurnRequest>()
+        var turnEvents: Flow<TurnStreamEvent>? = null
         var submitFailure: Throwable? = null
         var beginTurnFailure: Throwable? = null
 
@@ -533,7 +553,7 @@ class ApplicationTest {
         override suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent> {
             turnRequests += request
             beginTurnFailure?.let { throw it }
-            return flowOf(
+            return turnEvents ?: flowOf(
                 TurnStreamEvent.Token("The door opens."),
                 TurnStreamEvent.Done(TurnMetrics(null, 2, 1)),
             )

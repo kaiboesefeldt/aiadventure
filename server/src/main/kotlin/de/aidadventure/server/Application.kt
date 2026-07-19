@@ -194,7 +194,8 @@ fun Application.adventureModule(
                             is TurnStreamEvent.Done -> completedMetrics = event.metrics
                         }
                     }
-                    if (generated.isNotEmpty()) {
+                    val metrics = completedMetrics
+                    if (generated.isNotEmpty() && metrics != null) {
                         val requestId = call.callId ?: "unknown"
                         val completedHistory = resolved.request.history +
                             ChatEntry("player", resolved.request.playerAction) +
@@ -207,45 +208,51 @@ fun Application.adventureModule(
                             history = completedHistory,
                             runtimeFragments = resolved.request.runtimeFragments,
                         )
-                        val reservation = try {
-                            coordinator.reserveRerank(warmupRequest, requestId)
-                        } catch (failure: Exception) {
-                            if (failure is CancellationException) throw failure
-                            logger.warn(
-                                "requestId={} operation={} failure={}",
-                                requestId,
-                                "post_turn_fragment_rerank",
-                                failure.javaClass.simpleName,
-                            )
-                            null
-                        }
-                        completedMetrics?.let { metrics ->
+                        var reservation: de.aidadventure.server.prefill.RerankReservation? = null
+                        try {
+                            reservation = try {
+                                coordinator.reserveRerank(warmupRequest, requestId)
+                            } catch (failure: Exception) {
+                                if (failure is CancellationException) throw failure
+                                logger.warn(
+                                    "requestId={} operation={} failure={}",
+                                    requestId,
+                                    "post_turn_fragment_rerank",
+                                    failure.javaClass.simpleName,
+                                )
+                                null
+                            }
                             sse("done", eventJson.encodeToString(StreamDone(metrics)))
-                        }
-                        reservation?.let { rerankReservation ->
-                            postTurnScope.launch {
-                                var candidate: de.aidadventure.server.model.RuntimeFragmentDefinition? = null
-                                try {
-                                    candidate = runtimeFragmentResolver.resolve(completedHistory, resolved.request.runtimeFragments)
-                                } catch (failure: Exception) {
-                                    if (failure is CancellationException) throw failure
-                                    logger.warn(
-                                        "requestId={} operation={} failure={}",
-                                        requestId,
-                                        "post_turn_fragment_rerank",
-                                        failure.javaClass.simpleName,
-                                    )
-                                } finally {
-                                    withContext(NonCancellable) {
-                                        coordinator.completeReservedRerank(rerankReservation, candidate)
+                            reservation?.let { rerankReservation ->
+                                postTurnScope.launch {
+                                    var candidate: de.aidadventure.server.model.RuntimeFragmentDefinition? = null
+                                    try {
+                                        candidate = runtimeFragmentResolver.resolve(completedHistory, resolved.request.runtimeFragments)
+                                    } catch (failure: Exception) {
+                                        if (failure is CancellationException) throw failure
+                                        logger.warn(
+                                            "requestId={} operation={} failure={}",
+                                            requestId,
+                                            "post_turn_fragment_rerank",
+                                            failure.javaClass.simpleName,
+                                        )
+                                    } finally {
+                                        withContext(NonCancellable) {
+                                            coordinator.completeReservedRerank(rerankReservation, candidate)
+                                        }
                                     }
+                                }.invokeOnCompletion { rerankReservation.complete(null) }
+                            }
+                        } catch (failure: Exception) {
+                            reservation?.let { rerankReservation ->
+                                withContext(NonCancellable) {
+                                    coordinator.completeReservedRerank(rerankReservation, null)
                                 }
-                            }.invokeOnCompletion { rerankReservation.complete(null) }
+                            }
+                            throw failure
                         }
-                    } else {
-                        completedMetrics?.let { metrics ->
-                            sse("done", eventJson.encodeToString(StreamDone(metrics)))
-                        }
+                    } else if (metrics != null) {
+                        sse("done", eventJson.encodeToString(StreamDone(metrics)))
                     }
                 } catch (_: ClosedWriteChannelException) {
                     logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)
