@@ -1,4 +1,6 @@
 import org.jetbrains.kotlin.gradle.targets.js.npm.NpmExtension
+import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsEnvSpec
+import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsPlugin
 
 plugins {
     kotlin("jvm") version "2.3.20" apply false
@@ -8,3 +10,9 @@ plugins {
 
 // webpack-cli 6 requires commander 12; pin the root npm resolution accordingly.
 NpmExtension[rootProject].override("commander", "12.1.0")
+
+allprojects {
+    project.plugins.withType<NodeJsPlugin> {
+        project.the<NodeJsEnvSpec>().version = "22.0.0"
+    }
+}

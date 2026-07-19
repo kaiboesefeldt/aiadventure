@@ -63,7 +63,7 @@ import org.slf4j.LoggerFactory
 
 fun main(args: Array<String>) {
     val config = ServerRuntimeConfig.from(System.getenv(), args)
-    System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", config.logLevel)
+    ServerLogging.configure(config.logLevel)
     embeddedServer(Netty, port = config.port, host = config.host) {
         adventureModule(llamaCppPort = config.llamaCppPort)
     }.start(wait = true)
