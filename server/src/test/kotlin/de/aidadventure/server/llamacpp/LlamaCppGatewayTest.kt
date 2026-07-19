@@ -29,6 +29,46 @@ import kotlin.test.assertTrue
 
 class LlamaCppGatewayTest {
     @Test
+    fun `traces incremental prompts and one final response for a streamed turn`() = runBlocking {
+        nativeServer(streamContents = listOf("Hello ", "world")).use { server ->
+            val trace = RecordingTraceLogger()
+            val gateway = LlamaCppGateway(promptFactory = PromptFactory(), traceLogger = trace)
+            val firstRequest = request(server.port)
+
+            gateway.prefill(firstRequest, LlamaCppSlot(2))
+            gateway.stream(firstRequest, LlamaCppSlot(2)).toList()
+            gateway.prefill(
+                firstRequest.copy(
+                    history = firstRequest.history + listOf(
+                        ChatEntry("player", firstRequest.playerAction),
+                        ChatEntry("game-master", "Hello world"),
+                    ),
+                    playerAction = "Continue",
+                ),
+                LlamaCppSlot(2),
+            )
+
+            assertEquals(
+                listOf(
+                    LlmTraceMessage("system", PromptFactory.GAME_MASTER_INSTRUCTION),
+                    LlmTraceMessage("system", "# Forest"),
+                    LlmTraceMessage("user", "Look around"),
+                    LlmTraceMessage("assistant", "Misty trees surround you."),
+                    LlmTraceMessage("user", "Follow the path"),
+                ),
+                trace.prompts.first().historyDelta,
+            )
+            assertTrue(trace.prompts[1].historyDelta.isEmpty())
+            assertEquals("Hello world", trace.finalResponses.single().content)
+            assertTrue(trace.entries.none { it.kind == "token" })
+            assertEquals(
+                listOf(LlmTraceMessage("user", "Continue")),
+                trace.prompts.last().historyDelta,
+            )
+        }
+    }
+
+    @Test
     fun `fragment scoring generates exactly one token on the retained slot`() = runBlocking {
         nativeServer(completionContent = "7").use { server ->
             val gateway = LlamaCppGateway(promptFactory = PromptFactory())
@@ -178,9 +218,10 @@ class LlamaCppGatewayTest {
         templatePrompt: String = "templated prompt",
         completionDelayMillis: Long = 0,
         completionContent: String? = null,
+        streamContents: List<String> = listOf("Hello"),
     ): NativeServer {
         val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
-        return NativeServer(server, templatePrompt, completionDelayMillis, completionContent).also { it.start() }
+        return NativeServer(server, templatePrompt, completionDelayMillis, completionContent, streamContents).also { it.start() }
     }
 
     private class NativeServer(
@@ -188,6 +229,7 @@ class LlamaCppGatewayTest {
         private val templatePrompt: String,
         private val completionDelayMillis: Long,
         private val completionContent: String?,
+        private val streamContents: List<String>,
     ) : AutoCloseable {
         private val executor = Executors.newSingleThreadExecutor()
         val paths = mutableListOf<String>()
@@ -215,7 +257,9 @@ class LlamaCppGatewayTest {
                     exchange.responseHeaders.add("Content-Type", "text/event-stream")
                     exchange.sendResponseHeaders(200, 0)
                     exchange.responseBody.bufferedWriter().use { writer ->
-                        writer.write("data: {\"content\":\"Hello\",\"stop\":false}\n\n")
+                        streamContents.forEach { content ->
+                            writer.write("data: {\"content\":\"$content\",\"stop\":false}\n\n")
+                        }
                         writer.write("data: {\"content\":\"\",\"stop\":true,\"tokens_cached\":17,\"tokens_evaluated\":20}\n\n")
                         writer.flush()
                     }
@@ -238,6 +282,41 @@ class LlamaCppGatewayTest {
         }
     }
 
+}
+
+private class RecordingTraceLogger : LlmTraceLogger {
+    override val isTraceEnabled = true
+    val entries = mutableListOf<TraceEntry>()
+    val prompts get() = entries.filterIsInstance<TraceEntry.Prompt>()
+    val finalResponses get() = entries.filterIsInstance<TraceEntry.FinalResponse>()
+
+    override fun prompt(operation: String, sessionId: String, historyDelta: List<LlmTraceMessage>) {
+        entries += TraceEntry.Prompt(operation, historyDelta)
+    }
+
+    override fun completion(operation: String, sessionId: String, metrics: CacheMetrics) {
+        entries += TraceEntry.Completion(operation)
+    }
+
+    override fun finalResponse(operation: String, sessionId: String, content: String) {
+        entries += TraceEntry.FinalResponse(operation, content)
+    }
+}
+
+private sealed interface TraceEntry {
+    val kind: String
+
+    data class Prompt(val operation: String, val historyDelta: List<LlmTraceMessage>) : TraceEntry {
+        override val kind = "prompt"
+    }
+
+    data class FinalResponse(val operation: String, val content: String) : TraceEntry {
+        override val kind = "finalResponse"
+    }
+
+    data class Completion(val operation: String) : TraceEntry {
+        override val kind = "completion"
+    }
 }
 
 fun HttpExchange.respondJson(body: String) {

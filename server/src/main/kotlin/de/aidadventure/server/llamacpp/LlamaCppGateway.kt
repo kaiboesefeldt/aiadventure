@@ -38,12 +38,87 @@ import org.slf4j.LoggerFactory
 
 data class CacheMetrics(val cachedTokens: Int?, val evaluatedTokens: Int?)
 
+internal interface LlmTraceLogger {
+    val isTraceEnabled: Boolean
+
+    fun prompt(operation: String, sessionId: String, historyDelta: List<LlmTraceMessage>)
+
+    fun completion(operation: String, sessionId: String, metrics: CacheMetrics)
+
+    fun finalResponse(operation: String, sessionId: String, content: String)
+}
+
+private class Slf4jLlmTraceLogger(private val logger: org.slf4j.Logger) : LlmTraceLogger {
+    override val isTraceEnabled: Boolean get() = logger.isTraceEnabled
+
+    override fun prompt(operation: String, sessionId: String, historyDelta: List<LlmTraceMessage>) {
+        logger.trace(
+            "operation=llama_trace phase=prompt operation={} sessionId={} historyDelta={}",
+            operation,
+            sessionId,
+            historyDelta.joinToString(prefix = "[", postfix = "]") { message ->
+                "{role=\"${message.role.escapeForTrace()}\",content=\"${message.content.escapeForTrace()}\"}"
+            },
+        )
+    }
+
+    override fun completion(operation: String, sessionId: String, metrics: CacheMetrics) {
+        logger.trace(
+            "operation=llama_trace phase=completion operation={} sessionId={} tokensCached={} tokensEvaluated={}",
+            operation,
+            sessionId,
+            metrics.cachedTokens,
+            metrics.evaluatedTokens,
+        )
+    }
+
+    override fun finalResponse(operation: String, sessionId: String, content: String) {
+        logger.trace(
+            "operation=llama_trace phase=final_response operation={} sessionId={} content=\"{}\"",
+            operation,
+            sessionId,
+            content.escapeForTrace(),
+        )
+    }
+
+    private fun String.escapeForTrace(): String = buildString(length) {
+        this@escapeForTrace.forEach { character ->
+            append(
+                when (character) {
+                    '\\' -> "\\\\"
+                    '\n' -> "\\n"
+                    '\r' -> "\\r"
+                    '\t' -> "\\t"
+                    else -> character.toString()
+                },
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalSerializationApi::class)
-class LlamaCppGateway(
-    private val httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(DEFAULT_TIMEOUT).build(),
-    private val promptFactory: PromptFactory = PromptFactory(),
-    private val requestTimeout: Duration = DEFAULT_TIMEOUT,
+class LlamaCppGateway private constructor(
+    private val httpClient: HttpClient,
+    private val promptFactory: PromptFactory,
+    private val requestTimeout: Duration,
+    private val traceLogger: LlmTraceLogger,
+    @Suppress("UNUSED_PARAMETER") private val internalConstructorMarker: Unit,
 ) {
+    constructor(
+        httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(DEFAULT_TIMEOUT).build(),
+        promptFactory: PromptFactory = PromptFactory(),
+        requestTimeout: Duration = DEFAULT_TIMEOUT,
+    ) : this(httpClient, promptFactory, requestTimeout, Slf4jLlmTraceLogger(logger), Unit)
+
+    internal constructor(
+        httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(DEFAULT_TIMEOUT).build(),
+        promptFactory: PromptFactory = PromptFactory(),
+        requestTimeout: Duration = DEFAULT_TIMEOUT,
+        traceLogger: LlmTraceLogger,
+    ) : this(httpClient, promptFactory, requestTimeout, traceLogger, Unit)
+
+    private val transcript = LlmTraceTranscript()
+
     fun availableModels(port: Int): List<String> {
         val response = httpClient.send(
             HttpRequest.newBuilder(endpoint(port, "/v1/models"))
@@ -84,7 +159,7 @@ class LlamaCppGateway(
 
     suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics = runInterruptible {
         val port = requirePort(request.llamaCppPort)
-        val prompt = applyTemplate(request)
+        val prompt = applyTemplate(request.sessionId, "prefill", request.llamaCppPort, promptFactory.build(request))
         logDiagnostic("prepared", port, slot, prompt)
         val response = postCompletion(
             port,
@@ -92,12 +167,13 @@ class LlamaCppGateway(
         )
         CacheMetrics(response.tokensCached, response.tokensEvaluated).also { metrics ->
             logDiagnostic("completed", port, slot, prompt, metrics)
+            traceCompletion("prefill", request.sessionId, metrics)
         }
     }
 
     suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics = runInterruptible {
         val port = requirePort(request.llamaCppPort)
-        val prompt = applyTemplate(request)
+        val prompt = applyTemplate(request.sessionId, "warmup", request.llamaCppPort, promptFactory.buildWarmup(request))
         logDiagnostic("prepared", port, slot, prompt)
         val response = postCompletion(
             port,
@@ -105,18 +181,23 @@ class LlamaCppGateway(
         )
         CacheMetrics(response.tokensCached, response.tokensEvaluated).also { metrics ->
             logDiagnostic("completed", port, slot, prompt, metrics)
+            traceCompletion("warmup", request.sessionId, metrics)
         }
     }
 
     suspend fun scoreFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String = runInterruptible {
         val port = requirePort(request.llamaCppPort)
-        val prompt = applyTemplate(port, promptFactory.buildRelevance(request))
+        val prompt = applyTemplate(request.sessionId, "score_fragment", port, promptFactory.buildRelevance(request))
         logDiagnostic("prepared", port, slot, prompt)
         val response = postCompletion(
             port,
             CompletionRequest(prompt, slot.id, predictedTokens = 1, stream = false),
         )
-        requireNotNull(response.content) { "llama.cpp fragment relevance response did not include content." }
+        requireNotNull(response.content) { "llama.cpp fragment relevance response did not include content." }.also { content ->
+            val metrics = CacheMetrics(response.tokensCached, response.tokensEvaluated)
+            traceCompletion("score_fragment", request.sessionId, metrics)
+            traceFinalResponse("score_fragment", request.sessionId, content)
+        }
     }
 
     fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> = callbackFlow {
@@ -124,7 +205,7 @@ class LlamaCppGateway(
         val reader = launch(Dispatchers.IO) {
             try {
                 val port = requirePort(request.llamaCppPort)
-                val prompt = applyTemplate(request)
+                val prompt = applyTemplate(request.sessionId, "turn", request.llamaCppPort, promptFactory.build(request))
                 logDiagnostic("prepared", port, slot, prompt)
                 val response = runInterruptible {
                     val received = httpClient.send(
@@ -150,6 +231,7 @@ class LlamaCppGateway(
                 }
 
                 var completed = false
+                val responseText = StringBuilder()
                 val lines = response.body().bufferedReader()
                 while (true) {
                     val line = lines.readLine() ?: break
@@ -160,10 +242,15 @@ class LlamaCppGateway(
                     if (chunk.error != null) {
                         throw IllegalStateException("llama.cpp completion returned an error.")
                     }
-                    chunk.content?.takeIf { it.isNotEmpty() }?.let { token -> send(TurnStreamEvent.Token(token)) }
+                    chunk.content?.takeIf { it.isNotEmpty() }?.let { token ->
+                        responseText.append(token)
+                        send(TurnStreamEvent.Token(token))
+                    }
                     if (chunk.stop) {
                         val metrics = CacheMetrics(chunk.tokensCached, chunk.tokensEvaluated)
                         logDiagnostic("completed", port, slot, prompt, metrics)
+                        traceCompletion("turn", request.sessionId, metrics)
+                        traceFinalResponse("turn", request.sessionId, responseText.toString())
                         send(TurnStreamEvent.Done(TurnMetrics(null, metrics.evaluatedTokens, metrics.cachedTokens)))
                         completed = true
                         close()
@@ -192,9 +279,11 @@ class LlamaCppGateway(
 
     fun stream(request: TurnRequest): Flow<TurnStreamEvent> {
         val port = requirePort(request.llamaCppPort)
+        val messages = promptFactory.build(request).map(::toOpenAiMessage)
+        tracePrompt("chat_completion", request.sessionId, messages)
         val payload = ChatCompletionRequest(
             model = request.modelId,
-            messages = promptFactory.build(request).map(::toOpenAiMessage),
+            messages = messages,
             stream = true,
         )
 
@@ -221,6 +310,7 @@ class LlamaCppGateway(
                     }
 
                     var completed = false
+                    val responseText = StringBuilder()
                     val lines = response.body().bufferedReader()
                     while (true) {
                         val line = lines.readLine() ?: break
@@ -228,6 +318,7 @@ class LlamaCppGateway(
 
                         val data = line.removePrefix("data:").trim()
                         if (data == "[DONE]") {
+                            traceFinalResponse("chat_completion", request.sessionId, responseText.toString())
                             send(TurnStreamEvent.Done(TurnMetrics(null, null, null)))
                             completed = true
                             close()
@@ -239,7 +330,10 @@ class LlamaCppGateway(
                             throw IllegalStateException("llama.cpp chat completion returned an error.")
                         }
                         chunk.choices.firstOrNull()?.delta?.content
-                            ?.let { token -> send(TurnStreamEvent.Token(token)) }
+                            ?.let { token ->
+                                responseText.append(token)
+                                send(TurnStreamEvent.Token(token))
+                            }
                     }
                     if (!completed) {
                         close(IllegalStateException("llama.cpp chat completion ended before [DONE]."))
@@ -264,22 +358,21 @@ class LlamaCppGateway(
 
     private fun endpoint(port: Int, path: String): URI = URI.create("http://localhost:${requirePort(port)}$path")
 
-    private fun applyTemplate(request: TurnRequest): String {
-        return applyTemplate(request.llamaCppPort, promptFactory.build(request))
-    }
-
-    private fun applyTemplate(request: WarmupRequest): String {
-        return applyTemplate(request.llamaCppPort, promptFactory.buildWarmup(request))
-    }
-
-    private fun applyTemplate(port: Int, messages: List<ChatMessage>): String {
+    private fun applyTemplate(
+        sessionId: String,
+        operation: String,
+        port: Int,
+        messages: List<ChatMessage>,
+    ): String {
+        val semanticMessages = messages.map(::toOpenAiMessage)
+        tracePrompt(operation, sessionId, semanticMessages)
         val response = httpClient.send(
             HttpRequest.newBuilder(endpoint(requirePort(port), "/apply-template"))
                 .timeout(requestTimeout)
                 .header("Content-Type", "application/json")
                 .POST(
                     HttpRequest.BodyPublishers.ofString(
-                        json.encodeToString(ApplyTemplateRequest(messages.map(::toOpenAiMessage))),
+                        json.encodeToString(ApplyTemplateRequest(semanticMessages)),
                     ),
                 )
                 .build(),
@@ -331,6 +424,27 @@ class LlamaCppGateway(
             metrics?.cachedTokens,
             metrics?.evaluatedTokens,
         )
+    }
+
+    private fun tracePrompt(operation: String, sessionId: String, messages: List<OpenAiMessage>) {
+        if (!traceLogger.isTraceEnabled) return
+
+        traceLogger.prompt(
+            operation,
+            sessionId,
+            transcript.nextPrompt(sessionId, messages.map { LlmTraceMessage(it.role, it.content) }),
+        )
+    }
+
+    private fun traceCompletion(operation: String, sessionId: String, metrics: CacheMetrics) {
+        if (traceLogger.isTraceEnabled) traceLogger.completion(operation, sessionId, metrics)
+    }
+
+    private fun traceFinalResponse(operation: String, sessionId: String, content: String) {
+        if (!traceLogger.isTraceEnabled) return
+
+        traceLogger.finalResponse(operation, sessionId, content)
+        transcript.recordFinalAssistantMessage(sessionId, content)
     }
 
     private fun requirePort(port: Int?): Int = requireNotNull(port) { "llama.cpp port is required." }
