@@ -57,7 +57,7 @@ private class Slf4jLlmTraceLogger(private val logger: org.slf4j.Logger) : LlmTra
             operation,
             sessionId,
             historyDelta.joinToString(prefix = "[", postfix = "]") { message ->
-                "{role=\"${message.role.escapeForTrace()}\",content=\"${message.content.escapeForTrace()}\"}"
+                "{role=\"${message.role.escapeForLlmTrace()}\",content=\"${message.content.escapeForLlmTrace()}\"}"
             },
         )
     }
@@ -77,22 +77,23 @@ private class Slf4jLlmTraceLogger(private val logger: org.slf4j.Logger) : LlmTra
             "operation=llama_trace phase=final_response operation={} sessionId={} content=\"{}\"",
             operation,
             sessionId,
-            content.escapeForTrace(),
+            content.escapeForLlmTrace(),
         )
     }
 
-    private fun String.escapeForTrace(): String = buildString(length) {
-        this@escapeForTrace.forEach { character ->
-            append(
-                when (character) {
-                    '\\' -> "\\\\"
-                    '\n' -> "\\n"
-                    '\r' -> "\\r"
-                    '\t' -> "\\t"
-                    else -> character.toString()
-                },
-            )
-        }
+}
+
+internal fun String.escapeForLlmTrace(): String = buildString(length) {
+    this@escapeForLlmTrace.forEach { character ->
+        append(
+            when (character) {
+                '\\' -> "\\\\"
+                '\n' -> "\\n"
+                '\r' -> "\\r"
+                '\t' -> "\\t"
+                else -> character.toString()
+            },
+        )
     }
 }
 
@@ -231,7 +232,7 @@ class LlamaCppGateway private constructor(
                 }
 
                 var completed = false
-                val responseText = StringBuilder()
+                var responseText: StringBuilder? = null
                 val lines = response.body().bufferedReader()
                 while (true) {
                     val line = lines.readLine() ?: break
@@ -243,14 +244,16 @@ class LlamaCppGateway private constructor(
                         throw IllegalStateException("llama.cpp completion returned an error.")
                     }
                     chunk.content?.takeIf { it.isNotEmpty() }?.let { token ->
-                        responseText.append(token)
+                        if (traceLogger.isTraceEnabled) {
+                            (responseText ?: StringBuilder().also { responseText = it }).append(token)
+                        }
                         send(TurnStreamEvent.Token(token))
                     }
                     if (chunk.stop) {
                         val metrics = CacheMetrics(chunk.tokensCached, chunk.tokensEvaluated)
                         logDiagnostic("completed", port, slot, prompt, metrics)
                         traceCompletion("turn", request.sessionId, metrics)
-                        traceFinalResponse("turn", request.sessionId, responseText.toString())
+                        responseText?.toString()?.let { traceFinalResponse("turn", request.sessionId, it) }
                         send(TurnStreamEvent.Done(TurnMetrics(null, metrics.evaluatedTokens, metrics.cachedTokens)))
                         completed = true
                         close()
@@ -310,7 +313,7 @@ class LlamaCppGateway private constructor(
                     }
 
                     var completed = false
-                    val responseText = StringBuilder()
+                    var responseText: StringBuilder? = null
                     val lines = response.body().bufferedReader()
                     while (true) {
                         val line = lines.readLine() ?: break
@@ -318,7 +321,7 @@ class LlamaCppGateway private constructor(
 
                         val data = line.removePrefix("data:").trim()
                         if (data == "[DONE]") {
-                            traceFinalResponse("chat_completion", request.sessionId, responseText.toString())
+                            responseText?.toString()?.let { traceFinalResponse("chat_completion", request.sessionId, it) }
                             send(TurnStreamEvent.Done(TurnMetrics(null, null, null)))
                             completed = true
                             close()
@@ -331,7 +334,9 @@ class LlamaCppGateway private constructor(
                         }
                         chunk.choices.firstOrNull()?.delta?.content
                             ?.let { token ->
-                                responseText.append(token)
+                                if (traceLogger.isTraceEnabled) {
+                                    (responseText ?: StringBuilder().also { responseText = it }).append(token)
+                                }
                                 send(TurnStreamEvent.Token(token))
                             }
                     }
@@ -441,7 +446,7 @@ class LlamaCppGateway private constructor(
     }
 
     private fun traceFinalResponse(operation: String, sessionId: String, content: String) {
-        if (!traceLogger.isTraceEnabled) return
+        if (!traceLogger.isTraceEnabled || content.isBlank()) return
 
         traceLogger.finalResponse(operation, sessionId, content)
         transcript.recordFinalAssistantMessage(sessionId, content)

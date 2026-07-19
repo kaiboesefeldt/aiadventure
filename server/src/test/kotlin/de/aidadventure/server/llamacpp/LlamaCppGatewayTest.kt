@@ -65,7 +65,98 @@ class LlamaCppGatewayTest {
                 listOf(LlmTraceMessage("user", "Continue")),
                 trace.prompts.last().historyDelta,
             )
+            assertEquals("live-1", trace.prompts.first().sessionId)
+            assertEquals("turn", trace.prompts[1].operation)
+            assertTrue(trace.prompts[1].historyDelta.isEmpty())
+            assertEquals(CacheMetrics(17, 3), trace.completions.first().metrics)
         }
+    }
+
+    @Test
+    fun `chat stream aggregates chunks into one final response at DONE`() = runBlocking {
+        chatServer(streamContents = listOf("Hello ", "world")).use { server ->
+            val trace = RecordingTraceLogger()
+            val events = LlamaCppGateway(traceLogger = trace).stream(request(server.port)).toList()
+
+            assertEquals(
+                listOf(TurnStreamEvent.Token("Hello "), TurnStreamEvent.Token("world"), TurnStreamEvent.Done(TurnMetrics(null, null, null))),
+                events,
+            )
+            assertEquals(listOf(TraceEntry.FinalResponse("chat_completion", "live-1", "Hello world")), trace.finalResponses)
+            assertTrue(trace.entries.none { it.kind == "token" })
+        }
+    }
+
+    @Test
+    fun `streams complete without a final response trace when output is blank`() = runBlocking {
+        nativeServer(streamContents = emptyList()).use { native ->
+            chatServer(streamContents = emptyList()).use { chat ->
+                val nativeTrace = RecordingTraceLogger()
+                val chatTrace = RecordingTraceLogger()
+
+                assertEquals(
+                    listOf(TurnStreamEvent.Done(TurnMetrics(null, 20, 17))),
+                    LlamaCppGateway(traceLogger = nativeTrace).stream(request(native.port), LlamaCppSlot(2)).toList(),
+                )
+                assertEquals(
+                    listOf(TurnStreamEvent.Done(TurnMetrics(null, null, null))),
+                    LlamaCppGateway(traceLogger = chatTrace).stream(request(chat.port)).toList(),
+                )
+                assertTrue(nativeTrace.finalResponses.isEmpty())
+                assertTrue(chatTrace.finalResponses.isEmpty())
+            }
+        }
+    }
+
+    @Test
+    fun `disabled trace does not retain native stream content or advance the transcript`() = runBlocking {
+        nativeServer(streamContents = listOf("Hello")).use { server ->
+            val trace = RecordingTraceLogger(enabled = false)
+            val gateway = LlamaCppGateway(traceLogger = trace)
+
+            gateway.stream(request(server.port), LlamaCppSlot(2)).toList()
+            assertTrue(trace.entries.isEmpty())
+
+            trace.enabled = true
+            gateway.prefill(
+                request(server.port).copy(
+                    history = listOf(ChatEntry("player", "Look around"), ChatEntry("game-master", "Hello")),
+                    playerAction = "Continue",
+                ),
+                LlamaCppSlot(2),
+            )
+
+            assertEquals(
+                listOf(
+                    LlmTraceMessage("system", PromptFactory.GAME_MASTER_INSTRUCTION),
+                    LlmTraceMessage("system", "# Forest"),
+                    LlmTraceMessage("user", "Look around"),
+                    LlmTraceMessage("assistant", "Hello"),
+                    LlmTraceMessage("user", "Continue"),
+                ),
+                trace.prompts.single().historyDelta,
+            )
+        }
+    }
+
+    @Test
+    fun `trace cursors are isolated by session id`() = runBlocking {
+        nativeServer().use { server ->
+            val trace = RecordingTraceLogger()
+            val gateway = LlamaCppGateway(traceLogger = trace)
+
+            gateway.prefill(request(server.port), LlamaCppSlot(2))
+            gateway.prefill(request(server.port).copy(sessionId = "live-2"), LlamaCppSlot(2))
+
+            assertEquals("live-1", trace.prompts[0].sessionId)
+            assertEquals("live-2", trace.prompts[1].sessionId)
+            assertEquals(trace.prompts[0].historyDelta, trace.prompts[1].historyDelta)
+        }
+    }
+
+    @Test
+    fun `trace escaping preserves backslash line feed carriage return and tab`() {
+        assertEquals("""\\\n\r\t""", "\\\n\r\t".escapeForLlmTrace())
     }
 
     @Test
@@ -224,6 +315,11 @@ class LlamaCppGatewayTest {
         return NativeServer(server, templatePrompt, completionDelayMillis, completionContent, streamContents).also { it.start() }
     }
 
+    private fun chatServer(streamContents: List<String>): ChatServer {
+        val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
+        return ChatServer(server, streamContents).also { it.start() }
+    }
+
     private class NativeServer(
         private val server: HttpServer,
         private val templatePrompt: String,
@@ -282,39 +378,72 @@ class LlamaCppGatewayTest {
         }
     }
 
+    private class ChatServer(
+        private val server: HttpServer,
+        private val streamContents: List<String>,
+    ) : AutoCloseable {
+        private val executor = Executors.newSingleThreadExecutor()
+        val port: Int get() = server.address.port
+
+        init {
+            server.executor = executor
+            server.createContext("/v1/chat/completions") { exchange ->
+                exchange.responseHeaders.add("Content-Type", "text/event-stream")
+                exchange.sendResponseHeaders(200, 0)
+                exchange.responseBody.bufferedWriter().use { writer ->
+                    streamContents.forEach { content ->
+                        writer.write("""data: {"choices":[{"delta":{"content":"$content"}}]}
+
+""")
+                    }
+                    writer.write("data: [DONE]\n\n")
+                }
+            }
+        }
+
+        fun start() = server.start()
+
+        override fun close() {
+            server.stop(0)
+            executor.shutdownNow()
+        }
+    }
+
 }
 
-private class RecordingTraceLogger : LlmTraceLogger {
-    override val isTraceEnabled = true
+private class RecordingTraceLogger(enabled: Boolean = true) : LlmTraceLogger {
+    var enabled = enabled
+    override val isTraceEnabled get() = enabled
     val entries = mutableListOf<TraceEntry>()
     val prompts get() = entries.filterIsInstance<TraceEntry.Prompt>()
     val finalResponses get() = entries.filterIsInstance<TraceEntry.FinalResponse>()
+    val completions get() = entries.filterIsInstance<TraceEntry.Completion>()
 
     override fun prompt(operation: String, sessionId: String, historyDelta: List<LlmTraceMessage>) {
-        entries += TraceEntry.Prompt(operation, historyDelta)
+        entries += TraceEntry.Prompt(operation, sessionId, historyDelta)
     }
 
     override fun completion(operation: String, sessionId: String, metrics: CacheMetrics) {
-        entries += TraceEntry.Completion(operation)
+        entries += TraceEntry.Completion(operation, sessionId, metrics)
     }
 
     override fun finalResponse(operation: String, sessionId: String, content: String) {
-        entries += TraceEntry.FinalResponse(operation, content)
+        entries += TraceEntry.FinalResponse(operation, sessionId, content)
     }
 }
 
 private sealed interface TraceEntry {
     val kind: String
 
-    data class Prompt(val operation: String, val historyDelta: List<LlmTraceMessage>) : TraceEntry {
+    data class Prompt(val operation: String, val sessionId: String, val historyDelta: List<LlmTraceMessage>) : TraceEntry {
         override val kind = "prompt"
     }
 
-    data class FinalResponse(val operation: String, val content: String) : TraceEntry {
+    data class FinalResponse(val operation: String, val sessionId: String, val content: String) : TraceEntry {
         override val kind = "finalResponse"
     }
 
-    data class Completion(val operation: String) : TraceEntry {
+    data class Completion(val operation: String, val sessionId: String, val metrics: CacheMetrics) : TraceEntry {
         override val kind = "completion"
     }
 }
