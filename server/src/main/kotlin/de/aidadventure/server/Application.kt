@@ -46,6 +46,7 @@ import io.ktor.server.routing.routing
 import io.ktor.utils.io.ClosedWriteChannelException
 import java.io.IOException
 import java.io.Writer
+import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -62,34 +63,56 @@ import org.slf4j.LoggerFactory
 
 fun main(args: Array<String>) {
     val config = ServerRuntimeConfig.from(System.getenv(), args)
+    System.setProperty("org.slf4j.simpleLogger.defaultLogLevel", config.logLevel)
     embeddedServer(Netty, port = config.port, host = config.host) {
         adventureModule(llamaCppPort = config.llamaCppPort)
     }.start(wait = true)
 }
 
-data class ServerRuntimeConfig(val host: String, val port: Int, val llamaCppPort: Int) {
+data class ServerRuntimeConfig(val host: String, val port: Int, val llamaCppPort: Int, val logLevel: String) {
     companion object {
         fun from(environment: Map<String, String>, args: Array<String> = emptyArray()): ServerRuntimeConfig {
             val exposeLan = environment["ADVENTURE_EXPOSE_LAN"] ?: "false"
             require(exposeLan == "true" || exposeLan == "false") {
                 "ADVENTURE_EXPOSE_LAN must be either true or false."
             }
+            val options = parseOptions(args)
             return ServerRuntimeConfig(
                 host = if (exposeLan == "true") "0.0.0.0" else "127.0.0.1",
                 port = environment["PORT"]?.toIntOrNull() ?: 8080,
-                llamaCppPort = parseLlamaCppPort(args),
+                llamaCppPort = options.llamaCppPort,
+                logLevel = options.logLevel,
             )
         }
 
-        private fun parseLlamaCppPort(args: Array<String>): Int {
-            require(args.size <= 1 && args.firstOrNull()?.startsWith("--llama-port=") != false) {
-                "Usage: --llama-port=<1-65535>."
+        private fun parseOptions(args: Array<String>): RuntimeOptions {
+            var llamaCppPort: Int? = null
+            var logLevel: String? = null
+            for (argument in args) {
+                when {
+                    argument.startsWith("--llama-port=") -> {
+                        require(llamaCppPort == null) { "--llama-port may only be specified once." }
+                        llamaCppPort = LlamaCppPort.parse(argument.removePrefix("--llama-port="))
+                    }
+
+                    argument.startsWith("--log-level=") -> {
+                        require(logLevel == null) { "--log-level may only be specified once." }
+                        logLevel = argument.removePrefix("--log-level=").lowercase(Locale.ROOT)
+                        require(logLevel in LOG_LEVELS) { "--log-level must be TRACE, DEBUG, INFO, WARN, or ERROR." }
+                    }
+
+                    else -> require(false) { "Usage: --llama-port=<1-65535> --log-level=<TRACE|DEBUG|INFO|WARN|ERROR>." }
+                }
             }
-            return args.firstOrNull()
-                ?.removePrefix("--llama-port=")
-                ?.let(de.aidadventure.server.llamacpp.LlamaCppPort::parse)
-                ?: de.aidadventure.server.llamacpp.LlamaCppPort.DEFAULT
+            return RuntimeOptions(
+                llamaCppPort = llamaCppPort ?: LlamaCppPort.DEFAULT,
+                logLevel = logLevel ?: "info",
+            )
         }
+
+        private data class RuntimeOptions(val llamaCppPort: Int, val logLevel: String)
+
+        private val LOG_LEVELS = setOf("trace", "debug", "info", "warn", "error")
     }
 }
 

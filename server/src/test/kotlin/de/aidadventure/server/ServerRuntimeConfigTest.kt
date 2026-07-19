@@ -16,6 +16,29 @@ class ServerRuntimeConfigTest {
     }
 
     @Test
+    fun `uses INFO as the default log level`() {
+        assertEquals("info", ServerRuntimeConfig.from(emptyMap()).logLevel)
+    }
+
+    @Test
+    fun `uses the requested log level case insensitively`() {
+        assertEquals("trace", ServerRuntimeConfig.from(emptyMap(), arrayOf("--log-level=TRACE")).logLevel)
+    }
+
+    @Test
+    fun `parses log level with llama cpp port in either order`() {
+        assertEquals("debug", ServerRuntimeConfig.from(emptyMap(), arrayOf("--llama-port=8082", "--log-level=DEBUG")).logLevel)
+        assertEquals(8082, ServerRuntimeConfig.from(emptyMap(), arrayOf("--log-level=DEBUG", "--llama-port=8082")).llamaCppPort)
+    }
+
+    @Test
+    fun `rejects invalid log level`() {
+        assertFailsWith<IllegalArgumentException> {
+            ServerRuntimeConfig.from(emptyMap(), arrayOf("--log-level=VERBOSE"))
+        }
+    }
+
+    @Test
     fun `binds loopback by default`() {
         assertEquals("127.0.0.1", ServerRuntimeConfig.from(emptyMap()).host)
     }
