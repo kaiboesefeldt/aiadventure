@@ -88,17 +88,18 @@ class LlmTraceTranscriptTest {
     }
 
     @Test
-    fun `interleaved prompt and final output keep one atomic same-session cursor`() {
+    fun `interleaved prompt and final output retain a linearized same-session cursor`() {
         val transcript = LlmTraceTranscript()
-        val prompt = listOf(message("system", "rules"), message("user", "look"))
+        val history = listOf(message("system", "rules"), message("user", "look"))
+        val action = message("user", "walk onward")
         val final = message("assistant", "trees")
         val start = CountDownLatch(1)
         val executor = Executors.newFixedThreadPool(2)
 
-        transcript.nextPrompt("session-1", prompt)
+        transcript.nextPrompt("session-1", history)
         val nextPrompt = executor.submit<List<LlmTraceMessage>> {
             assertTrue(start.await(5, TimeUnit.SECONDS))
-            transcript.nextPrompt("session-1", prompt + final)
+            transcript.nextPrompt("session-1", history + action)
         }
         val recordFinal = executor.submit {
             assertTrue(start.await(5, TimeUnit.SECONDS))
@@ -110,11 +111,9 @@ class LlmTraceTranscriptTest {
         recordFinal.get(5, TimeUnit.SECONDS)
         executor.shutdownNow()
 
-        assertTrue(returnedDuringInterleave == emptyList<LlmTraceMessage>() || returnedDuringInterleave == listOf(final))
-        assertEquals(
-            listOf(message("user", "walk onward")),
-            transcript.nextPrompt("session-1", prompt + final + message("user", "walk onward")),
-        )
+        assertEquals(listOf(action), returnedDuringInterleave)
+        val followUp = transcript.nextPrompt("session-1", history + action + final)
+        assertTrue(followUp == emptyList<LlmTraceMessage>() || followUp == listOf(final))
     }
 
     private fun message(role: String, content: String) = LlmTraceMessage(role, content)
