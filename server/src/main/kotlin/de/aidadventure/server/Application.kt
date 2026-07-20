@@ -153,10 +153,9 @@ fun Application.adventureModule(
             val key = CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort)
             try {
                 prefillRegistry.removeIdle(clock())
-                val resolved = request.toTurnRequest().resolveFragment(runtimeFragmentResolver, call.callId, "prefill", logger)
                 call.respond(
                     HttpStatusCode.Accepted,
-                    PrefillAccepted(prefillRegistry.coordinatorFor(key).submit(request.withResolvedTurn(resolved), resolved)),
+                    PrefillAccepted(prefillRegistry.coordinatorFor(key).submit(request)),
                 )
             } catch (failure: IOException) {
                 call.respondLlamaUnavailable(logger, "prefill", failure)
@@ -200,36 +199,38 @@ fun Application.adventureModule(
                     prefillRegistry.removeIdle(clock())
                     val coordinator = prefillRegistry
                         .coordinatorFor(CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort))
-                    val resolved = coordinator.resolvedTurnFor(request)
-                        ?: request.resolveFragment(runtimeFragmentResolver, call.callId, "turn", logger)
+                    val resolved = coordinator.resolvedTurnFor(request) ?: ResolvedTurn(request, null)
                     val stream = coordinator
                         .beginTurn(resolved.request)
                     val generated = StringBuilder()
                     var completedMetrics: TurnMetrics? = null
-                    resolved.fragment?.let { sse("fragment", eventJson.encodeToString(StreamFragment(it))) }
+                    var appliedFragment: String? = resolved.fragment
                     stream.collect { event ->
                         when (event) {
                             is TurnStreamEvent.Token -> {
                                 generated.append(event.text)
                                 sse("token", eventJson.encodeToString(StreamToken(event.text)))
                             }
-                            is TurnStreamEvent.Fragment -> sse("fragment", eventJson.encodeToString(StreamFragment(event.fragment)))
+                            is TurnStreamEvent.Fragment -> {
+                                appliedFragment = event.fragment
+                                sse("fragment", eventJson.encodeToString(StreamFragment(event.fragment)))
+                            }
                             is TurnStreamEvent.Done -> completedMetrics = event.metrics
                         }
                     }
                     val metrics = completedMetrics
                     if (generated.isNotEmpty() && metrics != null) {
                         val requestId = call.callId ?: "unknown"
-                        val completedHistory = resolved.request.history +
-                            ChatEntry("player", resolved.request.playerAction) +
+                        val completedHistory = (appliedFragment?.let { request.history + ChatEntry("runtime-fragment", it) } ?: request.history) +
+                            ChatEntry("player", request.playerAction) +
                             ChatEntry("game-master", generated.toString())
                         val warmupRequest = WarmupRequest(
-                            sessionId = resolved.request.sessionId,
-                            modelId = resolved.request.modelId,
-                            llamaCppPort = resolved.request.llamaCppPort,
-                            scenarioMarkdown = resolved.request.scenarioMarkdown,
+                            sessionId = request.sessionId,
+                            modelId = request.modelId,
+                            llamaCppPort = request.llamaCppPort,
+                            scenarioMarkdown = request.scenarioMarkdown,
                             history = completedHistory,
-                            runtimeFragments = resolved.request.runtimeFragments,
+                            runtimeFragments = request.runtimeFragments,
                         )
                         var reservation: de.aidadventure.server.prefill.RerankReservation? = null
                         try {
@@ -250,7 +251,7 @@ fun Application.adventureModule(
                                 postTurnScope.launch {
                                     var candidate: de.aidadventure.server.model.RuntimeFragmentDefinition? = null
                                     try {
-                                        candidate = runtimeFragmentResolver.resolve(completedHistory, resolved.request.runtimeFragments)
+                                        candidate = runtimeFragmentResolver.resolve(completedHistory, request.runtimeFragments)
                                     } catch (failure: Exception) {
                                         if (failure is CancellationException) throw failure
                                         logger.warn(
@@ -303,39 +304,6 @@ data class ResolvedTurn(val request: TurnRequest, val fragment: String?)
 private fun TurnRequest.configuredFor(port: Int) = copy(modelId = CONFIGURED_MODEL_ID, llamaCppPort = port)
 private fun PrefillRequest.configuredFor(port: Int) = copy(modelId = CONFIGURED_MODEL_ID, llamaCppPort = port)
 private fun WarmupRequest.configuredFor(port: Int) = copy(modelId = CONFIGURED_MODEL_ID, llamaCppPort = port)
-
-private fun PrefillRequest.toTurnRequest() = TurnRequest(
-    sessionId = sessionId,
-    modelId = modelId,
-    llamaCppPort = llamaCppPort,
-    scenarioMarkdown = scenarioMarkdown,
-    history = history,
-    playerAction = playerAction,
-    runtimeFragments = runtimeFragments,
-)
-
-private fun PrefillRequest.withResolvedTurn(resolved: ResolvedTurn) = copy(
-    history = resolved.request.history,
-    runtimeFragments = resolved.request.runtimeFragments,
-)
-
-private suspend fun TurnRequest.resolveFragment(
-    resolver: RuntimeFragmentResolver,
-    requestId: String?,
-    operation: String,
-    logger: org.slf4j.Logger,
-): ResolvedTurn = try {
-    val candidate = resolver.resolve(history, runtimeFragments)
-    val fragment = candidate?.fragment
-    ResolvedTurn(
-        request = if (fragment == null) this else copy(history = history + ChatEntry("runtime-fragment", fragment)),
-        fragment = fragment,
-    )
-} catch (failure: Exception) {
-    if (failure is CancellationException) throw failure
-    logger.warn("requestId={} operation={} failure={}", requestId, operation, failure.javaClass.simpleName)
-    ResolvedTurn(this, null)
-}
 
 private class ProductionRuntimeFragmentResolver : RuntimeFragmentResolver {
     private val delegate by lazy { DefaultRuntimeFragmentResolver(OnnxLocalEmbeddingService.create()) }

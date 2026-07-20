@@ -96,6 +96,7 @@ class PrefillCoordinatorTest {
 
         assertEquals(fake.scoreSlots.single(), fake.warmupSlots.single())
         assertEquals(fake.warmupSlots.single(), fake.prefillSlots.single())
+        assertEquals(ChatEntry("runtime-fragment", "fragment text"), fake.prefillRequests.single().history.last())
         coordinator.close()
     }
 
@@ -113,6 +114,25 @@ class PrefillCoordinatorTest {
 
         assertEquals(fake.scoreSlots.single(), fake.warmupSlots.single())
         assertEquals(fake.warmupSlots.single(), fake.prefillSlots.single())
+        coordinator.close()
+    }
+
+    @Test
+    fun `turn submitted during reranking waits for the accepted fragment`() = runBlocking {
+        val fake = ControllableGateway(score = { "5" })
+        val coordinator = SessionPrefillCoordinator(fake)
+        val reservation = requireNotNull(coordinator.reserveRerank(warmup(), "request-42"))
+        val turn = async(start = CoroutineStart.UNDISPATCHED) { coordinator.beginTurn(turn("follow the bell")).toList() }
+
+        assertTrue(fake.turnRequests.isEmpty())
+        assertTrue(coordinator.completeReservedRerank(reservation, candidate()))
+        fake.awaitWarmup()
+        assertTrue(fake.turnRequests.isEmpty())
+        fake.completeWarmup()
+        turn.await()
+
+        assertEquals(ChatEntry("runtime-fragment", "fragment text"), fake.turnRequests.single().history.last())
+        assertEquals(fake.warmupSlots.single(), fake.turnSlots.single())
         coordinator.close()
     }
 

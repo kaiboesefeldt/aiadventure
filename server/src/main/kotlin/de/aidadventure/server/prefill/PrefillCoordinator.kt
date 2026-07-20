@@ -163,19 +163,25 @@ internal class SessionPrefillCoordinator(
     private var generation = 0L
     private var closed = false
     private var shutdownComplete = false
+    private var nextFragment: String? = null
     private var state: State = State.Idle
 
-    override suspend fun submit(request: PrefillRequest): PrefillDisposition =
-        submit(request, ResolvedTurn(request.asTurnRequest(), null))
+    override suspend fun submit(request: PrefillRequest): PrefillDisposition = mutex.withLock {
+        submitLocked(request, request.asTurnRequest().withNextFragment())
+    }
 
     override suspend fun submit(request: PrefillRequest, resolvedTurn: ResolvedTurn): PrefillDisposition = mutex.withLock {
+        submitLocked(request, resolvedTurn)
+    }
+
+    private fun submitLocked(request: PrefillRequest, resolvedTurn: ResolvedTurn): PrefillDisposition {
         if (closed || state is State.Turning || state is State.TurnWaiting) {
-            return@withLock PrefillDisposition.TURN_IN_PROGRESS
+            return PrefillDisposition.TURN_IN_PROGRESS
         }
-        if (request.revision <= latestRevision) return@withLock PrefillDisposition.STALE
+        if (request.revision <= latestRevision) return PrefillDisposition.STALE
 
         latestRevision = request.revision
-        when (val current = state) {
+        return when (val current = state) {
             State.Idle -> {
                 startPrefillLocked(request, resolvedTurn)
                 PrefillDisposition.STARTED
@@ -204,6 +210,7 @@ internal class SessionPrefillCoordinator(
 
     override suspend fun resolvedTurnFor(request: TurnRequest): ResolvedTurn? = mutex.withLock {
         state.resolvedTurnOrNull()?.takeIf { it.matches(request) }?.forRequest(request)
+            ?: nextFragment?.let { request.withNextFragment() }
     }
 
     override suspend fun warmup(request: WarmupRequest, requestId: String): PrefillDisposition = mutex.withLock {
@@ -291,8 +298,11 @@ internal class SessionPrefillCoordinator(
         reservation: RerankReservation,
         candidate: RuntimeFragmentDefinition?,
     ): Boolean = mutex.withLock {
-        val current = state as? State.Prefilling ?: return@withLock false
-        val operation = current.operation as? RerankingOperation ?: return@withLock false
+        val operation = when (val current = state) {
+            is State.Prefilling -> current.operation
+            is State.TurnWaiting -> current.operation
+            else -> return@withLock false
+        } as? RerankingOperation ?: return@withLock false
         if (operation.reservation !== reservation) return@withLock false
         reservation.complete(candidate)
     }
@@ -301,18 +311,22 @@ internal class SessionPrefillCoordinator(
         if (closed) return@withLock rejectedTurn("Prefill coordinator is closed.")
 
         when (val current = state) {
-            State.Idle -> startTurnLocked(request)
+            State.Idle -> startTurnLocked(request.withNextFragment().request)
             is State.Prefilling -> {
-                val execution = TurnExecution(request).also(TurnExecution::initialize)
-                state = State.TurnWaiting(current.lease, current.operation, current.resolvedTurn, execution)
+                val execution = TurnExecution().also(TurnExecution::initialize)
+                state = State.TurnWaiting(current.lease, current.operation, current.resolvedTurn, request, execution)
                 execution.flow()
             }
 
-            is State.Ready -> startTurnLocked(request, current.lease)
+            is State.Ready -> {
+                val resolved = current.resolvedTurn?.takeIf { it.matches(request) }?.forRequest(request)
+                    ?: request.withNextFragment()
+                startTurnLocked(resolved.request, current.lease)
+            }
             is State.ReleasePending -> {
                 releaseLeaseLocked(current.lease)
                 state = State.Idle
-                startTurnLocked(request)
+                startTurnLocked(request.withNextFragment().request)
             }
 
             is State.TurnWaiting, is State.Turning -> rejectedTurn("A turn is already in progress for this coordinator.")
@@ -373,7 +387,7 @@ internal class SessionPrefillCoordinator(
         state = State.Prefilling(lease, operation, resolvedTurn, pending = null)
         operation.job = scope.launch(start = CoroutineStart.LAZY) {
             val failure = try {
-                gateway.prefill(request.asTurnRequest(), lease.slot)
+                gateway.prefill(resolvedTurn.request, lease.slot)
                 null
             } catch (_: CancellationException) {
                 return@launch
@@ -413,6 +427,7 @@ internal class SessionPrefillCoordinator(
         requestId: String,
         existingLease: Lease? = null,
     ): RerankingOperation {
+        nextFragment = null
         val lease = existingLease ?: acquireLease(request.llamaCppPort)
         val operation = RerankingOperation(RerankReservation(++generation))
         state = State.Prefilling(lease, operation, resolvedTurn = null, pending = null)
@@ -432,6 +447,7 @@ internal class SessionPrefillCoordinator(
                 }
                 val score = scoreResponse?.let(::parseFragmentRelevance)
                 val accepted = candidate != null && score != null && score >= 5
+                operation.resolvedFragment = candidate?.takeIf { accepted }?.fragment
                 rerankDiagnosticSink(RerankDiagnostic(scoreResponse, score, accepted))
                 val canonicalWarmup = request.copy(
                     history = candidate?.takeIf { accepted }
@@ -454,10 +470,10 @@ internal class SessionPrefillCoordinator(
 
     private fun startTurnLocked(request: TurnRequest, existingLease: Lease? = null): Flow<TurnStreamEvent> {
         val lease = existingLease ?: acquireLease(request.llamaCppPort)
-        val execution = TurnExecution(request).also(TurnExecution::initialize)
+        val execution = TurnExecution().also(TurnExecution::initialize)
         state = State.Turning(lease, execution)
         recordLeaseTransition("turn_handoff", lease)
-        execution.handoff(lease)
+        execution.handoff(lease, request)
         return execution.flow()
     }
 
@@ -471,8 +487,16 @@ internal class SessionPrefillCoordinator(
                         generation++
                         releaseAfterFailureLocked(lease)
                     } else if (current.pending != null) {
-                        startPrefillLocked(current.pending.request, current.pending.resolvedTurn, lease)
+                        val pending = current.pending
+                        if (operation is RerankingOperation) nextFragment = operation.resolvedFragment
+                        val resolved = if (operation is RerankingOperation) {
+                            pending.request.asTurnRequest().withNextFragment()
+                        } else {
+                            pending.resolvedTurn
+                        }
+                        startPrefillLocked(pending.request, resolved, lease)
                     } else {
+                        if (operation is RerankingOperation) nextFragment = operation.resolvedFragment
                         state = State.Ready(lease, current.resolvedTurn)
                     }
                 }
@@ -483,9 +507,12 @@ internal class SessionPrefillCoordinator(
                         val releaseFailure = releaseAfterFailureLocked(lease)
                         current.execution.fail(releaseFailure ?: failure)
                     } else {
+                        if (operation is RerankingOperation) nextFragment = operation.resolvedFragment
+                        val resolved = current.resolvedTurn?.takeIf { it.matches(current.request) }?.forRequest(current.request)
+                            ?: current.request.withNextFragment()
                         state = State.Turning(lease, current.execution)
                         recordLeaseTransition("turn_handoff", lease)
-                        current.execution.handoff(lease)
+                        current.execution.handoff(lease, resolved.request)
                     }
                 }
 
@@ -506,6 +533,7 @@ internal class SessionPrefillCoordinator(
             }
 
             is State.Turning -> if (current.execution === execution && current.lease === lease) {
+                nextFragment = null
                 state = State.Ready(current.lease, resolvedTurn = null)
                 recordLeaseTransition("turn_retained", current.lease)
                 null
@@ -560,10 +588,15 @@ internal class SessionPrefillCoordinator(
         request = request.copy(history = this.request.history),
     )
 
-    private inner class TurnExecution(private val request: TurnRequest) {
+    private fun TurnRequest.withNextFragment(): ResolvedTurn = nextFragment?.let { fragment ->
+        ResolvedTurn(copy(history = history + ChatEntry("runtime-fragment", fragment)), fragment)
+    } ?: ResolvedTurn(this, null)
+
+    private inner class TurnExecution {
         private val ready = CompletableDeferred<Lease>()
         private val output = Channel<TurnStreamEvent>(Channel.RENDEZVOUS)
         private val collected = AtomicBoolean()
+        private lateinit var request: TurnRequest
         lateinit var job: Job
 
         fun initialize() {
@@ -572,6 +605,9 @@ internal class SessionPrefillCoordinator(
                 var streamFailure: Throwable? = null
                 try {
                     lease = ready.await()
+                    request.history.lastOrNull()
+                        ?.takeIf { it.role == "runtime-fragment" }
+                        ?.let { output.send(TurnStreamEvent.Fragment(it.content)) }
                     gateway.stream(request, lease.slot).collect(output::send)
                 } catch (failure: Throwable) {
                     streamFailure = failure
@@ -597,7 +633,8 @@ internal class SessionPrefillCoordinator(
             }
         }
 
-        fun handoff(lease: Lease) {
+        fun handoff(lease: Lease, request: TurnRequest) {
+            this.request = request
             ready.complete(lease)
         }
 
@@ -630,6 +667,7 @@ internal class SessionPrefillCoordinator(
             val lease: Lease,
             val operation: Operation,
             val resolvedTurn: ResolvedTurn?,
+            val request: TurnRequest,
             val execution: TurnExecution,
         ) : State
 
@@ -684,6 +722,7 @@ internal class SessionPrefillCoordinator(
     private class RerankingOperation(val reservation: RerankReservation) : Operation {
         override val generation: Long get() = reservation.generation
         override lateinit var job: Job
+        var resolvedFragment: String? = null
     }
 
     private data class PendingPrefill(val request: PrefillRequest, val resolvedTurn: ResolvedTurn)
