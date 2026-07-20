@@ -43,27 +43,37 @@ import kotlin.test.assertTrue
 
 class ApplicationTest {
     @Test
-    fun `turn streams selected fragment before token`() = testApplication {
+    fun `prefill and current turn do not resolve a runtime fragment`() = testApplication {
         val registry = FakeRegistry()
+        val resolver = RecordingResolver("keep quiet")
         application {
             adventureModule(
                 prefillRegistry = registry,
-                runtimeFragmentResolver = resolver("keep quiet"),
+                runtimeFragmentResolver = resolver,
             )
         }
         configureJsonClient()
 
+        client.post("/api/prefill") {
+            contentType(ContentType.Application.Json)
+            setBody(prefillRequest())
+        }
         val response = client.post("/api/turn") {
             contentType(ContentType.Application.Json)
             setBody(turnRequest(history = visiblePair()))
         }
 
-        assertContains(
-            response.bodyAsText(),
-            "event: fragment\ndata: {\"fragment\":\"keep quiet\"}\n\nevent: token",
+        assertContains(response.bodyAsText(), "event: token")
+        assertTrue(!response.bodyAsText().contains("event: fragment"))
+        runBlocking { withTimeout(1_000) { registry.coordinator.rerankCompleted.await() } }
+        assertEquals(
+            visiblePair() +
+                de.aidadventure.server.model.ChatEntry("player", "look") +
+                de.aidadventure.server.model.ChatEntry("game-master", "The door opens."),
+            resolver.histories.single(),
         )
         assertEquals(
-            visiblePair() + de.aidadventure.server.model.ChatEntry("runtime-fragment", "keep quiet"),
+            visiblePair(),
             registry.coordinator.turnRequests.single().history,
         )
     }
@@ -74,7 +84,7 @@ class ApplicationTest {
         application {
             adventureModule(
                 prefillRegistry = registry,
-                runtimeFragmentResolver = resolving("current fragment", "next fragment"),
+                runtimeFragmentResolver = resolving("next fragment"),
             )
         }
         configureJsonClient()
@@ -94,7 +104,6 @@ class ApplicationTest {
             listOf(
                 ChatEntry("player", "ask Mira about the lighthouse"),
                 ChatEntry("game-master", "Mira looks away."),
-                ChatEntry("runtime-fragment", "current fragment"),
                 ChatEntry("player", "look"),
                 ChatEntry("game-master", "The door opens."),
             ),
@@ -109,7 +118,7 @@ class ApplicationTest {
         application {
             adventureModule(
                 prefillRegistry = registry,
-                runtimeFragmentResolver = resolving("current fragment", null),
+                runtimeFragmentResolver = resolving(null),
             )
         }
         configureJsonClient()
@@ -131,7 +140,7 @@ class ApplicationTest {
         application {
             adventureModule(
                 prefillRegistry = registry,
-                runtimeFragmentResolver = resolverThatFailsAfterCurrentFragment(),
+                runtimeFragmentResolver = resolverThatFailsAfterTurn(),
             )
         }
         configureJsonClient()
@@ -150,7 +159,7 @@ class ApplicationTest {
     @Test
     fun `completed turn emits done before background reranking resolution completes`() = testApplication {
         val registry = FakeRegistry()
-        val resolver = blockingResolverAfterCurrentFragment()
+        val resolver = blockingResolverAfterTurn()
         application {
             adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolver)
         }
@@ -447,40 +456,46 @@ class ApplicationTest {
             results.next()?.let { de.aidadventure.server.model.RuntimeFragmentDefinition("match", it) }
     }
 
-    private fun resolverThatFailsAfterCurrentFragment() = object : RuntimeFragmentResolver {
-        private var calls = 0
+    private fun resolverThatFailsAfterTurn() = object : RuntimeFragmentResolver {
 
         override suspend fun prepare(definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>) = Unit
 
         override suspend fun resolve(
             history: List<de.aidadventure.server.model.ChatEntry>,
             definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
-        ): de.aidadventure.server.model.RuntimeFragmentDefinition? =
-            if (++calls == 1) de.aidadventure.server.model.RuntimeFragmentDefinition("match", "current fragment")
-            else error("secret fragment details")
+        ): de.aidadventure.server.model.RuntimeFragmentDefinition? = error("secret fragment details")
     }
 
-    private class BlockingResolverAfterCurrentFragment : RuntimeFragmentResolver {
+    private class BlockingResolverAfterTurn : RuntimeFragmentResolver {
         val rerankStarted = CompletableDeferred<Unit>()
         val allowRerank = CompletableDeferred<Unit>()
-        private var calls = 0
-
         override suspend fun prepare(definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>) = Unit
 
         override suspend fun resolve(
             history: List<de.aidadventure.server.model.ChatEntry>,
             definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
-        ): de.aidadventure.server.model.RuntimeFragmentDefinition? =
-            if (++calls == 1) {
-                de.aidadventure.server.model.RuntimeFragmentDefinition("match", "current fragment")
-            } else {
-                rerankStarted.complete(Unit)
-                allowRerank.await()
-                de.aidadventure.server.model.RuntimeFragmentDefinition("next match", "next fragment")
-            }
+        ): de.aidadventure.server.model.RuntimeFragmentDefinition? {
+            rerankStarted.complete(Unit)
+            allowRerank.await()
+            return de.aidadventure.server.model.RuntimeFragmentDefinition("next match", "next fragment")
+        }
     }
 
-    private fun blockingResolverAfterCurrentFragment() = BlockingResolverAfterCurrentFragment()
+    private fun blockingResolverAfterTurn() = BlockingResolverAfterTurn()
+
+    private class RecordingResolver(private val fragment: String?) : RuntimeFragmentResolver {
+        val histories = mutableListOf<List<ChatEntry>>()
+
+        override suspend fun prepare(definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>) = Unit
+
+        override suspend fun resolve(
+            history: List<ChatEntry>,
+            definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
+        ): de.aidadventure.server.model.RuntimeFragmentDefinition? {
+            histories += history
+            return fragment?.let { de.aidadventure.server.model.RuntimeFragmentDefinition("match", it) }
+        }
+    }
 
     private fun warmupRequest() = WarmupRequest("live-1", "configured-llama-cpp", 8081, "# Scenario", emptyList())
 
