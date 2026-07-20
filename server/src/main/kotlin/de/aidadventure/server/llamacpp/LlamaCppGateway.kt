@@ -101,29 +101,26 @@ internal fun String.escapeForLlmTrace(): String = buildString(length) {
 class LlamaCppGateway private constructor(
     private val httpClient: HttpClient,
     private val promptFactory: PromptFactory,
-    private val requestTimeout: Duration,
     private val traceLogger: LlmTraceLogger,
     @Suppress("UNUSED_PARAMETER") private val internalConstructorMarker: Unit,
 ) {
     constructor(
-        httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(DEFAULT_TIMEOUT).build(),
+        httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(LLAMA_CPP_TIMEOUT).build(),
         promptFactory: PromptFactory = PromptFactory(),
-        requestTimeout: Duration = DEFAULT_TIMEOUT,
-    ) : this(httpClient, promptFactory, requestTimeout, Slf4jLlmTraceLogger(logger), Unit)
+    ) : this(httpClient, promptFactory, Slf4jLlmTraceLogger(logger), Unit)
 
     internal constructor(
-        httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(DEFAULT_TIMEOUT).build(),
+        httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(LLAMA_CPP_TIMEOUT).build(),
         promptFactory: PromptFactory = PromptFactory(),
-        requestTimeout: Duration = DEFAULT_TIMEOUT,
         traceLogger: LlmTraceLogger,
-    ) : this(httpClient, promptFactory, requestTimeout, traceLogger, Unit)
+    ) : this(httpClient, promptFactory, traceLogger, Unit)
 
     private val transcript = LlmTraceTranscript()
 
     fun availableModels(port: Int): List<String> {
         val response = httpClient.send(
             HttpRequest.newBuilder(endpoint(port, "/v1/models"))
-                .timeout(requestTimeout)
+                .timeout(LLAMA_CPP_TIMEOUT)
                 .GET()
                 .build(),
             HttpResponse.BodyHandlers.ofString(),
@@ -140,7 +137,7 @@ class LlamaCppGateway private constructor(
     fun acquireIdleSlot(port: Int, excludedSlots: Set<LlamaCppSlot> = emptySet()): LlamaCppSlot {
         val response = httpClient.send(
             HttpRequest.newBuilder(endpoint(port, "/slots"))
-                .timeout(requestTimeout)
+                .timeout(LLAMA_CPP_TIMEOUT)
                 .GET()
                 .build(),
             HttpResponse.BodyHandlers.ofString(),
@@ -217,6 +214,7 @@ class LlamaCppGateway private constructor(
                 val response = runInterruptible {
                     val received = httpClient.send(
                         HttpRequest.newBuilder(endpoint(port, "/completion"))
+                            .timeout(LLAMA_CPP_TIMEOUT)
                             .header("Accept", "text/event-stream")
                             .header("Content-Type", "application/json")
                             .POST(
@@ -303,6 +301,7 @@ class LlamaCppGateway private constructor(
                         tracePrompt("chat_completion", request.sessionId, messages)
                         val received = httpClient.send(
                             HttpRequest.newBuilder(endpoint(port, "/v1/chat/completions"))
+                                .timeout(LLAMA_CPP_TIMEOUT)
                                 .header("Accept", "text/event-stream")
                                 .header("Content-Type", "application/json")
                                 .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(payload)))
@@ -379,7 +378,7 @@ class LlamaCppGateway private constructor(
         tracePrompt(operation, sessionId, semanticMessages)
         val response = httpClient.send(
             HttpRequest.newBuilder(endpoint(requirePort(port), "/apply-template"))
-                .timeout(PREFILL_TIMEOUT)
+                .timeout(LLAMA_CPP_TIMEOUT)
                 .header("Content-Type", "application/json")
                 .POST(
                     HttpRequest.BodyPublishers.ofString(
@@ -397,7 +396,7 @@ class LlamaCppGateway private constructor(
     private fun postCompletion(port: Int?, payload: CompletionRequest): NativeCompletionResponse {
         val response = httpClient.send(
             HttpRequest.newBuilder(endpoint(requirePort(port), "/completion"))
-                .timeout(PREFILL_TIMEOUT)
+                .timeout(LLAMA_CPP_TIMEOUT)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(payload)))
                 .build(),
@@ -410,7 +409,7 @@ class LlamaCppGateway private constructor(
     private fun eraseSlot(port: Int, slot: LlamaCppSlot) {
         val response = httpClient.send(
             HttpRequest.newBuilder(endpoint(port, "/slots/${slot.id}?action=erase"))
-                .timeout(requestTimeout)
+                .timeout(LLAMA_CPP_TIMEOUT)
                 .POST(HttpRequest.BodyPublishers.noBody())
                 .build(),
             HttpResponse.BodyHandlers.discarding(),
@@ -565,8 +564,7 @@ class LlamaCppGateway private constructor(
 
     companion object {
         private const val DIGIT_SCORE_GRAMMAR = "root ::= [0-9]"
-        private val DEFAULT_TIMEOUT: Duration = Duration.ofSeconds(5)
-        private val PREFILL_TIMEOUT: Duration = Duration.ofSeconds(60)
+        internal val LLAMA_CPP_TIMEOUT: Duration = Duration.ofSeconds(300)
         private val json = Json { ignoreUnknownKeys = true }
         private val logger = LoggerFactory.getLogger(LlamaCppGateway::class.java)
         private val promptFingerprintKey = KeyGenerator.getInstance("HmacSHA256").generateKey()

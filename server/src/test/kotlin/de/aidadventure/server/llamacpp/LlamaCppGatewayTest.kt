@@ -11,6 +11,7 @@ import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.model.WarmupRequest
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.time.Duration
 import java.util.concurrent.Executors
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
@@ -28,6 +29,11 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class LlamaCppGatewayTest {
+    @Test
+    fun `uses a 300 second default llama cpp timeout`() {
+        assertEquals(Duration.ofSeconds(300), LlamaCppGateway.LLAMA_CPP_TIMEOUT)
+    }
+
     @Test
     fun `traces incremental prompts and one final response for a streamed turn`() = runBlocking {
         nativeServer(streamContents = listOf("Hello ", "world")).use { server ->
