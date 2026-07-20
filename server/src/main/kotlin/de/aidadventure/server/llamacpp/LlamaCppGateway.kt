@@ -192,7 +192,13 @@ class LlamaCppGateway private constructor(
         logDiagnostic("prepared", port, slot, prompt)
         val response = postCompletion(
             port,
-            CompletionRequest(prompt, slot.id, predictedTokens = 1, stream = false),
+            CompletionRequest(
+                prompt,
+                slot.id,
+                predictedTokens = 1,
+                stream = false,
+                grammar = DIGIT_SCORE_GRAMMAR,
+            ),
         )
         requireNotNull(response.content) { "llama.cpp fragment relevance response did not include content." }.also { content ->
             val metrics = CacheMetrics(response.tokensCached, response.tokensEvaluated)
@@ -489,6 +495,7 @@ class LlamaCppGateway private constructor(
         @SerialName("cache_prompt") val cachePrompt: Boolean = true,
         @SerialName("n_predict") val predictedTokens: Int,
         val stream: Boolean,
+        val grammar: String? = null,
     )
 
     @Serializable
@@ -557,6 +564,7 @@ class LlamaCppGateway private constructor(
     }
 
     companion object {
+        private const val DIGIT_SCORE_GRAMMAR = "root ::= [0-9]"
         private val DEFAULT_TIMEOUT: Duration = Duration.ofSeconds(5)
         private val PREFILL_TIMEOUT: Duration = Duration.ofSeconds(60)
         private val json = Json { ignoreUnknownKeys = true }

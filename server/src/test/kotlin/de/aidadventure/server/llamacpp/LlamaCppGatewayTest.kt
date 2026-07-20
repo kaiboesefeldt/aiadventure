@@ -194,6 +194,7 @@ class LlamaCppGatewayTest {
             assertEquals(2, completionBody.getValue("id_slot").jsonPrimitive.int)
             assertEquals(1, completionBody.getValue("n_predict").jsonPrimitive.int)
             assertEquals(false, completionBody.getValue("stream").jsonPrimitive.boolean)
+            assertEquals("root ::= [0-9]", completionBody.getValue("grammar").jsonPrimitive.content)
         }
     }
 
