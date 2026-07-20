@@ -4,6 +4,7 @@ import de.aidadventure.server.ResolvedTurn
 import de.aidadventure.server.llamacpp.CacheMetrics
 import de.aidadventure.server.llamacpp.LlamaCppGateway
 import de.aidadventure.server.llamacpp.LlamaCppSlot
+import de.aidadventure.server.llamacpp.escapeForLlmTrace
 import de.aidadventure.server.model.PrefillDisposition
 import de.aidadventure.server.model.PrefillRequest
 import de.aidadventure.server.model.FragmentRelevanceRequest
@@ -60,6 +61,12 @@ internal data class CoordinatorLeaseDiagnostic(
     val transition: String,
     val slotId: Int,
     val port: Int,
+)
+
+internal data class RerankDiagnostic(
+    val scoreResponse: String?,
+    val score: Int?,
+    val accepted: Boolean,
 )
 
 internal data class WarmupFailure(
@@ -139,6 +146,14 @@ internal class SessionPrefillCoordinator(
             diagnostic.transition,
             diagnostic.slotId,
             diagnostic.port,
+        )
+    },
+    private val rerankDiagnosticSink: (RerankDiagnostic) -> Unit = { diagnostic ->
+        coordinatorLogger.trace(
+            "operation=rerank scoreResponse=\"{}\" score={} accepted={}",
+            diagnostic.scoreResponse?.escapeForLlmTrace(),
+            diagnostic.score,
+            diagnostic.accepted,
         )
     },
 ) : PrefillCoordinator {
@@ -404,7 +419,7 @@ internal class SessionPrefillCoordinator(
         operation.job = scope.launch(start = CoroutineStart.LAZY) {
             val failure = try {
                 val candidate = operation.reservation.awaitCandidate()
-                val score = candidate?.let {
+                val scoreResponse = candidate?.let {
                     val relevanceRequest = FragmentRelevanceRequest(
                         sessionId = request.sessionId,
                         modelId = request.modelId,
@@ -413,14 +428,15 @@ internal class SessionPrefillCoordinator(
                         history = request.history,
                         candidateKey = it.matchText,
                     )
-                    parseFragmentRelevance(gateway.scoreFragment(relevanceRequest, lease.slot))
+                    gateway.scoreFragment(relevanceRequest, lease.slot)
                 }
+                val score = scoreResponse?.let(::parseFragmentRelevance)
+                val accepted = candidate != null && score != null && score >= 5
+                rerankDiagnosticSink(RerankDiagnostic(scoreResponse, score, accepted))
                 val canonicalWarmup = request.copy(
-                    history = if (candidate != null && score != null && score >= 5) {
-                        request.history + ChatEntry("runtime-fragment", candidate.fragment)
-                    } else {
-                        request.history
-                    },
+                    history = candidate?.takeIf { accepted }
+                        ?.let { request.history + ChatEntry("runtime-fragment", it.fragment) }
+                        ?: request.history,
                 )
                 gateway.warmup(canonicalWarmup, lease.slot)
                 null

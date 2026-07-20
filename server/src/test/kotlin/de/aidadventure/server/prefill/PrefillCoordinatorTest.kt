@@ -67,6 +67,23 @@ class PrefillCoordinatorTest {
     }
 
     @Test
+    fun `reranking records the raw score and rejection decision`() = runBlocking {
+        val diagnostics = mutableListOf<RerankDiagnostic>()
+        val fake = ControllableGateway(score = { "**" }, warmup = { CacheMetrics(null, null) })
+        val coordinator = SessionPrefillCoordinator(
+            fake,
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+            rerankDiagnosticSink = diagnostics::add,
+        )
+
+        assertEquals(PrefillDisposition.STARTED, coordinator.rerankAndWarmup(warmup(), candidate(), "request-42"))
+        fake.awaitWarmupCompletion()
+
+        assertEquals(listOf(RerankDiagnostic("**", null, false)), diagnostics)
+        coordinator.close()
+    }
+
+    @Test
     fun `later prefill queues while reranking retains its slot`() = runBlocking {
         val fake = ControllableGateway(score = { "5" })
         val coordinator = SessionPrefillCoordinator(fake)
