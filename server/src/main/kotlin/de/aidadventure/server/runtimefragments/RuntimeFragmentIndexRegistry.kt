@@ -17,6 +17,16 @@ import java.security.MessageDigest
 import java.time.Clock
 import java.time.Duration
 
+internal interface RuntimeFragmentIndex {
+    suspend fun prepare(definitions: List<RuntimeFragmentDefinition>, embedding: EmbeddingService)
+
+    suspend fun query(
+        definitions: List<RuntimeFragmentDefinition>,
+        embedding: EmbeddingService,
+        queryVector: FloatArray,
+    ): RuntimeFragmentDefinition?
+}
+
 /** A bounded, process-local cache of Lucene indexes for runtime-fragment definitions. */
 class RuntimeFragmentIndexRegistry private constructor(
     private val clock: Clock = Clock.systemUTC(),
@@ -24,7 +34,7 @@ class RuntimeFragmentIndexRegistry private constructor(
     private val maxIndexes: Int = 32,
     private val traceSink: RuntimeFragmentTraceSink,
     @Suppress("UNUSED_PARAMETER") private val internalConstructorMarker: Unit,
-) : AutoCloseable {
+) : AutoCloseable, RuntimeFragmentIndex {
     constructor(
         clock: Clock = Clock.systemUTC(),
         idleTtl: Duration = Duration.ofMinutes(15),
@@ -49,11 +59,11 @@ class RuntimeFragmentIndexRegistry private constructor(
 
     val indexCount: Int get() = indexes.size
 
-    suspend fun prepare(definitions: List<RuntimeFragmentDefinition>, embedding: EmbeddingService) {
+    override suspend fun prepare(definitions: List<RuntimeFragmentDefinition>, embedding: EmbeddingService) {
         indexFor(definitions, embedding)
     }
 
-    suspend fun query(
+    override suspend fun query(
         definitions: List<RuntimeFragmentDefinition>,
         embedding: EmbeddingService,
         queryVector: FloatArray,
