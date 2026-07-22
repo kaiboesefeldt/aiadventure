@@ -156,7 +156,7 @@ git commit -m "feat(embedding): bound long text embeddings"
 
 - Consumes: BoundedTextEmbedding.embed(text: String): FloatArray.
 - Produces: internal RuntimeFragmentIndex, implemented by RuntimeFragmentIndexRegistry, with the registry's current prepare and query signatures.
-- Produces: DefaultRuntimeFragmentResolver(embedding, indexes: RuntimeFragmentIndex = RuntimeFragmentIndexRegistry()).
+- Produces: the existing public DefaultRuntimeFragmentResolver(embedding) constructor plus an internal DefaultRuntimeFragmentResolver(embedding, indexes: RuntimeFragmentIndex) test constructor.
 
 - [ ] **Step 1: Write failing resolver tests that inspect the query vector**
 
@@ -211,7 +211,7 @@ internal interface RuntimeFragmentIndex {
 }
 ~~~
 
-Change RuntimeFragmentIndexRegistry to implement this interface. In RuntimeFragmentResolver.kt, use RuntimeFragmentIndex for the constructor property, construct a BoundedTextEmbedding from the existing embedding service, and replace the concatenated query with:
+Change RuntimeFragmentIndexRegistry to implement this interface. Keep DefaultRuntimeFragmentResolver's existing public one-argument constructor. Add an internal two-argument constructor accepting RuntimeFragmentIndex, and have the public constructor delegate to it with RuntimeFragmentIndexRegistry(). In RuntimeFragmentResolver.kt, use RuntimeFragmentIndex for the private constructor property, construct a BoundedTextEmbedding from the existing embedding service, and replace the concatenated query with:
 
 ~~~kotlin
 val playerVector = boundedEmbedding.embed(lastPlayer.content)
