@@ -36,6 +36,6 @@ class BoundedTextEmbedding(
     }
 
     companion object {
-        const val MAX_EMBEDDING_CHARACTERS = 4_000
+        const val MAX_EMBEDDING_CHARACTERS = 512
     }
 }

@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Set maxEmbeddingCharacters to exactly 4_000 for multilingual-e5-small-4096; it is an application limit, not ONNX metadata.
+- Set maxEmbeddingCharacters to exactly 512 for the runtime tokenizer; it is an application limit, not ONNX metadata.
 - Split oversized text nearest its midpoint at whitespace; if none exists, split at the midpoint so recursion terminates.
 - Combine child vectors by original child character counts; do not tokenize or add token weighting.
 - Embed the last visible player and game-master messages separately, then give their vectors exactly equal weight.

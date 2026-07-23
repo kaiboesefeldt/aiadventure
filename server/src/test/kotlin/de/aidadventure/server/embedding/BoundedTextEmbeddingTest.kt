@@ -9,6 +9,17 @@ import kotlin.test.assertFailsWith
 
 class BoundedTextEmbeddingTest {
     @Test
+    fun defaultLimitSplitsTextBeyondTheTokenizerSafeWindow() = runTest {
+        val text = "x".repeat(513)
+        val left = text.take(256)
+        val right = text.drop(256)
+        val embedding = RecordingEmbedding(mapOf(left to floatArrayOf(1f), right to floatArrayOf(3f)))
+
+        assertContentEquals(floatArrayOf((256f + 257f * 3f) / 513f), BoundedTextEmbedding(embedding).embed(text))
+        assertEquals(listOf(left, right), embedding.inputs)
+    }
+
+    @Test
     fun embedsATextWithinTheLimitOnce() = runTest {
         val embedding = RecordingEmbedding(mapOf("short" to floatArrayOf(2f, 3f)))
 
