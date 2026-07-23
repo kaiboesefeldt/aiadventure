@@ -71,7 +71,7 @@ class PromptFactoryTest {
         assertEquals(listOf("system", "system", "user", "system", "user"), prompt.map { it.type().name.lowercase() })
         assertEquals("lighthouse", (prompt[3] as SystemMessage).text())
         assertEquals(
-            "Rate how well the preceding key fits the current game situation. Return exactly one ASCII digit: 0, 1, 2, 3, 4, 5, 6, 7, 8, or 9. Output no other characters, words, markdown, whitespace, or punctuation. 0 means no fit and 9 means perfect fit.",
+            "Rate how well the preceding text fits the current game situation. Return a single ASCII digit between 0 (=no fit) and 9 (=perfect fit).",
             (prompt[4] as UserMessage).singleText(),
         )
     }

@@ -42,6 +42,6 @@ class PromptFactory {
         const val GAME_MASTER_INSTRUCTION =
             "You are a concise, responsive game master. Continue the adventure from the scenario and conversation."
         const val FRAGMENT_RELEVANCE_PROMPT =
-            "Rate how well the preceding key fits the current game situation. Return exactly one ASCII digit: 0, 1, 2, 3, 4, 5, 6, 7, 8, or 9. Output no other characters, words, markdown, whitespace, or punctuation. 0 means no fit and 9 means perfect fit."
+            "Rate how well the preceding text fits the current game situation. Return a single ASCII digit between 0 (=no fit) and 9 (=perfect fit)."
     }
 }
