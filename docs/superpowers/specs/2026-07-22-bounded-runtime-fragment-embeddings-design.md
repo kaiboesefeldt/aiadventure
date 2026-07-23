@@ -21,7 +21,7 @@ Introduce a small server-side component that turns an arbitrary text into one
 embedding vector using the existing `EmbeddingService`.
 
 - A model-specific, conservative `maxEmbeddingCharacters` value is initially
-  `4_000` for the configured `multilingual-e5-small-4096` model.  It is an
+  `512` for the configured runtime tokenizer.  It is an
   explicit application limit, not a value inferred from the ONNX graph.
 - Text at or below the limit is embedded once through `EmbeddingService`.
 - Longer text is split near its midpoint at a word boundary.  If no word
