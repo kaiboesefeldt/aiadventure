@@ -38,12 +38,14 @@ class DefaultRuntimeFragmentResolver private constructor(
         val visibleHistory = history.filter { it.role != RUNTIME_FRAGMENT_ROLE }
         val lastPlayer = visibleHistory.lastOrNull { it.role == PLAYER_ROLE } ?: return null
         val lastGameMaster = visibleHistory.lastOrNull { it.role == GAME_MASTER_ROLE } ?: return null
+        val componentTexts = listOf(lastPlayer.content, lastGameMaster.content).filter { it.length >= MIN_COMPONENT_LENGTH }
+        if (componentTexts.isEmpty()) return null
         prepare(definitions)
-        val playerVector = boundedEmbedding.embed(lastPlayer.content)
-        val gameMasterVector = boundedEmbedding.embed(lastGameMaster.content)
-        require(playerVector.size == gameMasterVector.size) { "Embedding vector dimensions differ" }
+        val componentVectors = componentTexts.map { boundedEmbedding.embed(it) }
+        val dimension = componentVectors.first().size
+        require(componentVectors.all { it.size == dimension }) { "Embedding vector dimensions differ" }
         val queryVector = l2Normalize(
-            FloatArray(playerVector.size) { index -> (playerVector[index] + gameMasterVector[index]) / 2f },
+            FloatArray(dimension) { index -> componentVectors.sumOf { it[index].toDouble() }.toFloat() / componentVectors.size },
         )
         return indexes.query(definitions, embedding, queryVector)
     }
@@ -56,6 +58,7 @@ class DefaultRuntimeFragmentResolver private constructor(
         const val PLAYER_ROLE = "player"
         const val GAME_MASTER_ROLE = "game-master"
         const val RUNTIME_FRAGMENT_ROLE = "runtime-fragment"
+        const val MIN_COMPONENT_LENGTH = 10
     }
 }
 
