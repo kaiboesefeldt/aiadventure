@@ -6,6 +6,22 @@ import kotlin.test.assertNull
 
 class TurnStreamProcessorTest {
     @Test
+    fun `signals input readiness before the delayed completion frame`() {
+        var readySignals = 0
+
+        val completion = processTurnStreamChunk(
+            decoder = SseFrameDecoder(),
+            chunk = "event: input_ready\ndata: {}\n\n",
+            onInputReady = { readySignals++ },
+            onFragment = {},
+            onToken = {},
+        )
+
+        assertNull(completion)
+        assertEquals(1, readySignals)
+    }
+
+    @Test
     fun `delivers each decoded token before the completion frame arrives`() {
         val tokens = mutableListOf<String>()
         val fragments = mutableListOf<String>()
