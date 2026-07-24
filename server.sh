@@ -85,7 +85,7 @@ llama-server -t "$PRIMARY_THREADS" -rea off --port "$PRIMARY_PORT" \
     --slot-save-path "$slot_directory" --model "$PRIMARY_MODEL_PATH" &
 llama_pid=$!
 
-./gradlew :server:run --args="--llama-port=$PRIMARY_PORT --log-level=$LOG_LEVEL" &
+./gradlew --console=plain :server:run --args="--llama-port=$PRIMARY_PORT --log-level=$LOG_LEVEL" &
 gradle_pid=$!
 
 while [[ -n "$llama_pid" && -n "$gradle_pid" ]]; do

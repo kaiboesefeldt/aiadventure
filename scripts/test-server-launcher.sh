@@ -68,6 +68,7 @@ EOF
 chmod +x "$tmp_dir/llama-server"
 
 bash -n server.sh
+grep -F './gradlew --console=plain :server:run' server.sh
 
 cat > .env <<EOF
 PRIMARY_MODEL_PATH=$model_file
