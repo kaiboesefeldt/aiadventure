@@ -178,6 +178,14 @@ class ScenarioFrontmatterTest {
     )
 
     @Test
+    fun rejectsNumericEntityIdInFlowMapping() = assertInvalidWorldState(
+        """
+        world-state:
+          entities: { 1: { kind: npc, name: Mira, summary: Here } }
+        """.trimIndent(),
+    )
+
+    @Test
     fun rejectsBlankFactKey() = assertInvalidWorldState(
         """
         world-state:
@@ -194,6 +202,22 @@ class ScenarioFrontmatterTest {
             1: "true"
         """.trimIndent(),
     )
+
+    @Test
+    fun rejectsNumericFactKeyInFlowMapping() = assertInvalidWorldState(
+        """
+        world-state:
+          facts: { 1: x }
+        """.trimIndent(),
+    )
+
+    @Test
+    fun ignoresNumericRootFrontmatterKey() {
+        val parsed = ScenarioFrontmatter.parse("---\n1: whatever\n---\n# Harbor")
+
+        assertEquals(WorldState(), parsed.initialWorldState)
+        assertEquals("# Harbor", parsed.promptMarkdown)
+    }
 
     @Test
     fun rejectsNumericFactValue() = assertInvalidWorldState(
