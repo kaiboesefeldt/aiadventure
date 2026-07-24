@@ -69,7 +69,11 @@ fun main(args: Array<String>) {
     val config = ServerRuntimeConfig.from(System.getenv(), args)
     ServerLogging.configure(config.logLevel)
     embeddedServer(Netty, port = config.port, host = config.host) {
-        adventureModule(llamaCppPort = config.llamaCppPort, secondaryLlamaCppPort = config.secondaryLlamaCppPort)
+        adventureModule(
+            llamaCppPort = config.llamaCppPort,
+            secondaryLlamaCppPort = config.secondaryLlamaCppPort,
+            worldStateResolver = LlamaCppWorldStateResolver(config.secondaryLlamaCppPort),
+        )
     }.start(wait = true)
 }
 
@@ -134,7 +138,7 @@ fun Application.adventureModule(
     clock: () -> Long = System::currentTimeMillis,
     llamaCppPort: Int = LlamaCppPort.DEFAULT,
     secondaryLlamaCppPort: Int = 8082,
-    worldStateResolver: WorldStateResolver = LlamaCppWorldStateResolver(secondaryLlamaCppPort),
+    worldStateResolver: WorldStateResolver = WorldStateResolver { null },
 ) {
     val logger = LoggerFactory.getLogger("de.aidadventure.server.AdventureApi")
     val postTurnScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -238,8 +242,19 @@ fun Application.adventureModule(
                             ChatEntry("player", request.playerAction) +
                             ChatEntry("game-master", generated.toString())
                         val acceptedWorldState = try {
-                            worldStateResolver.resolve(WorldStateResolutionRequest(requestId, request.scenarioMarkdown, request.worldState, request.playerAction, generated.toString()))
-                                ?.let { WorldStateReducer.apply(request.worldState, it) } ?: request.worldState
+                            val candidate = worldStateResolver.resolve(
+                                WorldStateResolutionRequest(requestId, request.scenarioMarkdown, request.worldState, request.playerAction, generated.toString()),
+                            )
+                            val reduced = candidate?.let { WorldStateReducer.apply(request.worldState, it) }
+                            if (logger.isTraceEnabled) {
+                                logger.trace(
+                                    "operation=world_state phase=patch sessionId={} accepted={} patch={}",
+                                    request.sessionId,
+                                    reduced != null,
+                                    candidate?.let { eventJson.encodeToString(it) } ?: "null",
+                                )
+                            }
+                            reduced ?: request.worldState
                         } catch (failure: Exception) {
                             if (failure is CancellationException) throw failure
                             logger.warn("requestId={} operation={} failure={}", requestId, "world_state", failure.javaClass.simpleName)
