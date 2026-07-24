@@ -11,28 +11,19 @@ provides the API and serves the Kotlin/JS React client.
 
 ## Start
 
-Start llama.cpp's OpenAI-compatible server on loopback port `8081` with at
-least two cache slots:
+Create a local configuration, set `PRIMARY_MODEL_PATH` and, if necessary, the
+remaining values, then start both local processes:
 
 ```bash
-llama-server --host 127.0.0.1 --port 8081 --model /absolute/path/to/model.gguf --parallel 4 --slots --slot-save-path /tmp/ai-adventure-slots
+cp .env.example .env
+# Edit .env to set PRIMARY_MODEL_PATH and, if needed, the remaining values.
+./server.sh
 ```
 
-Then start the application:
+`server.sh` creates a unique temporary directory for llama.cpp cache slots. On
+Ctrl-C or `TERM`, it terminates both the llama.cpp and application children.
 
-```bash
-./gradlew :server:run
-```
-
-The application connects to llama.cpp on `localhost:8081` by default. Override
-that port only when starting the application:
-
-```bash
-./gradlew :server:run --args='--llama-port=8082'
-```
-
-Open [http://127.0.0.1:8080/](http://127.0.0.1:8080/) in the browser. Stop the
-application with Ctrl-C in its Gradle terminal.
+Open [http://127.0.0.1:8080/](http://127.0.0.1:8080/) in the browser.
 
 The server listens only on `127.0.0.1:8080` by default.
 Set `ADVENTURE_EXPOSE_LAN=true` only when you intentionally need the API reachable on
@@ -49,9 +40,8 @@ for the current session. The server responds with `202 Accepted`; this does not 
 transcript entry or block sending. Sending the action uses `POST /api/turn` with the
 same `sessionId`, allowing llama.cpp to reuse that session's cache. `--parallel 1`
 is unnecessary: each active session reserves its own slot, and a full server returns
-a safe busy error rather than using another session's cache. `--slot-save-path` is
-required so the server supports clearing a released slot; use a directory writable by
-the llama.cpp process.
+a safe busy error rather than using another session's cache. The launcher configures
+llama.cpp with a writable temporary slot directory so it can clear released slots.
 
 ## Test-Spiel laden
 
