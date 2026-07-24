@@ -77,6 +77,48 @@ class ScenarioFrontmatterTest {
     }
 
     @Test
+    fun parsesBlockScalarEntitySummaryContainingColon() {
+        val parsed = ScenarioFrontmatter.parse(
+            """
+            ---
+            world-state:
+              entities:
+                mira:
+                  kind: npc
+                  name: Mira
+                  summary: |
+                    2026: arrival
+            ---
+            # Harbor
+            """.trimIndent(),
+        )
+
+        assertEquals("2026: arrival\n", parsed.initialWorldState.entities.getValue("mira").summary)
+    }
+
+    @Test
+    fun parsesQuotedNumericEntityAndFactKeys() {
+        val parsed = ScenarioFrontmatter.parse(
+            """
+            ---
+            world-state:
+              entities:
+                "1":
+                  kind: npc
+                  name: Mira
+                  summary: Waiting at the quay
+              facts:
+                "2": "true"
+            ---
+            # Harbor
+            """.trimIndent(),
+        )
+
+        assertEquals(setOf("1"), parsed.initialWorldState.entities.keys)
+        assertEquals(mapOf("2" to "true"), parsed.initialWorldState.facts)
+    }
+
+    @Test
     fun noWorldStateUsesEmptyRevisionZeroState() {
         val parsed = ScenarioFrontmatter.parse("---\ntitle: Harbor\n---\n# Harbor")
 

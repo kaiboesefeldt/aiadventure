@@ -118,10 +118,54 @@ object ScenarioFrontmatter {
         return js("Object.entries(value)").unsafeCast<Array<Array<dynamic>>>()
     }
 
-    private fun hasNonStringBlockMappingKey(frontmatter: String): Boolean = frontmatter
-        .lineSequence()
-        .map { it.substringBefore(':', missingDelimiterValue = "").trim() }
-        .any { key -> key.isNotEmpty() && JsYaml.load(key) !is String }
+    private fun hasNonStringBlockMappingKey(frontmatter: String): Boolean {
+        var blockScalarIndent: Int? = null
+        for (line in frontmatter.lineSequence()) {
+            val indent = line.indexOfFirst { !it.isWhitespace() }.let { if (it == -1) line.length else it }
+            if (blockScalarIndent != null) {
+                if (line.isBlank() || indent > blockScalarIndent) continue
+                blockScalarIndent = null
+            }
+
+            val mappingEntry = blockMappingEntry(line) ?: continue
+            if (JsYaml.load(mappingEntry.first) !is String) return true
+            if (mappingEntry.second.isBlockScalarHeader()) blockScalarIndent = indent
+        }
+        return false
+    }
+
+    private fun blockMappingEntry(line: String): Pair<String, String>? {
+        var content = line.trimStart()
+        if (content.startsWith("#") || content == "---" || content == "...") return null
+        if (content.startsWith("- ")) content = content.drop(2)
+
+        var quote: Char? = null
+        var index = 0
+        while (index < content.length) {
+            when (quote) {
+                '\'' -> if (content[index] == '\'') {
+                    if (content.getOrNull(index + 1) == '\'') index++ else quote = null
+                }
+                '"' -> if (content[index] == '\\') {
+                    index++
+                } else if (content[index] == '"') {
+                    quote = null
+                }
+                null -> when (content[index]) {
+                    '\'', '"' -> quote = content[index]
+                    ':' -> if (content.getOrNull(index + 1)?.isWhitespace() != false) {
+                        return content.substring(0, index).trimEnd() to content.substring(index + 1)
+                    }
+                }
+            }
+            index++
+        }
+        return null
+    }
+
+    private fun String.isBlockScalarHeader(): Boolean = trim().matches(
+        Regex("[|>](?:[+-]?[1-9]?|[1-9]?[+-]?)(?:\\s+#.*)?"),
+    )
 
     private fun invalidFrontmatter(): Nothing = throw IllegalArgumentException("Invalid scenario frontmatter.")
 }
