@@ -7,7 +7,7 @@ cd "$project_root"
 tmp_dir="$(mktemp -d)"
 args_file="$tmp_dir/llama-server.args"
 fake_llama_pid_file="$tmp_dir/llama-server.pid"
-slot_dir="$tmp_dir/slots"
+model_file="$tmp_dir/model.gguf"
 env_backup="$tmp_dir/original.env"
 launcher_pid=""
 fake_llama_pid=""
@@ -37,8 +37,9 @@ if [[ -e .env ]]; then
 fi
 
 test_port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+touch "$model_file"
 cat > .env <<EOF
-PRIMARY_MODEL_PATH=/dev/null
+PRIMARY_MODEL_PATH=$model_file
 PRIMARY_THREADS=4
 PRIMARY_PORT=$test_port
 LOG_LEVEL=INFO
@@ -84,10 +85,12 @@ done
 [[ -s "$args_file" && -s "$fake_llama_pid_file" ]]
 
 fake_llama_pid="$(cat "$fake_llama_pid_file")"
+slot_dir="$(sed -n 's/.*--slot-save-path \([^ ]*\) --model.*/\1/p' "$args_file")"
+[[ -n "$slot_dir" ]]
 kill -TERM "$launcher_pid"
-wait "$launcher_pid"
+wait "$launcher_pid" || true
 launcher_pid=""
 
-test "$(cat "$args_file")" = "-t 4 -rea off --port $test_port --slot-save-path $slot_dir --model /dev/null"
+test "$(cat "$args_file")" = "-t 4 -rea off --port $test_port --slot-save-path $slot_dir --model $model_file"
 test ! -d "$slot_dir"
 ! kill -0 "$fake_llama_pid" 2>/dev/null
