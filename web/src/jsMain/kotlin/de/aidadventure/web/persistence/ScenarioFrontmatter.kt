@@ -133,6 +133,11 @@ object ScenarioFrontmatter {
             while (path.lastOrNull()?.first?.let { indent <= it } == true) path.removeLast()
             val parentPath = path.map { it.second }
             val key = JsYaml.load(mappingEntry.first) as? String
+            if (isStrictWorldStateMappingEntry(parentPath, key) &&
+                (mappingEntry.first.hasNonAuditableYamlSyntax() || mappingEntry.second.hasNonAuditableYamlSyntax())
+            ) {
+                return true
+            }
             if (parentPath.isEmpty() && key == "world-state" && mappingEntry.second.isAlias()) return true
             if (parentPath == listOf("world-state") && key in arrayOf("entities", "facts") && mappingEntry.second.isAlias()) return true
             if (parentPath == listOf("world-state", "entities") || parentPath == listOf("world-state", "facts")) {
@@ -142,6 +147,51 @@ object ScenarioFrontmatter {
             if (parentPath.isEmpty() && key == "world-state" && hasNonStringWorldStateFlowMappingKey(mappingEntry.second)) return true
             if (mappingEntry.second.isBlockScalarHeader()) blockScalarIndent = indent
             path += indent to key
+        }
+        return false
+    }
+
+    private fun isStrictWorldStateMappingEntry(parentPath: List<String?>, key: String?): Boolean =
+        (parentPath.isEmpty() && key == "world-state") ||
+            (parentPath == listOf("world-state") && key in arrayOf("entities", "facts")) ||
+            parentPath == listOf("world-state", "entities") ||
+            parentPath == listOf("world-state", "facts") ||
+            (parentPath.size == 3 && parentPath.take(2) == listOf("world-state", "entities"))
+
+    private fun String.hasNonAuditableYamlSyntax(): Boolean {
+        var quote: Char? = null
+        var startsNode = true
+        var index = 0
+        while (index < length) {
+            when (quote) {
+                '\'' -> if (this[index] == '\'') {
+                    if (getOrNull(index + 1) == '\'') index++ else quote = null
+                }
+                '"' -> if (this[index] == '\\') {
+                    index++
+                } else if (this[index] == '"') {
+                    quote = null
+                }
+                null -> when (val character = this[index]) {
+                    '\'', '"' -> {
+                        quote = character
+                        startsNode = false
+                    }
+                    '#' -> return false
+                    '&', '!', '*' -> if (startsNode) return true
+                    '<' -> if (startsNode && startsWith("<<", index)) {
+                        var delimiter = index + 2
+                        while (getOrNull(delimiter)?.isWhitespace() == true) delimiter++
+                        if (getOrNull(delimiter) == ':') return true
+                        startsNode = false
+                    } else {
+                        startsNode = false
+                    }
+                    ':', ',', '{', '[' -> startsNode = true
+                    else -> if (!character.isWhitespace()) startsNode = false
+                }
+            }
+            index++
         }
         return false
     }

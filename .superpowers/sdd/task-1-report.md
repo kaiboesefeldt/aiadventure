@@ -169,3 +169,51 @@ BUILD SUCCESSFUL in 8s
 FINAL: ./gradlew check --console=plain
 BUILD SUCCESSFUL
 ```
+
+## Final strict-source validation fix: anchors, tags, merges, and aliases
+
+Added four regressions for source syntax that can hide mapping structure from
+the strict `world-state` validator:
+
+- an anchored flow `entities` mapping with an unquoted numeric entity ID;
+- a tagged flow `entities` mapping with an unquoted numeric entity ID;
+- a YAML merge that injects an unquoted numeric entity ID;
+- an aliased entity mapping.
+
+RED:
+
+```text
+./gradlew --no-daemon :web:browserTest --tests de.aidadventure.web.persistence.ScenarioFrontmatterTest --console=plain
+26 tests completed, 4 failed
+ScenarioFrontmatterTest.rejectsAnchoredFlowEntitiesMapping FAILED
+ScenarioFrontmatterTest.rejectsTaggedFlowEntitiesMapping FAILED
+ScenarioFrontmatterTest.rejectsMergedEntityMapping FAILED
+ScenarioFrontmatterTest.rejectsAliasedEntityMapping FAILED
+```
+
+The parser now rejects YAML anchors, tags, aliases, and merge keys when they
+occur in the source of strict `world-state`, `entities`, `facts`, or entity
+mappings. The detection is scoped to YAML node syntax, so quoted scalar text,
+normal direct block/flow mappings, and non-strict root frontmatter stay valid.
+
+GREEN and final verification:
+
+```text
+./gradlew --no-daemon :web:browserTest --tests de.aidadventure.web.persistence.ScenarioFrontmatterTest --console=plain
+BUILD SUCCESSFUL
+
+./gradlew --no-daemon :web:browserTest --console=plain
+BUILD SUCCESSFUL
+
+./gradlew --no-daemon :server:test --console=plain --quiet
+BUILD SUCCESSFUL
+
+./gradlew --no-daemon check --console=plain
+BUILD SUCCESSFUL
+27 actionable tasks: 1 executed, 26 up-to-date
+```
+
+The first complete check after browser verification encountered a missing
+temporary server test-result file from an interrupted run. No source test
+failed; the focused server test regenerated its results, and the immediately
+following full gate completed successfully.

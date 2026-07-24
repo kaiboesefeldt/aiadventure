@@ -251,6 +251,46 @@ class ScenarioFrontmatterTest {
     }
 
     @Test
+    fun rejectsAnchoredFlowEntitiesMapping() = assertInvalidWorldState(
+        """
+        world-state: { entities: &entities { 1: { kind: npc, name: Mira, summary: Waiting at the quay } } }
+        """.trimIndent(),
+    )
+
+    @Test
+    fun rejectsTaggedFlowEntitiesMapping() = assertInvalidWorldState(
+        """
+        world-state: { entities: !!map { 1: { kind: npc, name: Mira, summary: Waiting at the quay } } }
+        """.trimIndent(),
+    )
+
+    @Test
+    fun rejectsMergedEntityMapping() = assertInvalidWorldState(
+        """
+        world-state:
+          entities:
+            <<: &defaults
+              1:
+                kind: npc
+                name: Mira
+                summary: Waiting at the quay
+        """.trimIndent(),
+    )
+
+    @Test
+    fun rejectsAliasedEntityMapping() = assertInvalidWorldState(
+        """
+        defaults: &defaults
+          kind: npc
+          name: Mira
+          summary: Waiting at the quay
+        world-state:
+          entities:
+            mira: *defaults
+        """.trimIndent(),
+    )
+
+    @Test
     fun ignoresNumericRootFrontmatterKey() {
         val parsed = ScenarioFrontmatter.parse("---\n1: whatever\n---\n# Harbor")
 
