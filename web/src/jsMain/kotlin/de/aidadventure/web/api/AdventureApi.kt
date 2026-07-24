@@ -14,7 +14,7 @@ import kotlinx.serialization.json.Json
 interface AdventureApi {
     suspend fun prefill(request: PrefillRequest): PrefillAccepted
     suspend fun warmup(request: WarmupRequest): PrefillAccepted
-    suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion
+    suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion
 }
 
 class AdventureApiClient(
@@ -32,7 +32,7 @@ class AdventureApiClient(
         return streamJson.decodeFromString(response.text().unsafeCast<Promise<String>>().await())
     }
 
-    override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
+    override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
         val response = requireBrowserSuccess(browserFetchTurn(request))
         val reader = response.body?.getReader() ?: throw AdventureApiException("The model response ended unexpectedly.")
         val textDecoder = js("new TextDecoder()")
@@ -41,9 +41,9 @@ class AdventureApiClient(
         while (true) {
             val result = reader.read().unsafeCast<Promise<dynamic>>().await()
             if (result.done.unsafeCast<Boolean>()) break
-            processTurnStreamChunk(decoder, decodeText(textDecoder, result.value, stream = true), onFragment, onToken)?.let { return it }
+            processTurnStreamChunk(decoder, decodeText(textDecoder, result.value, stream = true), onInputReady, onFragment, onToken)?.let { return it }
         }
-        processTurnStreamChunk(decoder, decodeText(textDecoder, null, stream = false), onFragment, onToken)?.let { return it }
+        processTurnStreamChunk(decoder, decodeText(textDecoder, null, stream = false), onInputReady, onFragment, onToken)?.let { return it }
         throw AdventureApiException("The model response ended unexpectedly.")
     }
 
@@ -92,11 +92,13 @@ internal fun resolveAdventureApiBaseUrl(hostname: String, port: String): String 
 internal fun processTurnStreamChunk(
     decoder: SseFrameDecoder,
     chunk: String,
+    onInputReady: () -> Unit = {},
     onFragment: (String) -> Unit,
     onToken: (String) -> Unit,
 ): TurnCompletion? {
     for (frame in decoder.push(chunk)) {
         when (frame.event) {
+            "input_ready" -> onInputReady()
             "fragment" -> onFragment(streamJson.decodeFromString<StreamFragment>(frame.data).fragment)
             "token" -> onToken(streamJson.decodeFromString<StreamToken>(frame.data).text)
             "done" -> streamJson.decodeFromString<StreamDone>(frame.data).let { return TurnCompletion(it.metrics, it.worldState) }

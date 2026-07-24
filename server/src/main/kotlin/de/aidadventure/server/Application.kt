@@ -237,6 +237,7 @@ fun Application.adventureModule(
                     }
                     val metrics = completedMetrics
                     if (generated.isNotEmpty() && metrics != null) {
+                        sse("input_ready", "{}")
                         val requestId = call.callId ?: "unknown"
                         val completedHistory = (appliedFragment?.let { request.history + ChatEntry("runtime-fragment", it) } ?: request.history) +
                             ChatEntry("player", request.playerAction) +

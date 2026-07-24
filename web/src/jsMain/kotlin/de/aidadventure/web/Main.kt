@@ -174,7 +174,7 @@ private val DetailView = FC<DetailViewProps> { props ->
 
 private external interface PlayViewProps : Props { var scenario: Scenario; var session: GameSession; var api: AdventureApi; var sessions: SessionRepository; var onBack: () -> Unit; var onSessionChanged: (GameSession) -> Unit }
 private val PlayView = FC<PlayViewProps> { props ->
-    var action by useState(""); var pending by useState(false); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null); var openFragmentIndex by useState<Int?>(null); var worldStateOpen by useState(false)
+    var action by useState(""); var pending by useState(false); var inputReady by useState(false); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null); var openFragmentIndex by useState<Int?>(null); var worldStateOpen by useState(false)
     val liveId = props.session.id
     val (prefill) = useState(PrefillSubmission(props.api))
     val displayed = sessionForDisplay(props.session, streamed)
@@ -191,10 +191,10 @@ private val PlayView = FC<PlayViewProps> { props ->
             onCleanup { document.asDynamic().removeEventListener("click", outsideClick) }
         }
     }
-    fun submit() { val text = action.trim(); if (text.isBlank() || pending) return; prefill.turnStarted(); pending = true; action = ""; error = null; scope.launch { try {
-        val completed = TurnSubmission(props.sessions, props.api).submit(props.session, props.scenario, text, { flushStreamUpdate { streamed = it } }, { flushStreamUpdate { streamed = it } }, liveId)
-        metrics = completed.metrics; streamed = completed.session; props.onSessionChanged(completed.session)
-    } catch (failure: Throwable) { error = clientMessage(failure) } finally { prefill.turnFinished(); pending = false } } }
+    fun submit() { val text = action.trim(); if (text.isBlank() || pending) return; prefill.turnStarted(); pending = true; inputReady = false; action = ""; error = null; scope.launch { try {
+        val completed = TurnSubmission(props.sessions, props.api).submit(props.session, props.scenario, text, { flushStreamUpdate { streamed = it } }, { flushStreamUpdate { streamed = it } }, { inputReady = true }, liveId)
+        metrics = completed.metrics; streamed = completed.session; props.onSessionChanged(completed.session); prefill.turnFinished(); prefill.changed(completed.session, props.scenario, liveId, action)
+    } catch (failure: Throwable) { error = clientMessage(failure) } finally { prefill.turnFinished(); pending = false; inputReady = false } } }
     ReactHTML.section { className = ClassName("view-card")
         ReactHTML.button { className = ClassName("secondary-button"); disabled = pending; onClick = { props.onBack() }; +"Back to sessions" }
         ReactHTML.h2 { className = ClassName("view-title"); +displayed.title }
@@ -251,8 +251,8 @@ private val PlayView = FC<PlayViewProps> { props ->
             }
         }
         metrics?.let { renderMetrics(it) }; error?.let { ReactHTML.p { className = ClassName("status-error"); +it } }
-        ReactHTML.textarea { id = "player-action".unsafeCast<web.dom.ElementId>(); className = ClassName("action-input"); value = action; disabled = pending; onChange = { action = it.target.unsafeCast<HTMLTextAreaElement>().value; prefill.changed(props.session, props.scenario, liveId, action) }; onKeyDown = { event -> if (shouldSubmitOnEnter(event.key, event.shiftKey, event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>(), pending, action)) { event.preventDefault(); submit() } } }
-        ReactHTML.button { className = ClassName("primary-button"); disabled = pending || action.isBlank(); onClick = { submit() }; +(if (pending) "Sending…" else "Send") }
+        ReactHTML.textarea { id = "player-action".unsafeCast<web.dom.ElementId>(); className = ClassName("action-input"); value = action; disabled = pending && !inputReady; onChange = { action = it.target.unsafeCast<HTMLTextAreaElement>().value; if (!pending) prefill.changed(props.session, props.scenario, liveId, action) }; onKeyDown = { event -> if (shouldSubmitOnEnter(event.key, event.shiftKey, event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>(), pending, action)) { event.preventDefault(); submit() } } }
+        ReactHTML.button { className = ClassName("primary-button"); disabled = pending || action.isBlank(); onClick = { submit() }; +(if (pending && inputReady) "Updating world…" else if (pending) "Sending…" else "Send") }
     }
 }
 

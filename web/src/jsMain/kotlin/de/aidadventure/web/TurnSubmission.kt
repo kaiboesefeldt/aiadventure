@@ -21,6 +21,7 @@ internal class TurnSubmission(
         playerAction: String,
         onStarted: (GameSession) -> Unit,
         onStreamed: (GameSession) -> Unit,
+        onInputReady: () -> Unit = {},
         liveSessionId: String = session.id,
     ): CompletedTurn {
         val started = session.copy(
@@ -32,7 +33,7 @@ internal class TurnSubmission(
         val streamedText = StringBuilder()
         var messages = started.messages
         val completion = try {
-            api.play(TurnRequestMapper.map(session, scenario, playerAction, liveSessionId), { fragment ->
+            api.play(TurnRequestMapper.map(session, scenario, playerAction, liveSessionId), onInputReady, { fragment ->
                 messages = messages.dropLast(1) + GameMessage("runtime-fragment", fragment, clock()) + messages.takeLast(1)
                 onStreamed(started.copy(messages = messages, updatedAt = clock()))
             }) { token ->
