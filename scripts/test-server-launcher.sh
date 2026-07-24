@@ -69,6 +69,32 @@ chmod +x "$tmp_dir/llama-server"
 
 bash -n server.sh
 
+cat > .env <<EOF
+PRIMARY_MODEL_PATH=$model_file
+PRIMARY_THREADS=4
+PRIMARY_PORT=18446744073709551616
+LOG_LEVEL=INFO
+EOF
+
+invalid_port_output="$tmp_dir/invalid-port.output"
+set +e
+PATH="$tmp_dir:$PATH" \
+  FAKE_LLAMA_ARGS_FILE="$args_file" \
+  FAKE_LLAMA_PID_FILE="$fake_llama_pid_file" \
+  ./server.sh >"$invalid_port_output" 2>&1
+invalid_port_status=$?
+set -e
+[[ "$invalid_port_status" -ne 0 ]]
+grep -Fx 'PRIMARY_PORT must be an integer between 1 and 65535.' "$invalid_port_output"
+[[ ! -e "$args_file" ]]
+
+cat > .env <<EOF
+PRIMARY_MODEL_PATH=$model_file
+PRIMARY_THREADS=4
+PRIMARY_PORT=$test_port
+LOG_LEVEL=INFO
+EOF
+
 PATH="$tmp_dir:$PATH" \
   FAKE_LLAMA_ARGS_FILE="$args_file" \
   FAKE_LLAMA_PID_FILE="$fake_llama_pid_file" \

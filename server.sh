@@ -30,7 +30,7 @@ if [[ ! "$PRIMARY_THREADS" =~ ^[1-9][0-9]*$ ]]; then
     exit 1
 fi
 
-if [[ ! "$PRIMARY_PORT" =~ ^[1-9][0-9]*$ ]] || (( PRIMARY_PORT > 65535 )); then
+if [[ ! "$PRIMARY_PORT" =~ ^[1-9][0-9]*$ ]] || (( ${#PRIMARY_PORT} > 5 )) || (( PRIMARY_PORT > 65535 )); then
     echo "PRIMARY_PORT must be an integer between 1 and 65535." >&2
     exit 1
 fi
