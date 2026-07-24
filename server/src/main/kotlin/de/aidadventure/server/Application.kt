@@ -245,6 +245,13 @@ fun Application.adventureModule(
                             logger.warn("requestId={} operation={} failure={}", requestId, "world_state", failure.javaClass.simpleName)
                             request.worldState
                         }
+                        if (logger.isTraceEnabled) {
+                            logger.trace(
+                                "operation=world_state phase=accepted sessionId={} state={}",
+                                request.sessionId,
+                                eventJson.encodeToString(acceptedWorldState),
+                            )
+                        }
                         val warmupRequest = WarmupRequest(
                             sessionId = request.sessionId,
                             modelId = request.modelId,

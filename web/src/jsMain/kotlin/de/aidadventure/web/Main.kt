@@ -6,6 +6,7 @@ import de.aidadventure.web.api.TurnMetrics
 import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
+import de.aidadventure.web.model.WorldState
 import de.aidadventure.web.persistence.AdventureDatabase
 import de.aidadventure.web.persistence.ImportResult
 import de.aidadventure.web.persistence.ScenarioImport
@@ -15,6 +16,8 @@ import kotlinx.browser.window
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.await
 import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
 import react.ChildrenBuilder
@@ -171,16 +174,15 @@ private val DetailView = FC<DetailViewProps> { props ->
 
 private external interface PlayViewProps : Props { var scenario: Scenario; var session: GameSession; var api: AdventureApi; var sessions: SessionRepository; var onBack: () -> Unit; var onSessionChanged: (GameSession) -> Unit }
 private val PlayView = FC<PlayViewProps> { props ->
-    var action by useState(""); var pending by useState(false); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null); var openFragmentIndex by useState<Int?>(null)
+    var action by useState(""); var pending by useState(false); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null); var openFragmentIndex by useState<Int?>(null); var worldStateOpen by useState(false)
     val liveId = props.session.id
     val (prefill) = useState(PrefillSubmission(props.api))
     val displayed = sessionForDisplay(props.session, streamed)
     useEffect(dependencies = emptyArray()) {
         scope.launch { runCatching { WarmupSubmission(props.api).submit(props.session, props.scenario) } }
     }
-    useEffectWithCleanup(dependencies = arrayOf(openFragmentIndex)) {
-        openFragmentIndex?.let { index ->
-            val containerId = fragmentTooltipContainerId(index)
+    useEffectWithCleanup(dependencies = arrayOf(openFragmentIndex, worldStateOpen)) {
+        (if (worldStateOpen) worldStateTooltipContainerId() else openFragmentIndex?.let(::fragmentTooltipContainerId))?.let { containerId ->
             val outsideClick: (Event) -> Unit = { event ->
                 val container = document.getElementById(containerId.unsafeCast<web.dom.ElementId>())
                 if (container == null || !container.asDynamic().contains(event.target)) openFragmentIndex = null
@@ -230,6 +232,24 @@ private val PlayView = FC<PlayViewProps> { props ->
                 MarkdownMessage { content = message.content }
             }
         } }
+        ReactHTML.div {
+            id = worldStateTooltipContainerId().unsafeCast<web.dom.ElementId>()
+            className = ClassName("fragment-tooltip-container")
+            ReactHTML.button {
+                className = ClassName("fragment-info-button")
+                ariaLabel = "World state information"
+                asDynamic()["aria-expanded"] = worldStateOpen.toString()
+                if (worldStateOpen) asDynamic()["aria-describedby"] = worldStateTooltipId()
+                onClick = { event -> event.stopPropagation(); worldStateOpen = !worldStateOpen }
+                +"World state"
+            }
+            if (worldStateOpen) ReactHTML.div {
+                id = worldStateTooltipId().unsafeCast<web.dom.ElementId>()
+                className = ClassName("fragment-tooltip")
+                asDynamic().role = "tooltip"
+                +worldStateJson(displayed.worldState)
+            }
+        }
         metrics?.let { renderMetrics(it) }; error?.let { ReactHTML.p { className = ClassName("status-error"); +it } }
         ReactHTML.textarea { id = "player-action".unsafeCast<web.dom.ElementId>(); className = ClassName("action-input"); value = action; disabled = pending; onChange = { action = it.target.unsafeCast<HTMLTextAreaElement>().value; prefill.changed(props.session, props.scenario, liveId, action) }; onKeyDown = { event -> if (shouldSubmitOnEnter(event.key, event.shiftKey, event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>(), pending, action)) { event.preventDefault(); submit() } } }
         ReactHTML.button { className = ClassName("primary-button"); disabled = pending || action.isBlank(); onClick = { submit() }; +(if (pending) "Sending…" else "Send") }
@@ -247,5 +267,8 @@ internal fun runtimeFragmentForGameMaster(messages: List<GameMessage>, index: In
             ?.takeIf { messages.getOrNull(index - 1)?.role == "player" } }
 private fun fragmentTooltipContainerId(index: Int) = "fragment-tooltip-container-$index"
 private fun fragmentTooltipId(index: Int) = "fragment-tooltip-$index"
+private fun worldStateTooltipContainerId() = "world-state-tooltip-container"
+private fun worldStateTooltipId() = "world-state-tooltip"
+internal fun worldStateJson(worldState: WorldState): String = Json.encodeToString(worldState)
 internal fun shouldSubmitOnEnter(key: String, shiftKey: Boolean, isComposing: Boolean, pending: Boolean, action: String) = key == "Enter" && !shiftKey && !isComposing && !pending && action.isNotBlank()
 internal fun now(): Long = (js("Date.now()") as Double).toLong()
