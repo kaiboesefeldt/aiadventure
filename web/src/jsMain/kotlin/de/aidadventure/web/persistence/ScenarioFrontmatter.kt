@@ -31,6 +31,7 @@ object ScenarioFrontmatter {
         } catch (cause: Throwable) {
             throw IllegalArgumentException("Invalid scenario frontmatter.", cause)
         }
+        if (hasNonStringBlockMappingKey(frontmatter)) invalidFrontmatter()
         return mappingEntries(root) ?: invalidFrontmatter()
     }
 
@@ -116,6 +117,11 @@ object ScenarioFrontmatter {
         }
         return js("Object.entries(value)").unsafeCast<Array<Array<dynamic>>>()
     }
+
+    private fun hasNonStringBlockMappingKey(frontmatter: String): Boolean = frontmatter
+        .lineSequence()
+        .map { it.substringBefore(':', missingDelimiterValue = "").trim() }
+        .any { key -> key.isNotEmpty() && JsYaml.load(key) !is String }
 
     private fun invalidFrontmatter(): Nothing = throw IllegalArgumentException("Invalid scenario frontmatter.")
 }

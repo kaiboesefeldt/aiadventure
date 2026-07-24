@@ -124,11 +124,32 @@ class ScenarioFrontmatterTest {
     )
 
     @Test
+    fun rejectsNumericEntityId() = assertInvalidWorldState(
+        """
+        world-state:
+          entities:
+            1:
+              kind: npc
+              name: Mira
+              summary: Waiting at the quay
+        """.trimIndent(),
+    )
+
+    @Test
     fun rejectsBlankFactKey() = assertInvalidWorldState(
         """
         world-state:
           facts:
             "": true
+        """.trimIndent(),
+    )
+
+    @Test
+    fun rejectsNumericFactKey() = assertInvalidWorldState(
+        """
+        world-state:
+          facts:
+            1: "true"
         """.trimIndent(),
     )
 
