@@ -246,7 +246,7 @@ fun Application.adventureModule(
                             val candidate = worldStateResolver.resolve(
                                 WorldStateResolutionRequest(requestId, request.scenarioMarkdown, request.worldState, request.playerAction, generated.toString()),
                             )
-                            val reduced = candidate?.let { WorldStateReducer.apply(request.worldState, it) }
+                            val reduced = candidate?.let { WorldStateReducer.applyProposal(request.worldState, it) }
                             if (logger.isTraceEnabled) {
                                 logger.trace(
                                     "operation=world_state phase=patch sessionId={} accepted={} patch={}",
