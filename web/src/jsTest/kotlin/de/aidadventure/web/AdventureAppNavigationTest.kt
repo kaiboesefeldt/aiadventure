@@ -9,6 +9,8 @@ import de.aidadventure.web.api.TurnRequest
 import de.aidadventure.web.api.WarmupRequest
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
+import de.aidadventure.web.model.WorldEntity
+import de.aidadventure.web.model.WorldState
 import de.aidadventure.web.persistence.ScenarioRepository
 import de.aidadventure.web.persistence.SessionRepository
 import kotlin.js.Promise
@@ -28,6 +30,48 @@ import web.dom.document
 import web.html.HTMLElement
 
 class AdventureAppNavigationTest {
+    @Test
+    fun `new session persists the scenario initial world state`() {
+        val scenario = Scenario(
+            "harbor", "harbor.md", """
+            ---
+            world-state:
+              entities: { mira: { kind: npc, name: Mira, summary: Waiting } }
+              facts: { tide: high }
+            ---
+            # Harbor
+            """.trimIndent(), 1,
+        )
+
+        val session = newGameSession(scenario, "session-1", 2)
+
+        assertEquals(
+            WorldState(0, mapOf("mira" to WorldEntity("npc", "Mira", "Waiting")), mapOf("tide" to "high")),
+            session.worldState,
+        )
+    }
+
+    @Test
+    fun `creating a new session does not change an existing session world state`() {
+        val scenario = Scenario(
+            "harbor", "harbor.md", """
+            ---
+            world-state:
+              facts: { tide: high }
+            ---
+            # Harbor
+            """.trimIndent(), 1,
+        )
+        val existing = GameSession(
+            "existing", scenario.id, "Existing adventure", messages = emptyList(), createdAt = 1, updatedAt = 1,
+            worldState = WorldState(facts = mapOf("tide" to "low")),
+        )
+
+        newGameSession(scenario, "new", 2)
+
+        assertEquals(WorldState(facts = mapOf("tide" to "low")), existing.worldState)
+    }
+
     @OptIn(DelicateCoroutinesApi::class)
     @Test
     fun `starting a new session renders the play view without model discovery`() = GlobalScope.promise<Unit> {

@@ -32,10 +32,15 @@ class ScenarioImportTest {
     }
 
     @Test
-    fun `malformed world state rejects import`() {
+    fun `invalid world state rejects import`() {
         assertEquals(
             ImportResult.Rejected("Invalid scenario frontmatter."),
-            ScenarioImport.fromFile("x.md", "---\nworld-state: { facts: { tide: 2 } }\n---\n# X", emptyList(), 1),
+            ScenarioImport.fromFile(
+                "harbor.md",
+                "---\nworld-state:\n  facts:\n    mira-promised-a-meeting: 1\n---\n# Harbor",
+                emptyList(),
+                1,
+            ),
         )
     }
 
