@@ -129,6 +129,7 @@ object ScenarioFrontmatter {
                 blockScalarIndent = null
             }
 
+            if (line.isStandaloneYamlNodePropertyOrAlias() && path.isStrictWorldStateNodePath()) return true
             val mappingEntry = blockMappingEntry(line) ?: continue
             while (path.lastOrNull()?.first?.let { indent <= it } == true) path.removeLast()
             val parentPath = path.map { it.second }
@@ -157,6 +158,18 @@ object ScenarioFrontmatter {
             parentPath == listOf("world-state", "entities") ||
             parentPath == listOf("world-state", "facts") ||
             (parentPath.size == 3 && parentPath.take(2) == listOf("world-state", "entities"))
+
+    private fun List<Pair<Int, String?>>.isStrictWorldStateNodePath(): Boolean {
+        val keys = map { it.second }
+        return keys == listOf("world-state") ||
+            keys == listOf("world-state", "entities") ||
+            keys == listOf("world-state", "facts") ||
+            (keys.size == 3 && keys.take(2) == listOf("world-state", "entities"))
+    }
+
+    private fun String.isStandaloneYamlNodePropertyOrAlias(): Boolean = trim().matches(
+        Regex("[&*!][^\\s#]+(?:\\s+#.*)?"),
+    )
 
     private fun String.hasNonAuditableYamlSyntax(): Boolean {
         var quote: Char? = null

@@ -217,3 +217,46 @@ The first complete check after browser verification encountered a missing
 temporary server test-result file from an interrupted run. No source test
 failed; the focused server test regenerated its results, and the immediately
 following full gate completed successfully.
+
+## Final review fix: standalone strict-node continuations
+
+The raw YAML scanner previously skipped every non-mapping line before checking
+the current strict-node path. Therefore standalone aliases and node properties
+could continue a strict mapping without being audited, for example
+`world-state.entities: *defaults` written on its own indented line.
+
+Added regressions for standalone continuations inside each strict mapping:
+
+- an anchor inside `world-state`;
+- an alias inside `entities`;
+- a tag inside `facts`;
+- an anchor inside an entity mapping.
+
+RED:
+
+```text
+./gradlew --no-daemon :web:browserTest --tests de.aidadventure.web.persistence.ScenarioFrontmatterTest --console=plain
+30 tests completed, 4 failed
+ScenarioFrontmatterTest.rejectsStandaloneAnchorContinuationInsideWorldState FAILED
+ScenarioFrontmatterTest.rejectsStandaloneAliasContinuationInsideEntities FAILED
+ScenarioFrontmatterTest.rejectsStandaloneTagContinuationInsideFacts FAILED
+ScenarioFrontmatterTest.rejectsStandaloneAnchorContinuationInsideEntityMapping FAILED
+```
+
+The scanner now checks a standalone `&`, `!`, or `*` YAML node line against
+the already-open strict path before ignoring non-mapping source lines. The
+check is scoped to `world-state`, `entities`, `facts`, and entity mappings, so
+root frontmatter remains non-strict and direct valid YAML remains supported.
+
+GREEN and final verification:
+
+```text
+./gradlew --no-daemon :web:browserTest --tests de.aidadventure.web.persistence.ScenarioFrontmatterTest --console=plain
+BUILD SUCCESSFUL in 12s
+
+./gradlew --no-daemon :web:browserTest --console=plain
+BUILD SUCCESSFUL in 11s
+
+./gradlew --no-daemon check --console=plain --quiet
+Exit code 0
+```

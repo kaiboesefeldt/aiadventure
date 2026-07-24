@@ -291,6 +291,56 @@ class ScenarioFrontmatterTest {
     )
 
     @Test
+    fun rejectsStandaloneAnchorContinuationInsideWorldState() = assertInvalidWorldState(
+        """
+        world-state:
+          &state
+          entities:
+            mira:
+              kind: npc
+              name: Mira
+              summary: Waiting at the quay
+        """.trimIndent(),
+    )
+
+    @Test
+    fun rejectsStandaloneAliasContinuationInsideEntities() = assertInvalidWorldState(
+        """
+        defaults: &defaults
+          mira:
+            kind: npc
+            name: Mira
+            summary: Waiting at the quay
+        world-state:
+          entities:
+            *defaults
+        """.trimIndent(),
+    )
+
+    @Test
+    fun rejectsStandaloneTagContinuationInsideFacts() = assertInvalidWorldState(
+        """
+        world-state:
+          facts:
+            !!map
+            weather: fog
+        """.trimIndent(),
+    )
+
+    @Test
+    fun rejectsStandaloneAnchorContinuationInsideEntityMapping() = assertInvalidWorldState(
+        """
+        world-state:
+          entities:
+            mira:
+              &mira
+              kind: npc
+              name: Mira
+              summary: Waiting at the quay
+        """.trimIndent(),
+    )
+
+    @Test
     fun ignoresNumericRootFrontmatterKey() {
         val parsed = ScenarioFrontmatter.parse("---\n1: whatever\n---\n# Harbor")
 
