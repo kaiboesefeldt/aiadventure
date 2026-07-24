@@ -13,6 +13,7 @@ import de.aidadventure.server.prefill.CoordinatorKey
 import de.aidadventure.server.prefill.PrefillCoordinator
 import de.aidadventure.server.prefill.PrefillRegistry
 import de.aidadventure.server.runtimefragments.RuntimeFragmentResolver
+import de.aidadventure.server.worldstate.WorldStateResolver
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -161,7 +162,11 @@ class ApplicationTest {
         val registry = FakeRegistry()
         val resolver = blockingResolverAfterTurn()
         application {
-            adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolver)
+            adventureModule(
+                prefillRegistry = registry,
+                runtimeFragmentResolver = resolver,
+                worldStateResolver = WorldStateResolver { null },
+            )
         }
         configureJsonClient()
 

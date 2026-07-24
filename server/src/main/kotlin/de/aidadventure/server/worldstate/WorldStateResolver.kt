@@ -10,6 +10,8 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 
 data class WorldStateResolutionRequest(
     val sessionId: String,
@@ -30,12 +32,12 @@ class LlamaCppWorldStateResolver(
 STATE: ${WorldStateReducer.snapshot(request.previousState)}
 PLAYER ACTION: ${request.playerAction}
 GAME-MASTER RESPONSE: ${request.gameMasterResponse}
-JSON: {\"baseRevision\":${request.previousState.revision},\"operations\":[...]}
+JSON: {"baseRevision":${request.previousState.revision},"operations":[...]}
 """
         val response = client.send(
             HttpRequest.newBuilder(URI.create("http://localhost:$port/completion"))
                 .timeout(TIMEOUT).header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(CompletionRequest(prompt, grammar = JSON_GRAMMAR))))
+                .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(CompletionRequest(prompt, jsonSchema = PATCH_SCHEMA))))
                 .build(), HttpResponse.BodyHandlers.ofString(),
         )
         if (response.statusCode() !in 200..299) return@runInterruptible null
@@ -44,12 +46,25 @@ JSON: {\"baseRevision\":${request.previousState.revision},\"operations\":[...]}
     }
 
     @kotlinx.serialization.Serializable private data class CompletionRequest(
-        val prompt: String, val n_predict: Int = 512, val stream: Boolean = false, val grammar: String,
+        val prompt: String,
+        val n_predict: Int = 512,
+        val stream: Boolean = false,
+        @kotlinx.serialization.SerialName("json_schema") val jsonSchema: JsonObject,
     )
     @kotlinx.serialization.Serializable private data class CompletionResponse(val content: String? = null)
     private companion object {
         val TIMEOUT: Duration = Duration.ofSeconds(300)
         val json = Json { ignoreUnknownKeys = true }
-        const val JSON_GRAMMAR = "root ::= value ws\nvalue ::= object | array | string | number | \\\"true\\\" | \\\"false\\\" | \\\"null\\\"\nobject ::= \\\"{\\\" ws (string ws \\\":\\\" ws value (\\\",\\\" ws string ws \\\":\\\" ws value)*)? \\\"}\\\"\narray ::= \\\"[\\\" ws (value (\\\",\\\" ws value)*)? \\\"]\\\"\nstring ::= \\\"\\\\\\\"\\\" ([^\\\\\\\"\\\\] | \\\"\\\\\\\\\\\" .)* \\\"\\\\\\\"\\\"\nnumber ::= \\\"-\\\"? [0-9]+ (\\\".\\\" [0-9]+)?\nws ::= [ \\t\\n]*"
+        val PATCH_SCHEMA = json.parseToJsonElement(
+            """{
+              "type":"object",
+              "additionalProperties":false,
+              "required":["baseRevision","operations"],
+              "properties":{
+                "baseRevision":{"type":"integer","minimum":0},
+                "operations":{"type":"array","maxItems":8,"items":{"type":"object"}}
+              }
+            }""",
+        ).jsonObject
     }
 }
