@@ -77,6 +77,21 @@ class ScenarioFrontmatterTest {
     }
 
     @Test
+    fun parsesInitialWorldStateFromDirectFlowMappings() {
+        val parsed = ScenarioFrontmatter.parse(
+            "---\nworld-state: { entities: { mira: { kind: npc, name: Mira, summary: Waiting } }, facts: { weather: fog } }\n---\n# Harbor",
+        )
+
+        assertEquals(
+            WorldState(
+                entities = mapOf("mira" to WorldEntity("npc", "Mira", "Waiting")),
+                facts = mapOf("weather" to "fog"),
+            ),
+            parsed.initialWorldState,
+        )
+    }
+
+    @Test
     fun parsesBlockScalarEntitySummaryContainingColon() {
         val parsed = ScenarioFrontmatter.parse(
             """
@@ -210,6 +225,30 @@ class ScenarioFrontmatterTest {
           facts: { 1: x }
         """.trimIndent(),
     )
+
+    @Test
+    fun rejectsWorldStateAliasWithNumericSourceKeys() {
+        val exception = assertFailsWith<IllegalArgumentException> {
+            ScenarioFrontmatter.parse(
+                """
+                ---
+                state: &state
+                  entities:
+                    1:
+                      kind: npc
+                      name: Mira
+                      summary: Waiting at the quay
+                  facts:
+                    2: "true"
+                world-state: *state
+                ---
+                # Harbor
+                """.trimIndent(),
+            )
+        }
+
+        assertEquals("Invalid scenario frontmatter.", exception.message)
+    }
 
     @Test
     fun ignoresNumericRootFrontmatterKey() {

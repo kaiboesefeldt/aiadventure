@@ -138,3 +138,34 @@ BUILD SUCCESSFUL in 20s
 FINAL: ./gradlew check --console=plain --quiet
 Exit code 0
 ```
+
+## Re-review fix: aliased world-state source mapping
+
+An alias such as `world-state: *state` can point at a non-strict root mapping.
+The scoped raw-key scan then does not observe unquoted numeric `entities` or
+`facts` keys, while `Object.entries` exposes their coerced string names after
+js-yaml resolves the alias.
+
+Added a regression for an anchored root `state` mapping with numeric entity and
+fact keys aliased through `world-state`, plus a direct valid flow-mapping test.
+Aliases are rejected only where they replace the source map that must be
+raw-key-validated: `world-state`, or its `entities`/`facts` map values. Direct
+block and flow maps, quoted numeric strings, non-strict root keys, and runtime
+fragments remain unchanged.
+
+TDD evidence:
+
+```text
+RED: ./gradlew :web:browserTest --tests de.aidadventure.web.persistence.ScenarioFrontmatterTest
+21 tests completed, 1 failed
+ScenarioFrontmatterTest.rejectsWorldStateAliasWithNumericSourceKeys FAILED
+
+GREEN: ./gradlew :web:browserTest --tests de.aidadventure.web.persistence.ScenarioFrontmatterTest
+BUILD SUCCESSFUL in 9s
+
+FOLLOW-UP: ./gradlew :web:browserTest --tests de.aidadventure.web.persistence.ScenarioFrontmatterTest
+BUILD SUCCESSFUL in 8s
+
+FINAL: ./gradlew check --console=plain
+BUILD SUCCESSFUL
+```

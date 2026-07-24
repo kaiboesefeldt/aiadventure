@@ -133,6 +133,8 @@ object ScenarioFrontmatter {
             while (path.lastOrNull()?.first?.let { indent <= it } == true) path.removeLast()
             val parentPath = path.map { it.second }
             val key = JsYaml.load(mappingEntry.first) as? String
+            if (parentPath.isEmpty() && key == "world-state" && mappingEntry.second.isAlias()) return true
+            if (parentPath == listOf("world-state") && key in arrayOf("entities", "facts") && mappingEntry.second.isAlias()) return true
             if (parentPath == listOf("world-state", "entities") || parentPath == listOf("world-state", "facts")) {
                 if (key == null) return true
             }
@@ -146,9 +148,11 @@ object ScenarioFrontmatter {
 
     private fun hasNonStringWorldStateFlowMappingKey(value: String): Boolean = flowMappingEntries(value)
         ?.any { (key, child) ->
-            key in arrayOf("entities", "facts") && hasNonStringFlowMappingKey(child)
+            key in arrayOf("entities", "facts") && (child.isAlias() || hasNonStringFlowMappingKey(child))
         }
         ?: false
+
+    private fun String.isAlias(): Boolean = trim().matches(Regex("\\*[^\\s#]+(?:\\s+#.*)?"))
 
     private fun hasNonStringFlowMappingKey(value: String): Boolean = flowMappingEntries(value)
         ?.any { (key, _) -> JsYaml.load(key) !is String }
