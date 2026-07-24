@@ -4,6 +4,7 @@ import de.aidadventure.web.api.AdventureApi
 import de.aidadventure.web.api.PrefillAccepted
 import de.aidadventure.web.api.PrefillRequest
 import de.aidadventure.web.api.TurnMetrics
+import de.aidadventure.web.api.TurnCompletion
 import de.aidadventure.web.api.TurnRequest
 import de.aidadventure.web.api.WarmupRequest
 import de.aidadventure.web.model.GameMessage
@@ -64,10 +65,10 @@ class TurnSubmissionTest {
 private class FragmentEmittingAdventureApi : AdventureApi {
     override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
     override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
-    override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnMetrics {
+    override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
         onFragment("Mira warns the player")
         onToken("The keeper points east.")
-        return TurnMetrics(null, null, null)
+        return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
     }
 }
 
@@ -82,7 +83,7 @@ private class RecordingSessions : SessionRepository {
 private class FailingFragmentAdventureApi : AdventureApi {
     override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
     override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
-    override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnMetrics {
+    override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
         onFragment("Mira warns the player")
         throw IllegalStateException("model unavailable")
     }

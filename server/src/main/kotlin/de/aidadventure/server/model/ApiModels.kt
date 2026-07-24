@@ -2,6 +2,7 @@ package de.aidadventure.server.model
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import de.aidadventure.server.worldstate.WorldState
 
 @Serializable
 data class ChatEntry(
@@ -33,6 +34,7 @@ data class TurnRequest(
     val history: List<ChatEntry>,
     val playerAction: String,
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
+    val worldState: WorldState = WorldState(),
 )
 
 @Serializable
@@ -45,6 +47,7 @@ data class PrefillRequest(
     val history: List<ChatEntry>,
     val playerAction: String,
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
+    val worldState: WorldState = WorldState(),
 )
 
 @Serializable
@@ -55,6 +58,7 @@ data class WarmupRequest(
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
+    val worldState: WorldState = WorldState(),
 )
 
 @Serializable
@@ -83,7 +87,7 @@ data class StreamToken(val text: String)
 data class StreamFragment(val fragment: String)
 
 @Serializable
-data class StreamDone(val metrics: TurnMetrics)
+data class StreamDone(val metrics: TurnMetrics, val worldState: WorldState = WorldState())
 
 @Serializable
 data class StreamError(val code: String, val message: String)

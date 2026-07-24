@@ -4,6 +4,7 @@ import de.aidadventure.web.api.AdventureApi
 import de.aidadventure.web.api.PrefillAccepted
 import de.aidadventure.web.api.PrefillRequest
 import de.aidadventure.web.api.TurnMetrics
+import de.aidadventure.web.api.TurnCompletion
 import de.aidadventure.web.api.TurnRequest
 import de.aidadventure.web.api.WarmupRequest
 import de.aidadventure.web.model.GameSession
@@ -41,7 +42,7 @@ class AdventureAppNavigationTest {
                     api = object : AdventureApi {
                         override suspend fun prefill(request: PrefillRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
                         override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
-                        override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnMetrics = error("unused")
+                        override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("unused")
                     }
                     initialScenarios = listOf(scenario)
                 })
@@ -266,7 +267,7 @@ class AdventureAppNavigationTest {
     private fun unusedApi() = object : AdventureApi {
         override suspend fun prefill(request: PrefillRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
         override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
-        override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnMetrics = error("unused")
+        override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("unused")
     }
 
     private fun HTMLElement.click(selector: String) {

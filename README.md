@@ -11,7 +11,7 @@ provides the API and serves the Kotlin/JS React client.
 
 ## Start
 
-Create a local configuration, set `PRIMARY_MODEL_PATH` and, if necessary, the
+Create a local configuration, set `PRIMARY_MODEL_PATH`, `SECONDARY_MODEL_PATH` and, if necessary, the
 remaining values, then start both local processes:
 
 ```bash
@@ -20,8 +20,8 @@ cp .env.example .env
 ./server.sh
 ```
 
-`server.sh` creates a unique temporary directory for llama.cpp cache slots. On
-Ctrl-C or `TERM`, it terminates both the llama.cpp and application children.
+`server.sh` starts primary and secondary local llama.cpp servers. The primary owns cache slots; on
+Ctrl-C or `TERM`, it terminates both llama.cpp and application children.
 
 Open [http://127.0.0.1:8080/](http://127.0.0.1:8080/) in the browser.
 
