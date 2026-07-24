@@ -87,4 +87,19 @@ llama_pid=$!
 
 ./gradlew :server:run --args="--llama-port=$PRIMARY_PORT --log-level=$LOG_LEVEL" &
 gradle_pid=$!
-wait "$gradle_pid"
+
+while [[ -n "$llama_pid" && -n "$gradle_pid" ]]; do
+    if wait -n -p completed_pid "$llama_pid" "$gradle_pid"; then
+        completed_status=0
+    else
+        completed_status=$?
+    fi
+
+    if [[ "$completed_pid" == "$llama_pid" ]]; then
+        llama_pid=""
+        exit "$completed_status"
+    fi
+
+    gradle_pid=""
+    exit "$completed_status"
+done

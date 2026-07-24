@@ -31,8 +31,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ -e .env ]]; then
-  cp .env "$env_backup"
+if [[ -e .env || -L .env ]]; then
+  mv .env "$env_backup"
   had_env=true
 fi
 
