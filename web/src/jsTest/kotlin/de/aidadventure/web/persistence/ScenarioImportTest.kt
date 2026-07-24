@@ -32,6 +32,14 @@ class ScenarioImportTest {
     }
 
     @Test
+    fun `malformed world state rejects import`() {
+        assertEquals(
+            ImportResult.Rejected("Invalid scenario frontmatter."),
+            ScenarioImport.fromFile("x.md", "---\nworld-state: { facts: { tide: 2 } }\n---\n# X", emptyList(), 1),
+        )
+    }
+
+    @Test
     fun `same filename and markdown updates existing scenario`() {
         val old = Scenario("id-1", "harbor.md", "# Harbor", 1)
 
