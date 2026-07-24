@@ -30,8 +30,8 @@ class LlamaCppWorldStateResolver(
 ) : WorldStateResolver {
     override suspend fun resolve(request: WorldStateResolutionRequest): WorldStatePatch? = runInterruptible(Dispatchers.IO) {
         val prompt = """You update a game world state. Return only valid JSON. Propose at most 8 operations.
-Each operation is either {"type":"createEntity","id":"lowercase-kebab-id","kind":"npc|location|item|other","name":"display name","summary":"short established description"} or {"type":"setFact","name":"short-name","entityId":"existing-id","value":"established value"}.
-Create an entity for each clearly established named NPC, location, or item in the game-master response. Do not return an empty operations list when the response introduces or clearly names one. Use an existing id only when the supplied state makes the reference unambiguous. Do not invent facts not clearly established by the game-master response.
+For createEntity, set type to createEntity. Derive id from name: lowercase ASCII letters and digits, words separated by one hyphen (for example, name Leuchtturm becomes id leuchtturm). Choose kind precisely: npc for a character, location for a place or building, item for a portable object, other only otherwise. Include a short established summary.
+For setFact, set type to setFact and use an entityId that appears exactly in STATE. Use an existing id only when STATE makes the reference unambiguous. Create an entity for each clearly established named NPC, location, or item in the game-master response. Do not return an empty operations list when the response introduces or clearly names one. Do not invent facts not clearly established by the game-master response.
 STATE: ${WorldStateReducer.snapshot(request.previousState)}
 PLAYER ACTION: ${request.playerAction}
 GAME-MASTER RESPONSE: ${request.gameMasterResponse}

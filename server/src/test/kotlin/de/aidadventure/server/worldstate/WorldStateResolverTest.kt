@@ -32,6 +32,7 @@ class WorldStateResolverTest {
             assertTrue(requestBody.contains("\"json_schema\""))
             assertTrue(requestBody.contains("\"enum\":[0]"))
             assertTrue(requestBody.contains("^[a-z][a-z0-9-]{0,63}$"))
+            assertFalse(requestBody.contains("lowercase-kebab-id"))
             assertFalse(requestBody.contains("\"grammar\""))
         } finally { server.stop(0) }
     }
