@@ -51,6 +51,20 @@ secondary_llama_pid=""
 gradle_pid=""
 slot_directory=""
 cleaned_up=false
+shutdown_grace_seconds=5
+
+process_group_alive() {
+    [[ -n "$1" ]] && kill -0 -- "-$1" 2>/dev/null
+}
+
+signal_process_group() {
+    local signal="$1"
+    local pid="$2"
+
+    if process_group_alive "$pid"; then
+        kill "-$signal" -- "-$pid" 2>/dev/null || true
+    fi
+}
 
 cleanup() {
     local exit_status=$?
@@ -59,11 +73,28 @@ cleanup() {
         return "$exit_status"
     fi
     cleaned_up=true
+    trap '' INT TERM
 
     for pid in "$llama_pid" "$secondary_llama_pid" "$gradle_pid"; do
-        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-            kill -TERM "$pid" 2>/dev/null || true
+        signal_process_group TERM "$pid"
+    done
+
+    for ((second = 0; second < shutdown_grace_seconds; second++)); do
+        all_groups_stopped=true
+        for pid in "$llama_pid" "$secondary_llama_pid" "$gradle_pid"; do
+            if process_group_alive "$pid"; then
+                all_groups_stopped=false
+                break
+            fi
+        done
+        if [[ "$all_groups_stopped" == true ]]; then
+            break
         fi
+        sleep 1
+    done
+
+    for pid in "$llama_pid" "$secondary_llama_pid" "$gradle_pid"; do
+        signal_process_group KILL "$pid"
     done
 
     for pid in "$llama_pid" "$secondary_llama_pid" "$gradle_pid"; do
@@ -85,13 +116,13 @@ trap 'exit 143' TERM
 
 slot_directory="$(mktemp -d "${TMPDIR:-/tmp}/ai-adventure-primary-slots.XXXXXX")"
 
-llama-server -t "$PRIMARY_THREADS" -rea off --port "$PRIMARY_PORT" \
+setsid llama-server -t "$PRIMARY_THREADS" -rea off --port "$PRIMARY_PORT" \
     --slot-save-path "$slot_directory" --model "$PRIMARY_MODEL_PATH" &
 llama_pid=$!
-llama-server -t "$SECONDARY_THREADS" -rea off --port "$SECONDARY_PORT" --model "$SECONDARY_MODEL_PATH" &
+setsid llama-server -t "$SECONDARY_THREADS" -rea off --port "$SECONDARY_PORT" --model "$SECONDARY_MODEL_PATH" &
 secondary_llama_pid=$!
 
-./gradlew --console=plain :server:run --args="--llama-port=$PRIMARY_PORT --secondary-llama-port=$SECONDARY_PORT --log-level=$LOG_LEVEL" &
+setsid ./gradlew --console=plain :server:run --args="--llama-port=$PRIMARY_PORT --secondary-llama-port=$SECONDARY_PORT --log-level=$LOG_LEVEL" &
 gradle_pid=$!
 
 while [[ -n "$llama_pid" && -n "$secondary_llama_pid" && -n "$gradle_pid" ]]; do
