@@ -29,7 +29,7 @@ class TurnStreamProcessorTest {
             onToken = tokens::add,
         )
 
-        assertEquals(3, completion?.promptTokens)
+        assertEquals(3, completion?.metrics?.promptTokens)
     }
 
     @Test

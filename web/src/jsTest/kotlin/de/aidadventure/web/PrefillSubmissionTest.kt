@@ -4,6 +4,7 @@ import de.aidadventure.web.api.AdventureApi
 import de.aidadventure.web.api.PrefillAccepted
 import de.aidadventure.web.api.PrefillRequest
 import de.aidadventure.web.api.TurnMetrics
+import de.aidadventure.web.api.TurnCompletion
 import de.aidadventure.web.api.TurnRequest
 import de.aidadventure.web.api.WarmupRequest
 import de.aidadventure.web.model.GameSession
@@ -247,5 +248,5 @@ private class RecordingAdventureApi : AdventureApi {
         return PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
     }
 
-    override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnMetrics = error("unused")
+    override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("unused")
 }

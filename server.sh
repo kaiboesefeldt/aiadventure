@@ -13,7 +13,7 @@ set -a
 source .env
 set +a
 
-for variable_name in PRIMARY_MODEL_PATH PRIMARY_THREADS PRIMARY_PORT LOG_LEVEL; do
+for variable_name in PRIMARY_MODEL_PATH PRIMARY_THREADS PRIMARY_PORT SECONDARY_MODEL_PATH SECONDARY_THREADS SECONDARY_PORT LOG_LEVEL; do
     if [[ -z "${!variable_name:-}" ]]; then
         echo "Missing required configuration: $variable_name" >&2
         exit 1
@@ -24,16 +24,19 @@ if [[ ! -f "$PRIMARY_MODEL_PATH" || ! -r "$PRIMARY_MODEL_PATH" ]]; then
     echo "PRIMARY_MODEL_PATH must be a readable regular file." >&2
     exit 1
 fi
+if [[ ! -f "$SECONDARY_MODEL_PATH" || ! -r "$SECONDARY_MODEL_PATH" ]]; then echo "SECONDARY_MODEL_PATH must be a readable regular file." >&2; exit 1; fi
 
 if [[ ! "$PRIMARY_THREADS" =~ ^[1-9][0-9]*$ ]]; then
     echo "PRIMARY_THREADS must be a positive integer." >&2
     exit 1
 fi
+if [[ ! "$SECONDARY_THREADS" =~ ^[1-9][0-9]*$ ]]; then echo "SECONDARY_THREADS must be a positive integer." >&2; exit 1; fi
 
 if [[ ! "$PRIMARY_PORT" =~ ^[1-9][0-9]*$ ]] || (( ${#PRIMARY_PORT} > 5 )) || (( PRIMARY_PORT > 65535 )); then
     echo "PRIMARY_PORT must be an integer between 1 and 65535." >&2
     exit 1
 fi
+if [[ ! "$SECONDARY_PORT" =~ ^[1-9][0-9]*$ ]] || (( ${#SECONDARY_PORT} > 5 )) || (( SECONDARY_PORT > 65535 )); then echo "SECONDARY_PORT must be an integer between 1 and 65535." >&2; exit 1; fi
 
 case "${LOG_LEVEL^^}" in
     TRACE|DEBUG|INFO|WARN|ERROR) ;;
@@ -44,6 +47,7 @@ case "${LOG_LEVEL^^}" in
 esac
 
 llama_pid=""
+secondary_llama_pid=""
 gradle_pid=""
 slot_directory=""
 cleaned_up=false
@@ -56,13 +60,13 @@ cleanup() {
     fi
     cleaned_up=true
 
-    for pid in "$llama_pid" "$gradle_pid"; do
+    for pid in "$llama_pid" "$secondary_llama_pid" "$gradle_pid"; do
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
             kill -TERM "$pid" 2>/dev/null || true
         fi
     done
 
-    for pid in "$llama_pid" "$gradle_pid"; do
+    for pid in "$llama_pid" "$secondary_llama_pid" "$gradle_pid"; do
         if [[ -n "$pid" ]]; then
             wait "$pid" 2>/dev/null || true
         fi
@@ -84,12 +88,14 @@ slot_directory="$(mktemp -d "${TMPDIR:-/tmp}/ai-adventure-primary-slots.XXXXXX")
 llama-server -t "$PRIMARY_THREADS" -rea off --port "$PRIMARY_PORT" \
     --slot-save-path "$slot_directory" --model "$PRIMARY_MODEL_PATH" &
 llama_pid=$!
+llama-server -t "$SECONDARY_THREADS" -rea off --port "$SECONDARY_PORT" --model "$SECONDARY_MODEL_PATH" &
+secondary_llama_pid=$!
 
-./gradlew --console=plain :server:run --args="--llama-port=$PRIMARY_PORT --log-level=$LOG_LEVEL" &
+./gradlew --console=plain :server:run --args="--llama-port=$PRIMARY_PORT --secondary-llama-port=$SECONDARY_PORT --log-level=$LOG_LEVEL" &
 gradle_pid=$!
 
-while [[ -n "$llama_pid" && -n "$gradle_pid" ]]; do
-    if wait -n -p completed_pid "$llama_pid" "$gradle_pid"; then
+while [[ -n "$llama_pid" && -n "$secondary_llama_pid" && -n "$gradle_pid" ]]; do
+    if wait -n -p completed_pid "$llama_pid" "$secondary_llama_pid" "$gradle_pid"; then
         completed_status=0
     else
         completed_status=$?
@@ -99,6 +105,7 @@ while [[ -n "$llama_pid" && -n "$gradle_pid" ]]; do
         llama_pid=""
         exit "$completed_status"
     fi
+    if [[ "$completed_pid" == "$secondary_llama_pid" ]]; then secondary_llama_pid=""; exit "$completed_status"; fi
 
     gradle_pid=""
     exit "$completed_status"

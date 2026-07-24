@@ -3,6 +3,7 @@ package de.aidadventure.web.api
 import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
+import de.aidadventure.web.model.WorldState
 import de.aidadventure.web.persistence.ScenarioFrontmatter
 import kotlinx.browser.window
 import kotlinx.coroutines.await
@@ -13,7 +14,7 @@ import kotlinx.serialization.json.Json
 interface AdventureApi {
     suspend fun prefill(request: PrefillRequest): PrefillAccepted
     suspend fun warmup(request: WarmupRequest): PrefillAccepted
-    suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnMetrics
+    suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion
 }
 
 class AdventureApiClient(
@@ -31,7 +32,7 @@ class AdventureApiClient(
         return streamJson.decodeFromString(response.text().unsafeCast<Promise<String>>().await())
     }
 
-    override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnMetrics {
+    override suspend fun play(request: TurnRequest, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
         val response = requireBrowserSuccess(browserFetchTurn(request))
         val reader = response.body?.getReader() ?: throw AdventureApiException("The model response ended unexpectedly.")
         val textDecoder = js("new TextDecoder()")
@@ -93,12 +94,12 @@ internal fun processTurnStreamChunk(
     chunk: String,
     onFragment: (String) -> Unit,
     onToken: (String) -> Unit,
-): TurnMetrics? {
+): TurnCompletion? {
     for (frame in decoder.push(chunk)) {
         when (frame.event) {
             "fragment" -> onFragment(streamJson.decodeFromString<StreamFragment>(frame.data).fragment)
             "token" -> onToken(streamJson.decodeFromString<StreamToken>(frame.data).text)
-            "done" -> return streamJson.decodeFromString<StreamDone>(frame.data).metrics
+            "done" -> streamJson.decodeFromString<StreamDone>(frame.data).let { return TurnCompletion(it.metrics, it.worldState) }
             "error" -> throw AdventureApiException(streamJson.decodeFromString<StreamError>(frame.data).message)
         }
     }
@@ -151,6 +152,7 @@ object TurnRequestMapper {
             playerAction = playerAction,
             sessionId = sessionId,
             runtimeFragments = parsed.runtimeFragments.map { RuntimeFragmentDefinition(it.matchText, it.fragment) },
+            worldState = session.worldState,
         )
     }
 }
@@ -165,6 +167,7 @@ object PrefillRequestMapper {
             history = session.messages.map { ChatEntry(it.role, it.content) },
             playerAction = action,
             runtimeFragments = parsed.runtimeFragments.map { RuntimeFragmentDefinition(it.matchText, it.fragment) },
+            worldState = session.worldState,
         )
     }
 }
@@ -177,6 +180,7 @@ object WarmupRequestMapper {
             scenarioMarkdown = parsed.promptMarkdown,
             history = session.messages.map { ChatEntry(it.role, it.content) },
             runtimeFragments = parsed.runtimeFragments.map { RuntimeFragmentDefinition(it.matchText, it.fragment) },
+            worldState = session.worldState,
         )
     }
 }
@@ -194,6 +198,7 @@ data class TurnRequest(
     val playerAction: String,
     val sessionId: String,
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
+    val worldState: WorldState = WorldState(),
 )
 
 @Serializable
@@ -204,6 +209,7 @@ data class PrefillRequest(
     val history: List<ChatEntry>,
     val playerAction: String,
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
+    val worldState: WorldState = WorldState(),
 )
 
 @Serializable
@@ -212,6 +218,7 @@ data class WarmupRequest(
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
+    val worldState: WorldState = WorldState(),
 )
 
 @Serializable
@@ -234,7 +241,8 @@ private data class StreamToken(val text: String)
 private data class StreamFragment(val fragment: String)
 
 @Serializable
-private data class StreamDone(val metrics: TurnMetrics)
+private data class StreamDone(val metrics: TurnMetrics, val worldState: WorldState = WorldState())
+data class TurnCompletion(val metrics: TurnMetrics, val worldState: WorldState)
 
 @Serializable
 private data class StreamError(val code: String, val message: String)

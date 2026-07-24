@@ -364,7 +364,7 @@ class ApplicationTest {
             assertEquals(
                 ": connected\n\n" +
                     "event: token\ndata: {\"text\":\"The door opens.\"}\n\n" +
-                    "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1}}\n\n",
+                    "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"revision\":0,\"entities\":{},\"facts\":{}}}\n\n",
                 response.bodyAsText(),
             )
             assertEquals(listOf(turnRequest()), registry.coordinator.turnRequests)

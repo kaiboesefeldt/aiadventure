@@ -13,6 +13,10 @@ import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.model.WarmupRequest
+import de.aidadventure.server.worldstate.LlamaCppWorldStateResolver
+import de.aidadventure.server.worldstate.WorldStateReducer
+import de.aidadventure.server.worldstate.WorldStateResolutionRequest
+import de.aidadventure.server.worldstate.WorldStateResolver
 import de.aidadventure.server.prefill.CoordinatorKey
 import de.aidadventure.server.prefill.ExpiringPrefillRegistry
 import de.aidadventure.server.prefill.PrefillRegistry
@@ -65,11 +69,11 @@ fun main(args: Array<String>) {
     val config = ServerRuntimeConfig.from(System.getenv(), args)
     ServerLogging.configure(config.logLevel)
     embeddedServer(Netty, port = config.port, host = config.host) {
-        adventureModule(llamaCppPort = config.llamaCppPort)
+        adventureModule(llamaCppPort = config.llamaCppPort, secondaryLlamaCppPort = config.secondaryLlamaCppPort)
     }.start(wait = true)
 }
 
-data class ServerRuntimeConfig(val host: String, val port: Int, val llamaCppPort: Int, val logLevel: String) {
+data class ServerRuntimeConfig(val host: String, val port: Int, val llamaCppPort: Int, val secondaryLlamaCppPort: Int, val logLevel: String) {
     companion object {
         fun from(environment: Map<String, String>, args: Array<String> = emptyArray()): ServerRuntimeConfig {
             val exposeLan = environment["ADVENTURE_EXPOSE_LAN"] ?: "false"
@@ -81,12 +85,14 @@ data class ServerRuntimeConfig(val host: String, val port: Int, val llamaCppPort
                 host = if (exposeLan == "true") "0.0.0.0" else "127.0.0.1",
                 port = environment["PORT"]?.toIntOrNull() ?: 8080,
                 llamaCppPort = options.llamaCppPort,
+                secondaryLlamaCppPort = options.secondaryLlamaCppPort,
                 logLevel = options.logLevel,
             )
         }
 
         private fun parseOptions(args: Array<String>): RuntimeOptions {
             var llamaCppPort: Int? = null
+            var secondaryLlamaCppPort: Int? = null
             var logLevel: String? = null
             for (argument in args) {
                 when {
@@ -100,17 +106,22 @@ data class ServerRuntimeConfig(val host: String, val port: Int, val llamaCppPort
                         logLevel = argument.removePrefix("--log-level=").lowercase(Locale.ROOT)
                         require(logLevel in LOG_LEVELS) { "--log-level must be TRACE, DEBUG, INFO, WARN, or ERROR." }
                     }
+                    argument.startsWith("--secondary-llama-port=") -> {
+                        require(secondaryLlamaCppPort == null) { "--secondary-llama-port may only be specified once." }
+                        secondaryLlamaCppPort = LlamaCppPort.parse(argument.removePrefix("--secondary-llama-port="))
+                    }
 
                     else -> require(false) { "Usage: --llama-port=<1-65535> --log-level=<TRACE|DEBUG|INFO|WARN|ERROR>." }
                 }
             }
             return RuntimeOptions(
                 llamaCppPort = llamaCppPort ?: LlamaCppPort.DEFAULT,
+                secondaryLlamaCppPort = secondaryLlamaCppPort ?: 8082,
                 logLevel = logLevel ?: "info",
             )
         }
 
-        private data class RuntimeOptions(val llamaCppPort: Int, val logLevel: String)
+        private data class RuntimeOptions(val llamaCppPort: Int, val secondaryLlamaCppPort: Int, val logLevel: String)
 
         private val LOG_LEVELS = setOf("trace", "debug", "info", "warn", "error")
     }
@@ -122,6 +133,8 @@ fun Application.adventureModule(
     runtimeFragmentResolver: RuntimeFragmentResolver = ProductionRuntimeFragmentResolver(),
     clock: () -> Long = System::currentTimeMillis,
     llamaCppPort: Int = LlamaCppPort.DEFAULT,
+    secondaryLlamaCppPort: Int = 8082,
+    worldStateResolver: WorldStateResolver = LlamaCppWorldStateResolver(secondaryLlamaCppPort),
 ) {
     val logger = LoggerFactory.getLogger("de.aidadventure.server.AdventureApi")
     val postTurnScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -224,6 +237,14 @@ fun Application.adventureModule(
                         val completedHistory = (appliedFragment?.let { request.history + ChatEntry("runtime-fragment", it) } ?: request.history) +
                             ChatEntry("player", request.playerAction) +
                             ChatEntry("game-master", generated.toString())
+                        val acceptedWorldState = try {
+                            worldStateResolver.resolve(WorldStateResolutionRequest(requestId, request.scenarioMarkdown, request.worldState, request.playerAction, generated.toString()))
+                                ?.let { WorldStateReducer.apply(request.worldState, it) } ?: request.worldState
+                        } catch (failure: Exception) {
+                            if (failure is CancellationException) throw failure
+                            logger.warn("requestId={} operation={} failure={}", requestId, "world_state", failure.javaClass.simpleName)
+                            request.worldState
+                        }
                         val warmupRequest = WarmupRequest(
                             sessionId = request.sessionId,
                             modelId = request.modelId,
@@ -231,6 +252,7 @@ fun Application.adventureModule(
                             scenarioMarkdown = request.scenarioMarkdown,
                             history = completedHistory,
                             runtimeFragments = request.runtimeFragments,
+                            worldState = acceptedWorldState,
                         )
                         var reservation: de.aidadventure.server.prefill.RerankReservation? = null
                         try {
@@ -246,7 +268,7 @@ fun Application.adventureModule(
                                 )
                                 null
                             }
-                            sse("done", eventJson.encodeToString(StreamDone(metrics)))
+                            sse("done", eventJson.encodeToString(StreamDone(metrics, acceptedWorldState)))
                             reservation?.let { rerankReservation ->
                                 postTurnScope.launch {
                                     var candidate: de.aidadventure.server.model.RuntimeFragmentDefinition? = null
@@ -276,7 +298,7 @@ fun Application.adventureModule(
                             throw failure
                         }
                     } else if (metrics != null) {
-                        sse("done", eventJson.encodeToString(StreamDone(metrics)))
+                        sse("done", eventJson.encodeToString(StreamDone(metrics, request.worldState)))
                     }
                 } catch (_: ClosedWriteChannelException) {
                     logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)

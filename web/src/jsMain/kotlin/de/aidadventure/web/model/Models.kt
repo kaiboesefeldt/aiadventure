@@ -20,7 +20,11 @@ data class GameSession(
     val createdAt: Long,
     val updatedAt: Long,
     val llamaCppPort: Int = 8081,
+    val worldState: WorldState = WorldState(),
 )
+
+@Serializable data class WorldState(val revision: Long = 0, val entities: Map<String, WorldEntity> = emptyMap(), val facts: Map<String, String> = emptyMap())
+@Serializable data class WorldEntity(val kind: String, val name: String, val summary: String)
 
 @Serializable
 data class GameMessage(
