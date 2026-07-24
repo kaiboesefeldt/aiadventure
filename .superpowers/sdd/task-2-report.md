@@ -173,3 +173,24 @@ Browser unit execution remains blocked by shared Yarn installation state. No loc
 ## Concern
 
 The integration test is compile-verified, but browser execution remains unavailable until the shared Yarn installation completes. No production change was required: the rendered `PlayView` already mounts one warmup and uses the persisted session ID.
+
+---
+
+# Task 2 report: initialize new sessions from frontmatter (2026-07-24)
+
+## Changed files
+
+- `web/src/jsMain/kotlin/de/aidadventure/web/Main.kt`: added `newGameSession(scenario, id, time)` and routed the Create callback through it.
+- `web/src/jsTest/kotlin/de/aidadventure/web/AdventureAppNavigationTest.kt`: covers initial frontmatter state on new sessions and preservation of an existing session state.
+
+## Test-first evidence
+
+- RED: `./gradlew :web:compileTestKotlinJs` failed solely with the expected unresolved `newGameSession` reference.
+- GREEN: `./gradlew :web:browserTest` passed after the minimal factory implementation.
+
+## Verification
+
+- `./gradlew :web:browserTest` passed.
+- `./gradlew check` passed.
+
+The plan's `:web:jsTest --tests ...` command is unavailable in this checkout; the current browser verification task is `:web:browserTest`.

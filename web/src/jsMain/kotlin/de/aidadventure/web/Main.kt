@@ -10,6 +10,7 @@ import de.aidadventure.web.model.WorldState
 import de.aidadventure.web.persistence.AdventureDatabase
 import de.aidadventure.web.persistence.ImportResult
 import de.aidadventure.web.persistence.ScenarioImport
+import de.aidadventure.web.persistence.ScenarioFrontmatter
 import de.aidadventure.web.persistence.ScenarioRepository
 import de.aidadventure.web.persistence.SessionRepository
 import kotlinx.browser.window
@@ -104,8 +105,8 @@ internal val AdventureApp = FC<AdventureAppProps> { props ->
                 sessions = { props.sessionRepository.list().filter { it.scenarioId == current.scenario.id } }
                 onBack = { view = View.Library }
                 onCreate = { scope.launch {
-                    val time = now(); val session = GameSession("session-$time-${kotlin.random.Random.nextInt()}", current.scenario.id,
-                        "${current.scenario.name} adventure", "configured-llama-cpp", emptyList(), time, time)
+                    val time = now()
+                    val session = newGameSession(current.scenario, "session-$time-${kotlin.random.Random.nextInt()}", time)
                     props.sessionRepository.save(session); view = View.Play(current.scenario, session)
                 } }
                 onResume = { session -> view = View.Play(current.scenario, session) }
@@ -260,6 +261,15 @@ private fun ChildrenBuilder.renderMetrics(metrics: TurnMetrics) { listOfNotNull(
 private fun clientMessage(cause: Throwable) = cause.message ?: "Something went wrong. Please try again."
 internal fun flushStreamUpdate(update: () -> Unit) = flushSync(update)
 internal fun sessionForDisplay(persisted: GameSession, streamed: GameSession?) = streamed ?: persisted
+internal fun newGameSession(scenario: Scenario, id: String, time: Long): GameSession = GameSession(
+    id = id,
+    scenarioId = scenario.id,
+    title = "${scenario.name} adventure",
+    messages = emptyList(),
+    createdAt = time,
+    updatedAt = time,
+    worldState = ScenarioFrontmatter.parse(scenario.markdown).initialWorldState,
+)
 internal fun isVisibleTranscriptMessage(message: GameMessage) = message.role != "runtime-fragment"
 internal fun runtimeFragmentForGameMaster(messages: List<GameMessage>, index: Int): String? =
     messages.getOrNull(index)?.takeIf { it.role == "game-master" }
