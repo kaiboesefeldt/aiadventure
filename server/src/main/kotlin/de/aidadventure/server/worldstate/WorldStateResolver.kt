@@ -29,11 +29,11 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
             else -> null
         }
         val narrativeFocus = complete(
-            SITUATION_PROMPT + "\nPRIOR UNRESOLVED SITUATION:\n${request.previousState.narrativeFocus}\nPLAYER ACTION:\n${request.playerAction}\nGAME-MASTER RESPONSE:\n${request.gameMasterResponse}",
-            situationSchema,
+            FOCUS_PROMPT + "\nPRIOR NARRATIVE FOCUS:\n${request.previousState.narrativeFocus}\nPLAYER ACTION:\n${request.playerAction}\nGAME-MASTER RESPONSE:\n${request.gameMasterResponse}",
+            narrativeFocusSchema,
             request,
-            "unresolved_situation",
-        )?.let(::unresolvedSituation) ?: request.previousState.narrativeFocus
+            "narrative_focus",
+        )?.let(::narrativeFocus) ?: request.previousState.narrativeFocus
         request.previousState.copy(
             location = resolvedLocation?.location ?: request.previousState.location,
             narrativeFocus = narrativeFocus,
@@ -69,7 +69,7 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
         ?.trimEnd(',', ';', ':', '.', '!', '?')
         ?.trim()
         ?.takeIf(String::isNotBlank)
-    private fun unresolvedSituation(content: String): String? = runCatching { resultJson.decodeFromString<UnresolvedSituationResult>(content).narrativeFocus }.getOrNull()
+    private fun narrativeFocus(content: String): String? = runCatching { resultJson.decodeFromString<NarrativeFocusResult>(content).narrativeFocus }.getOrNull()
         ?.trim()
         ?.takeUnless { it.isNotEmpty() && it.all(Char::isDigit) }
     private fun occursIn(candidate: String, response: String): Boolean = Regex("(?iu)(?<![\\p{L}\\p{N}])${Regex.escape(candidate)}(?![\\p{L}\\p{N}])").containsMatchIn(response)
@@ -78,7 +78,7 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
     @Serializable private data class CompletionResponse(val content: String? = null)
     @Serializable private data class MovementResult(val movement: String)
     @Serializable private data class LocationResult(val location: String)
-    @Serializable private data class UnresolvedSituationResult(val narrativeFocus: String)
+    @Serializable private data class NarrativeFocusResult(val narrativeFocus: String)
     private companion object {
         val TIMEOUT: Duration = Duration.ofSeconds(300)
         val json = Json { ignoreUnknownKeys = true }
@@ -86,11 +86,11 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
         val logger = LoggerFactory.getLogger(LlamaCppWorldStateResolver::class.java)
         val movementSchema = schema("""{"type":"object","additionalProperties":false,"required":["movement"],"properties":{"movement":{"enum":["stay","move"]}}}""")
         val locationSchema = schema("""{"type":"object","additionalProperties":false,"required":["location"],"properties":{"location":{"type":"string","minLength":1,"maxLength":48}}}""")
-        val situationSchema = schema("""{"type":"object","additionalProperties":false,"required":["narrativeFocus"],"properties":{"narrativeFocus":{"anyOf":[{"const":""},{"type":"string","minLength":3,"maxLength":160}]}}}""")
+        val narrativeFocusSchema = schema("""{"type":"object","additionalProperties":false,"required":["narrativeFocus"],"properties":{"narrativeFocus":{"anyOf":[{"const":""},{"type":"string","minLength":3,"maxLength":160}]}}}""")
         fun schema(source: String) = json.parseToJsonElement(source).jsonObject
         const val MOVEMENT_PROMPT = "Decide whether the player character leaves the current scene."
         const val LOCATION_PROMPT = "Name the current scene location established in the game-master response. Return exactly one short location name; never list alternatives, scores, explanations, or punctuation."
-        const val SITUATION_PROMPT = "Return only one complete sentence (max 20 words) naming the single unresolved goal, danger, or obligation. Ignore questions and choices. Never copy or select an option. Never describe characters, places, atmosphere, or background. Return \"\" if none. No metadata, menu numbers, labels, invention, explanations, or alternatives."
+        const val FOCUS_PROMPT = "Retrospectively update the prior focus from the action and response. Return one short phrase naming the single story element now most central. Return \"\" only if no narrative focus exists."
     }
 }
 

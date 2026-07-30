@@ -119,19 +119,24 @@ class WorldStateResolverTest {
             assertEquals("48", location["maxLength"]?.jsonPrimitive?.content)
         } finally { server.stop(0) }
     }
-    @Test fun `narrative focus schema permits clearing or a phrase of three to 160 characters`() = runBlocking {
+    @Test fun `narrative focus prompt retrospectively derives one central element`() = runBlocking {
         val requests = mutableListOf<String>()
         val server = server(ArrayDeque(listOf("{\"movement\":\"stay\"}", "{\"narrativeFocus\":\"\"}"))) { requests += it }
         try {
             LlamaCppWorldStateResolver(server.address.port).resolve(request("She remains at the harbour."))
-            val situation = Json.parseToJsonElement(requests.last()).jsonObject["json_schema"]!!.jsonObject["properties"]!!.jsonObject["narrativeFocus"]!!.jsonObject
-            val alternatives = situation["anyOf"]!!.jsonArray
+            val schema = Json.parseToJsonElement(requests.last()).jsonObject["json_schema"]!!.jsonObject
+            assertEquals("[\"narrativeFocus\"]", schema["required"]!!.toString())
+            val focus = schema["properties"]!!.jsonObject["narrativeFocus"]!!.jsonObject
+            val alternatives = focus["anyOf"]!!.jsonArray
             assertEquals("\"\"", alternatives[0].jsonObject["const"].toString())
             assertEquals("3", alternatives[1].jsonObject["minLength"]?.jsonPrimitive?.content)
             assertEquals("160", alternatives[1].jsonObject["maxLength"]?.jsonPrimitive?.content)
             val request = Json.parseToJsonElement(requests.last()).jsonObject
             assertFalse(request.containsKey("n_predict"))
-            assertTrue(request["prompt"]!!.jsonPrimitive.content.contains("Ignore questions and choices. Never copy or select an option."))
+            assertEquals(
+                "Retrospectively update the prior focus from the action and response. Return one short phrase naming the single story element now most central. Return \"\" only if no narrative focus exists.\nPRIOR NARRATIVE FOCUS:\n\nPLAYER ACTION:\nwalk\nGAME-MASTER RESPONSE:\nShe remains at the harbour.",
+                request["prompt"]!!.jsonPrimitive.content,
+            )
         } finally { server.stop(0) }
     }
     private fun request(response: String, location: String = "Harbour", narrativeFocus: String = "") = WorldStateResolutionRequest("id", "# S", WorldState(location, narrativeFocus), "walk", response)
