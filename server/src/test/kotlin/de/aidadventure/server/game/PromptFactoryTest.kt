@@ -4,6 +4,7 @@ import de.aidadventure.server.model.ChatEntry
 import de.aidadventure.server.model.FragmentRelevanceRequest
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.WarmupRequest
+import de.aidadventure.server.worldstate.WorldState
 import dev.langchain4j.data.message.AiMessage
 import dev.langchain4j.data.message.ChatMessage
 import dev.langchain4j.data.message.SystemMessage
@@ -89,8 +90,9 @@ class PromptFactoryTest {
     fun `resumed game warmup is a prefix of its first turn`() {
         val factory = PromptFactory()
         val history = listOf(ChatEntry("player", "inspect the pier"), ChatEntry("game-master", "Fog covers the water."))
-        val warmup = factory.buildWarmup(WarmupRequest("saved-1", "test-model", 8081, "# Harbor", history))
-        val firstTurn = factory.build(TurnRequest("saved-1", "test-model", 8081, "# Harbor", history, "follow the bell"))
+        val worldState = WorldState("Küche", "Finde den Saboteur")
+        val warmup = factory.buildWarmup(WarmupRequest("saved-1", "test-model", 8081, "# Harbor", history, worldState = worldState))
+        val firstTurn = factory.build(TurnRequest("saved-1", "test-model", 8081, "# Harbor", history, "follow the bell", worldState = worldState))
 
         assertCachePrefix(warmup, firstTurn)
     }

@@ -297,6 +297,23 @@ class ApplicationTest {
     }
 
     @Test
+    fun `oversized active thread is rejected before warmup coordinator access`() = testApplication {
+        val registry = FakeRegistry()
+        application { adventureModule(prefillRegistry = registry) }
+        configureJsonClient()
+
+        val response = client.post("/api/warmup") {
+            contentType(ContentType.Application.Json)
+            setBody(warmupRequest().copy(worldState = WorldState(activeThread = "x".repeat(97))))
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(registry.idleCleanupTimes.isEmpty())
+        assertTrue(registry.keys.isEmpty())
+        assertTrue(registry.coordinator.warmupRequests.isEmpty())
+    }
+
+    @Test
     fun `prefill runs TTL cleanup with the injected clock before using a coordinator`() = testApplication {
         val registry = FakeRegistry()
         application { adventureModule(prefillRegistry = registry, clock = { 1234L }) }
@@ -371,7 +388,7 @@ class ApplicationTest {
                 ": connected\n\n" +
                     "event: token\ndata: {\"text\":\"The door opens.\"}\n\n" +
                     "event: input_ready\ndata: {}\n\n" +
-                    "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"\"}}\n\n",
+                    "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"\",\"activeThread\":\"\"}}\n\n",
                 response.bodyAsText(),
             )
             assertEquals(listOf(turnRequest()), registry.coordinator.turnRequests)
@@ -379,14 +396,16 @@ class ApplicationTest {
     }
 
     @Test
-    fun `turn emits a resolved location`() = testApplication {
+    fun `turn preserves the accepted combined state in done and canonical warmup`() = testApplication {
         llamaCppServer().use { llama ->
+            val registry = FakeRegistry()
+            val acceptedWorldState = WorldState("Leuchtturm", "Finde den Saboteur")
             application {
                 adventureModule(
                     llamaCppGateway = LlamaCppGateway(),
-                    prefillRegistry = FakeRegistry(),
+                    prefillRegistry = registry,
                     worldStateResolver = WorldStateResolver {
-                        WorldState("Leuchtturm")
+                        acceptedWorldState
                     },
                 )
             }
@@ -397,7 +416,11 @@ class ApplicationTest {
                 setBody(turnRequest(port = llama.port))
             }
 
-            assertContains(response.bodyAsText(), "\"location\":\"Leuchtturm\"")
+            assertContains(
+                response.bodyAsText(),
+                "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"Leuchtturm\",\"activeThread\":\"Finde den Saboteur\"}}",
+            )
+            assertEquals(acceptedWorldState, registry.coordinator.rerankRequests.single().worldState)
         }
     }
 

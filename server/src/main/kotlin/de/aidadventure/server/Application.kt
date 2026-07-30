@@ -380,6 +380,7 @@ object RequestValidator {
         history = request.history,
         playerAction = request.playerAction,
         runtimeFragments = request.runtimeFragments,
+        worldState = request.worldState,
     )
 
     fun validate(request: PrefillRequest): ApiError? = when {
@@ -392,6 +393,7 @@ object RequestValidator {
             history = request.history,
             playerAction = request.playerAction,
             runtimeFragments = request.runtimeFragments,
+            worldState = request.worldState,
         )
     }
 
@@ -402,6 +404,7 @@ object RequestValidator {
         scenarioMarkdown = request.scenarioMarkdown,
         history = request.history,
         runtimeFragments = request.runtimeFragments,
+        worldState = request.worldState,
     )
 
     private fun validate(
@@ -412,8 +415,9 @@ object RequestValidator {
         history: List<ChatEntry>,
         playerAction: String,
         runtimeFragments: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
+        worldState: de.aidadventure.server.worldstate.WorldState,
     ): ApiError? = when {
-        validateContext(sessionId, modelId, port, scenarioMarkdown, history, runtimeFragments) != null -> invalid()
+        validateContext(sessionId, modelId, port, scenarioMarkdown, history, runtimeFragments, worldState) != null -> invalid()
         playerAction.isBlank() || playerAction.length > MAX_TEXT_LENGTH -> invalid()
         else -> null
     }
@@ -425,6 +429,7 @@ object RequestValidator {
         scenarioMarkdown: String,
         history: List<ChatEntry>,
         runtimeFragments: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
+        worldState: de.aidadventure.server.worldstate.WorldState,
     ): ApiError? = when {
         sessionId.isBlank() || sessionId.length > MAX_SESSION_ID_LENGTH -> invalid()
         modelId.isBlank() || modelId.length > MAX_MODEL_ID_LENGTH -> invalid()
@@ -435,6 +440,7 @@ object RequestValidator {
         runtimeFragments.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
         runtimeFragments.any { !it.isValidRuntimeFragmentDefinition() } -> invalid()
         runtimeFragments.map { it.matchText }.toSet().size != runtimeFragments.size -> invalid()
+        worldState.activeThread.length > MAX_ACTIVE_THREAD_LENGTH -> invalid()
         else -> null
     }
 
@@ -453,6 +459,7 @@ object RequestValidator {
     private const val MAX_TEXT_LENGTH = 20_000
     private const val MAX_HISTORY_ENTRIES = 200
     private const val MAX_RUNTIME_FRAGMENT_DEFINITIONS = 200
+    private const val MAX_ACTIVE_THREAD_LENGTH = 96
     private val ALLOWED_HISTORY_ROLES = setOf("player", "user", "game-master", "assistant", "ai", "runtime-fragment")
 }
 

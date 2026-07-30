@@ -1,6 +1,7 @@
 package de.aidadventure.server.model
 
 import de.aidadventure.server.RequestValidator
+import de.aidadventure.server.worldstate.WorldState
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -108,5 +109,26 @@ class ApiModelsTest {
 
         assertNotNull(oversizedFragmentError)
         assertNotNull(oversizedMatchTextError)
+    }
+
+    @Test
+    fun `request validation rejects active threads longer than 96 characters`() {
+        val oversizedState = WorldState(activeThread = "x".repeat(97))
+
+        assertNotNull(
+            RequestValidator.validate(
+                TurnRequest("live-1", "configured-llama-cpp", 8081, "# S", emptyList(), "look", worldState = oversizedState),
+            ),
+        )
+        assertNotNull(
+            RequestValidator.validate(
+                PrefillRequest("live-1", 0, "configured-llama-cpp", 8081, "# S", emptyList(), "look", worldState = oversizedState),
+            ),
+        )
+        assertNotNull(
+            RequestValidator.validate(
+                WarmupRequest("live-1", "configured-llama-cpp", 8081, "# S", emptyList(), worldState = oversizedState),
+            ),
+        )
     }
 }

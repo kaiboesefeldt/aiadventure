@@ -2,12 +2,23 @@ package de.aidadventure.web.persistence
 
 import de.aidadventure.web.model.Scenario
 import de.aidadventure.web.model.GameSession
+import de.aidadventure.web.model.WorldState
+import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class ScenarioImportTest {
+    @Test
+    fun `legacy session JSON defaults a missing active thread`() {
+        val session = Json.decodeFromString<GameSession>(
+            """{"id":"session-1","scenarioId":"harbor","title":"Harbor","messages":[],"createdAt":1,"updatedAt":1,"worldState":{"location":"Harbour"}}""",
+        )
+
+        assertEquals(WorldState("Harbour"), session.worldState)
+    }
+
     @Test
     fun `invalid fragments reject import and valid raw template remains`() {
         assertEquals(
