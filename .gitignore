@@ -13,3 +13,5 @@ kotlin-js-store/
 !.env.example
 .llama.cpp/
 tmp/
+server.log
+
