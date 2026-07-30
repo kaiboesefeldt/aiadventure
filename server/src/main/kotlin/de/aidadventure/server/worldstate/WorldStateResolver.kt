@@ -49,7 +49,7 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
             .timeout(TIMEOUT).header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(CompletionRequest(prompt, false, schema))))
             .build(), HttpResponse.BodyHandlers.ofString())
-        if (logger.isTraceEnabled) logger.trace("operation=world_state phase={} requestId={}", phase, request.sessionId)
+        if (logger.isTraceEnabled) logger.trace("operation=world_state phase={} requestId={} {}", phase, request.sessionId, secondaryOutputTrace(response.body()))
         if (response.statusCode() !in 200..299) {
             logger.warn("operation=world_state phase={} requestId={} status={}", phase, request.sessionId, response.statusCode())
             null
@@ -94,3 +94,5 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
         const val SITUATION_PROMPT = "The unresolvedSituation value is one concrete, currently open story situation: a goal, danger, or obligation that still needs a response. Examples: Find out why the lighthouse is dark; The harbourmaster awaits an answer; The rising tide threatens the pier. If the inputs establish a clear unresolved situation, return it as one short meaningful phrase. Return an empty string only when the inputs establish no unresolved task, danger, or obligation. Never return timestamps, metadata, menu numbers, or labels. Do not invent plot, explanations, or alternatives."
     }
 }
+
+internal fun secondaryOutputTrace(output: String): String = "secondaryOutput=$output"

@@ -23,4 +23,6 @@
 - Browser IndexedDB owns scenarios and sessions; the server remains stateless.
 - A prefill and its turn must use the same `sessionId`; only llama.cpp's returned
   `tokens_cached` and `tokens_evaluated` metrics prove cache reuse.
-- Log operational gateway/model failures with request IDs only; never log scenario, history, actions, or LLM text.
+- Log operational gateway/model failures with request IDs only. The explicitly local,
+  loopback-only `TRACE` diagnostic mode is the exception: it may log scenario,
+  history, actions, and complete LLM responses, including Secondary completions.

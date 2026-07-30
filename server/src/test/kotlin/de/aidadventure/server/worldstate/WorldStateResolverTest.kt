@@ -22,6 +22,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class WorldStateResolverTest {
+    @Test fun `formats the complete secondary output for trace diagnostics`() =
+        assertEquals("secondaryOutput={\"unresolvedSituation\":\"The rising tide threatens the pier\"}", secondaryOutputTrace("{\"unresolvedSituation\":\"The rising tide threatens the pier\"}"))
+
     @Test fun `accepts a schema-backed moved location occurring in the response`() = runBlocking {
         val server = server(ArrayDeque(listOf("{\"movement\":\"move\"}", "{\"location\":\"Market Square\"}", "{\"unresolvedSituation\":\"Find the lighthouse saboteur\"}")))
         try { assertEquals(WorldState("Market Square", "Find the lighthouse saboteur"), LlamaCppWorldStateResolver(server.address.port).resolve(request("She arrives at the Market Square."))) }

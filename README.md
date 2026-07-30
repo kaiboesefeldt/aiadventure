@@ -32,8 +32,10 @@ your LAN. Do not use that setting on an untrusted network.
 ### TRACE diagnostics
 
 `LOG_LEVEL=TRACE` is an opt-in local diagnostic mode. It deliberately records
-scenario, action, prompt and LLM-response content so cache and model behavior
-can be inspected. Do not enable it when those local logs may be exposed.
+scenario, action, prompt and complete LLM-response content, including the raw
+Secondary `/completion` response used for WorldState resolution, so cache and
+model behavior can be inspected. Do not enable it when those local logs may be
+exposed.
 
 ### Connect to llama.cpp
 
