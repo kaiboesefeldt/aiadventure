@@ -33,11 +33,10 @@ Erzählsituation, der letzten Spieleraktion und der letzten GM-Antwort. Seine
 Schema-Antwort lautet ausschließlich `{"unresolvedSituation":"..."}`; der
 leere String bedeutet, dass keine dominante offene Situation besteht.
 
-Der feste Prompt definiert das Feld als konkrete, aktuell offene Situation und
-nennt kurze Beispiele für Auftrag, Gefahr und Verpflichtung. Er verbietet
-Zeitstempel, Metadaten, Menünummern und Labels. Er fordert einen vollständigen
-Satz mit höchstens 20 Wörtern. Die 160 Zeichen begrenzen nur die gewünschte
-Generierung, nicht die Kotlin-Übernahme. Bei Schema-, Transport- oder
+Der feste Prompt verlangt ausschließlich einen vollständigen Satz mit höchstens
+20 Wörtern über den einzelnen offenen Auftrag, die Gefahr oder Verpflichtung.
+Er verbietet Personen-, Orts-, Atmosphären- und Hintergrundbeschreibungen.
+Die 160 Zeichen begrenzen nur die gewünschte Generierung, nicht die Kotlin-Übernahme. Bei Schema-, Transport- oder
 Validierungsfehlern bleibt
 die vorherige Situation erhalten. Ein erfolgreicher Situations-Call aktualisiert
 sie auch dann, wenn die
