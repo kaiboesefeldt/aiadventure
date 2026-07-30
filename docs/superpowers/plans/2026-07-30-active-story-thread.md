@@ -13,7 +13,7 @@
 - The Primary prompt remains deterministic: instruction, scenario, history, accepted world-state snapshot, action.
 - Warmup and following turn use the identical accepted world state and retain the existing cache-prefix tests.
 - The Secondary model receives one bounded structured task at a time; its text is untrusted.
-- The server accepts an unresolved situation of at most 96 characters or retains the previous value on resolver failure.
+- The server accepts an unresolved situation of at most 160 characters or retains the previous value on resolver failure.
 - Scenario frontmatter remains location-only; browser IndexedDB remains the state owner.
 
 ---
@@ -57,17 +57,17 @@ Expected: all Task-1 tests pass and existing JSON keeps `location` first.
 
 **Interfaces:**
 - `LlamaCppWorldStateResolver.resolve` returns a state whose location follows the existing rules and whose `unresolvedSituation` comes from a final situation call, including when the previous location is empty.
-- The situation schema requires `unresolvedSituation` with `maxLength: 96`; malformed or oversized output retains `previousState.unresolvedSituation`.
+- The situation schema requires `unresolvedSituation` with `maxLength: 160`; malformed or oversized output retains `previousState.unresolvedSituation`.
 
 - [ ] **Step 1: Write failing resolver tests.**
 
-Use a local completion server that returns the current movement/location replies followed by `{"unresolvedSituation":"Find the lighthouse saboteur"}`; assert the returned state has both fields. Add a response with 97 characters and assert the previous situation remains. Inspect the final request schema for `maxLength` 96.
+Use a local completion server that returns the current movement/location replies followed by `{"unresolvedSituation":"Find the lighthouse saboteur"}`; assert the returned state has both fields. Add a response with 161 characters and assert the previous situation remains. Inspect the final request schema for `maxLength` 160.
 
 - [ ] **Step 2: Run `./gradlew :server:test --tests de.aidadventure.server.worldstate.WorldStateResolverTest` and verify it fails for the missing situation request.**
 
 - [ ] **Step 3: Implement the final, separate structured call.**
 
-First calculate a location intermediate state instead of returning early when the previous location is empty. Then call `complete` with the prior situation, player action, and GM response. Parse `UnresolvedSituationResult(unresolvedSituation)`, trim it, reject values longer than 96, and return the intermediate location state merged with the accepted situation. Preserve the entire previous state on transport/schema failure; an explicit empty valid value clears the situation. Log only request metadata, never a completion body or the situation.
+First calculate a location intermediate state instead of returning early when the previous location is empty. Then call `complete` with the prior situation, player action, and GM response. Parse `UnresolvedSituationResult(unresolvedSituation)`, trim it, reject values longer than 160, and return the intermediate location state merged with the accepted situation. Preserve the entire previous state on transport/schema failure; an explicit empty valid value clears the situation. Log the complete local Secondary response at TRACE.
 
 - [ ] **Step 4: Re-run the focused resolver test.**
 

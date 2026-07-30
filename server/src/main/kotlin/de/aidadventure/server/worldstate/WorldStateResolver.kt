@@ -71,7 +71,7 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
         ?.takeIf(String::isNotBlank)
     private fun unresolvedSituation(content: String): String? = runCatching { resultJson.decodeFromString<UnresolvedSituationResult>(content).unresolvedSituation }.getOrNull()
         ?.trim()
-        ?.takeIf { it.length <= 96 }
+        ?.takeIf { it.length <= 160 }
         ?.takeUnless { it.isNotEmpty() && it.all(Char::isDigit) }
     private fun occursIn(candidate: String, response: String): Boolean = Regex("(?iu)(?<![\\p{L}\\p{N}])${Regex.escape(candidate)}(?![\\p{L}\\p{N}])").containsMatchIn(response)
 
@@ -87,11 +87,11 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
         val logger = LoggerFactory.getLogger(LlamaCppWorldStateResolver::class.java)
         val movementSchema = schema("""{"type":"object","additionalProperties":false,"required":["movement"],"properties":{"movement":{"enum":["stay","move"]}}}""")
         val locationSchema = schema("""{"type":"object","additionalProperties":false,"required":["location"],"properties":{"location":{"type":"string","minLength":1,"maxLength":48}}}""")
-        val situationSchema = schema("""{"type":"object","additionalProperties":false,"required":["unresolvedSituation"],"properties":{"unresolvedSituation":{"anyOf":[{"const":""},{"type":"string","minLength":3,"maxLength":96}]}}}""")
+        val situationSchema = schema("""{"type":"object","additionalProperties":false,"required":["unresolvedSituation"],"properties":{"unresolvedSituation":{"anyOf":[{"const":""},{"type":"string","minLength":3,"maxLength":160}]}}}""")
         fun schema(source: String) = json.parseToJsonElement(source).jsonObject
         const val MOVEMENT_PROMPT = "Decide whether the player character leaves the current scene."
         const val LOCATION_PROMPT = "Name the current scene location established in the game-master response. Return exactly one short location name; never list alternatives, scores, explanations, or punctuation."
-        const val SITUATION_PROMPT = "The unresolvedSituation value is one concrete, currently open story situation: a goal, danger, or obligation that still needs a response. Examples: Find out why the lighthouse is dark; The harbourmaster awaits an answer; The rising tide threatens the pier. If the inputs establish a clear unresolved situation, return it as one short meaningful phrase. Return an empty string only when the inputs establish no unresolved task, danger, or obligation. Never return timestamps, metadata, menu numbers, or labels. Do not invent plot, explanations, or alternatives."
+        const val SITUATION_PROMPT = "The unresolvedSituation value is one concrete, currently open story situation: a goal, danger, or obligation that still needs a response. Examples: Find out why the lighthouse is dark; The harbourmaster awaits an answer; The rising tide threatens the pier. If the inputs establish a clear unresolved situation, return one complete sentence of at most 20 words. Return an empty string only when the inputs establish no unresolved task, danger, or obligation. Never return timestamps, metadata, menu numbers, or labels. Do not invent plot, explanations, or alternatives."
     }
 }
 

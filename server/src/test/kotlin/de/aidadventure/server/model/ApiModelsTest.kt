@@ -6,6 +6,7 @@ import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 
 class ApiModelsTest {
     @Test
@@ -112,8 +113,8 @@ class ApiModelsTest {
     }
 
     @Test
-    fun `request validation rejects unresolved situations longer than 96 characters`() {
-        val oversizedState = WorldState(unresolvedSituation = "x".repeat(97))
+    fun `request validation rejects unresolved situations longer than 160 characters`() {
+        val oversizedState = WorldState(unresolvedSituation = "x".repeat(161))
 
         assertNotNull(
             RequestValidator.validate(
@@ -128,6 +129,17 @@ class ApiModelsTest {
         assertNotNull(
             RequestValidator.validate(
                 WarmupRequest("live-1", "configured-llama-cpp", 8081, "# S", emptyList(), worldState = oversizedState),
+            ),
+        )
+    }
+
+    @Test
+    fun `request validation accepts an unresolved situation of 160 characters`() {
+        val boundaryState = WorldState(unresolvedSituation = "x".repeat(160))
+
+        assertNull(
+            RequestValidator.validate(
+                TurnRequest("live-1", "configured-llama-cpp", 8081, "# S", emptyList(), "look", worldState = boundaryState),
             ),
         )
     }

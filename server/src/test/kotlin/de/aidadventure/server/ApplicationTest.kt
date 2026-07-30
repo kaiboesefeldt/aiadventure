@@ -304,7 +304,7 @@ class ApplicationTest {
 
         val response = client.post("/api/warmup") {
             contentType(ContentType.Application.Json)
-            setBody(warmupRequest().copy(worldState = WorldState(unresolvedSituation = "x".repeat(97))))
+            setBody(warmupRequest().copy(worldState = WorldState(unresolvedSituation = "x".repeat(161))))
         }
 
         assertEquals(HttpStatusCode.BadRequest, response.status)

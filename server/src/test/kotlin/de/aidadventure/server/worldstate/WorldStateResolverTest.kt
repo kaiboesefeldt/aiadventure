@@ -35,8 +35,8 @@ class WorldStateResolverTest {
         try { assertEquals(WorldState("Nebelhafen", "Find the lighthouse saboteur"), LlamaCppWorldStateResolver(server.address.port).resolve(request("Du stehst am Rand des Hafen von Nebelhafen.", ""))) }
         finally { server.stop(0) }
     }
-    @Test fun `retains the previous thread when the resolved thread exceeds 96 characters`() = runBlocking {
-        val tooLong = "x".repeat(97)
+    @Test fun `retains the previous situation when the resolved situation exceeds 160 characters`() = runBlocking {
+        val tooLong = "x".repeat(161)
         val server = server(ArrayDeque(listOf("{\"movement\":\"move\"}", "{\"location\":\"Market Square\"}", "{\"unresolvedSituation\":\"$tooLong\"}")))
         try { assertEquals(WorldState("Market Square", "Existing situation"), LlamaCppWorldStateResolver(server.address.port).resolve(request("She arrives at the Market Square.", unresolvedSituation = "Existing situation"))) }
         finally { server.stop(0) }
@@ -119,7 +119,7 @@ class WorldStateResolverTest {
             assertEquals("48", location["maxLength"]?.jsonPrimitive?.content)
         } finally { server.stop(0) }
     }
-    @Test fun `unresolved situation schema permits clearing or a phrase of three to 96 characters`() = runBlocking {
+    @Test fun `unresolved situation schema permits clearing or a phrase of three to 160 characters`() = runBlocking {
         val requests = mutableListOf<String>()
         val server = server(ArrayDeque(listOf("{\"movement\":\"stay\"}", "{\"unresolvedSituation\":\"\"}"))) { requests += it }
         try {
@@ -128,10 +128,10 @@ class WorldStateResolverTest {
             val alternatives = situation["anyOf"]!!.jsonArray
             assertEquals("\"\"", alternatives[0].jsonObject["const"].toString())
             assertEquals("3", alternatives[1].jsonObject["minLength"]?.jsonPrimitive?.content)
-            assertEquals("96", alternatives[1].jsonObject["maxLength"]?.jsonPrimitive?.content)
+            assertEquals("160", alternatives[1].jsonObject["maxLength"]?.jsonPrimitive?.content)
             val request = Json.parseToJsonElement(requests.last()).jsonObject
             assertFalse(request.containsKey("n_predict"))
-            assertTrue(request["prompt"]!!.jsonPrimitive.content.contains("The unresolvedSituation value is one concrete, currently open story situation"))
+            assertTrue(request["prompt"]!!.jsonPrimitive.content.contains("one complete sentence of at most 20 words"))
         } finally { server.stop(0) }
     }
     private fun request(response: String, location: String = "Harbour", unresolvedSituation: String = "") = WorldStateResolutionRequest("id", "# S", WorldState(location, unresolvedSituation), "walk", response)
