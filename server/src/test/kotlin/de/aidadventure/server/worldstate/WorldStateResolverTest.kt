@@ -126,7 +126,9 @@ class WorldStateResolverTest {
             assertEquals("\"\"", alternatives[0].jsonObject["const"].toString())
             assertEquals("3", alternatives[1].jsonObject["minLength"]?.jsonPrimitive?.content)
             assertEquals("96", alternatives[1].jsonObject["maxLength"]?.jsonPrimitive?.content)
-            assertFalse(Json.parseToJsonElement(requests.last()).jsonObject.containsKey("n_predict"))
+            val request = Json.parseToJsonElement(requests.last()).jsonObject
+            assertFalse(request.containsKey("n_predict"))
+            assertTrue(request["prompt"]!!.jsonPrimitive.content.contains("Only clear it when the inputs establish no unresolved task, danger, or obligation."))
         } finally { server.stop(0) }
     }
     private fun request(response: String, location: String = "Harbour", activeThread: String = "") = WorldStateResolutionRequest("id", "# S", WorldState(location, activeThread), "walk", response)

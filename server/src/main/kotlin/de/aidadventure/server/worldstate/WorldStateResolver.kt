@@ -91,6 +91,6 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
         fun schema(source: String) = json.parseToJsonElement(source).jsonObject
         const val MOVEMENT_PROMPT = "Decide whether the player character leaves the current scene."
         const val LOCATION_PROMPT = "Name the current scene location established in the game-master response. Return exactly one short location name; never list alternatives, scores, explanations, or punctuation."
-        const val THREAD_PROMPT = "Retain, replace, or clear the one dominant unresolved task, danger, or obligation established by the inputs. Return one short meaningful phrase or an empty string; never return a menu option number. Do not invent plot, explanations, or alternatives."
+        const val THREAD_PROMPT = "Identify the one dominant unresolved task, danger, or obligation established by the inputs. If the inputs establish a clear unresolved thread, return it as one short meaningful phrase. Only clear it when the inputs establish no unresolved task, danger, or obligation. Never return a menu option number. Do not invent plot, explanations, or alternatives."
     }
 }
