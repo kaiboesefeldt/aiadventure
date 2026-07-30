@@ -17,6 +17,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -40,6 +41,11 @@ class WorldStateResolverTest {
     @Test fun `retains the previous thread when the thread response is malformed`() = runBlocking {
         val server = server(ArrayDeque(listOf("{\"movement\":\"move\"}", "{\"location\":\"Market Square\"}", "{\"thread\":\"wrong field\"}")))
         try { assertEquals(WorldState("Market Square", "Existing thread"), LlamaCppWorldStateResolver(server.address.port).resolve(request("She arrives at the Market Square.", activeThread = "Existing thread"))) }
+        finally { server.stop(0) }
+    }
+    @Test fun `keeps the previous state when both independent resolutions are invalid`() = runBlocking {
+        val server = server(ArrayDeque(listOf("{\"movement\":\"stay\"}", "{\"thread\":\"wrong field\"}")))
+        try { assertNull(LlamaCppWorldStateResolver(server.address.port).resolve(request("Nothing changes.", activeThread = "Existing thread"))) }
         finally { server.stop(0) }
     }
     @Test fun `rejects a numeric choice as a story thread`() = runBlocking {
@@ -120,6 +126,7 @@ class WorldStateResolverTest {
             assertEquals("\"\"", alternatives[0].jsonObject["const"].toString())
             assertEquals("3", alternatives[1].jsonObject["minLength"]?.jsonPrimitive?.content)
             assertEquals("96", alternatives[1].jsonObject["maxLength"]?.jsonPrimitive?.content)
+            assertFalse(Json.parseToJsonElement(requests.last()).jsonObject.containsKey("n_predict"))
         } finally { server.stop(0) }
     }
     private fun request(response: String, location: String = "Harbour", activeThread: String = "") = WorldStateResolutionRequest("id", "# S", WorldState(location, activeThread), "walk", response)

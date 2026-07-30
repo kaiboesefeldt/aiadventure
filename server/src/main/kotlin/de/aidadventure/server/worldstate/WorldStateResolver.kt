@@ -28,15 +28,16 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
             "move" -> locationFrom(request, "moved_location")
             else -> null
         }
-        val intermediateState = resolvedLocation?.let { request.previousState.copy(location = it.location) } ?: request.previousState
         val activeThread = complete(
             THREAD_PROMPT + "\nPRIOR THREAD:\n${request.previousState.activeThread}\nPLAYER ACTION:\n${request.playerAction}\nGAME-MASTER RESPONSE:\n${request.gameMasterResponse}",
             threadSchema,
             request,
             "thread",
-        )?.let(::thread) ?: return@runInterruptible intermediateState.takeIf { it.location != request.previousState.location }
-        if (intermediateState.location == request.previousState.location && activeThread == request.previousState.activeThread) null
-        else intermediateState.copy(activeThread = activeThread)
+        )?.let(::thread) ?: request.previousState.activeThread
+        request.previousState.copy(
+            location = resolvedLocation?.location ?: request.previousState.location,
+            activeThread = activeThread,
+        ).takeIf { it != request.previousState }
     }
 
     private fun locationFrom(request: WorldStateResolutionRequest, phase: String): WorldState? = complete(
@@ -46,7 +47,7 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
     private fun complete(prompt: String, schema: JsonObject, request: WorldStateResolutionRequest, phase: String): String? = try {
         val response = client.send(HttpRequest.newBuilder(URI.create("http://localhost:$port/completion"))
             .timeout(TIMEOUT).header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(CompletionRequest(prompt, 32, false, schema))))
+            .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(CompletionRequest(prompt, false, schema))))
             .build(), HttpResponse.BodyHandlers.ofString())
         if (logger.isTraceEnabled) logger.trace("operation=world_state phase={} requestId={}", phase, request.sessionId)
         if (response.statusCode() !in 200..299) {
@@ -74,7 +75,7 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
         ?.takeUnless { it.isNotEmpty() && it.all(Char::isDigit) }
     private fun occursIn(candidate: String, response: String): Boolean = Regex("(?iu)(?<![\\p{L}\\p{N}])${Regex.escape(candidate)}(?![\\p{L}\\p{N}])").containsMatchIn(response)
 
-    @Serializable private data class CompletionRequest(val prompt: String, @SerialName("n_predict") val nPredict: Int, val stream: Boolean, @SerialName("json_schema") val jsonSchema: JsonObject)
+    @Serializable private data class CompletionRequest(val prompt: String, val stream: Boolean, @SerialName("json_schema") val jsonSchema: JsonObject)
     @Serializable private data class CompletionResponse(val content: String? = null)
     @Serializable private data class MovementResult(val movement: String)
     @Serializable private data class LocationResult(val location: String)
