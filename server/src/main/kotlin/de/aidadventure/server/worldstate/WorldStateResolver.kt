@@ -27,16 +27,17 @@ class LlamaCppWorldStateResolver(
     private val client: HttpClient = HttpClient.newBuilder().connectTimeout(TIMEOUT).build(),
 ) : WorldStateResolver {
     override suspend fun resolve(request: WorldStateResolutionRequest): WorldState? = runInterruptible(Dispatchers.IO) {
+        if (request.previousState.location.isBlank()) return@runInterruptible locationFrom(request.gameMasterResponse)
         when (singleFinal(complete(MOVEMENT_PROMPT + "\nPLAYER ACTION:\n${request.playerAction}\nGAME-MASTER RESPONSE:\n${request.gameMasterResponse}"))) {
             "stay" -> null
-            "move" -> {
-                val location = singleFinal(complete(LOCATION_PROMPT + "\nGAME-MASTER RESPONSE:\n${request.gameMasterResponse}"))
-                    ?.takeIf { it.length in 1..96 && occursIn(it, request.gameMasterResponse) }
-                location?.let(::WorldState)
-            }
+            "move" -> locationFrom(request.gameMasterResponse)
             else -> null
         }
     }
+
+    private fun locationFrom(response: String): WorldState? = singleFinal(
+        complete(LOCATION_PROMPT + "\nGAME-MASTER RESPONSE:\n$response"),
+    )?.takeIf { it.length in 1..96 && occursIn(it, response) }?.let(::WorldState)
 
     private fun complete(prompt: String): String? = try {
         val response = client.send(
@@ -71,7 +72,7 @@ Example: player waits; response says the room stays quiet.
 FINAL: stay
 Example: player walks through the gate; response says they arrive at the market.
 FINAL: move"""
-        const val LOCATION_PROMPT = """Name the destination established in the game-master response. Return exactly one final line containing the exact location name from that response.
+        const val LOCATION_PROMPT = """Name the current scene location established in the game-master response. Return exactly one final line containing the exact location name from that response.
 Example response: She enters the Market Square.
 FINAL: Market Square"""
     }

@@ -19,6 +19,18 @@ class WorldStateResolverTest {
             assertEquals(WorldState("Market Square"), LlamaCppWorldStateResolver(server.address.port).resolve(request("She arrives at the Market Square.")))
         } finally { server.stop(0) }
     }
+    @Test fun `initializes an empty location only from a response-backed location`() = runBlocking {
+        server(ArrayDeque(listOf("FINAL: Hafen von Nebelhafen"))).let { server ->
+            try {
+                assertEquals(WorldState("Hafen von Nebelhafen"), LlamaCppWorldStateResolver(server.address.port).resolve(request("Du stehst am Rand des Hafen von Nebelhafen.", "")))
+            } finally { server.stop(0) }
+        }
+        server(ArrayDeque(listOf("FINAL: Marktplatz"))).let { server ->
+            try {
+                assertNull(LlamaCppWorldStateResolver(server.address.port).resolve(request("Nebel zieht über das Wasser.", "")))
+            } finally { server.stop(0) }
+        }
+    }
     @Test fun `bounds each completion request`() = runBlocking {
         var requestBody = ""
         val server = server(ArrayDeque(listOf("FINAL: stay"))) { requestBody = it }
@@ -37,7 +49,7 @@ class WorldStateResolverTest {
             } finally { server.stop(0) }
         }
     }
-    private fun request(response: String) = WorldStateResolutionRequest("id", "# S", WorldState("Harbour"), "walk", response)
+    private fun request(response: String, location: String = "Harbour") = WorldStateResolutionRequest("id", "# S", WorldState(location), "walk", response)
     private fun server(replies: ArrayDeque<String>, onRequest: (String) -> Unit = {}): HttpServer = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0).apply {
         createContext("/completion") { exchange ->
             onRequest(exchange.requestBody.bufferedReader().readText())
