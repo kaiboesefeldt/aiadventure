@@ -12,51 +12,30 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class WorldStateResolverTest {
-    @Test fun `accepts a moved location occurring in the response`() = runBlocking {
-        val replies = ArrayDeque(listOf("FINAL: move", "FINAL: Market Square"))
-        val server = server(replies)
-        try {
-            assertEquals(WorldState("Market Square"), LlamaCppWorldStateResolver(server.address.port).resolve(request("She arrives at the Market Square.")))
-        } finally { server.stop(0) }
+    @Test fun `accepts a schema-backed moved location occurring in the response`() = runBlocking {
+        val server = server(ArrayDeque(listOf("{\"movement\":\"move\"}", "{\"location\":\"Market Square\"}")))
+        try { assertEquals(WorldState("Market Square"), LlamaCppWorldStateResolver(server.address.port).resolve(request("She arrives at the Market Square."))) }
+        finally { server.stop(0) }
     }
-    @Test fun `initializes an empty location only from a response-backed location`() = runBlocking {
-        server(ArrayDeque(listOf("FINAL: Hafen von Nebelhafen"))).let { server ->
-            try {
-                assertEquals(WorldState("Hafen von Nebelhafen"), LlamaCppWorldStateResolver(server.address.port).resolve(request("Du stehst am Rand des Hafen von Nebelhafen.", "")))
-            } finally { server.stop(0) }
+    @Test fun `initializes an empty location only when the schema location occurs in the response`() = runBlocking {
+        server(ArrayDeque(listOf("{\"location\":\"Nebelhafen\"}"))).let { server ->
+            try { assertEquals(WorldState("Nebelhafen"), LlamaCppWorldStateResolver(server.address.port).resolve(request("Du stehst am Rand des Hafen von Nebelhafen.", ""))) }
+            finally { server.stop(0) }
         }
-        server(ArrayDeque(listOf("FINAL: Marktplatz"))).let { server ->
-            try {
-                assertNull(LlamaCppWorldStateResolver(server.address.port).resolve(request("Nebel zieht über das Wasser.", "")))
-            } finally { server.stop(0) }
+        server(ArrayDeque(listOf("{\"location\":\"Marktplatz\"}"))).let { server ->
+            try { assertNull(LlamaCppWorldStateResolver(server.address.port).resolve(request("Nebel zieht über das Wasser.", ""))) }
+            finally { server.stop(0) }
         }
     }
-    @Test fun `bounds each completion request`() = runBlocking {
+    @Test fun `sends movement schema to llama cpp`() = runBlocking {
         var requestBody = ""
-        val server = server(ArrayDeque(listOf("FINAL: stay"))) { requestBody = it }
+        val server = server(ArrayDeque(listOf("{\"movement\":\"stay\"}"))) { requestBody = it }
         try {
             assertNull(LlamaCppWorldStateResolver(server.address.port).resolve(request("She remains at the harbour.")))
-            val payload = Json.parseToJsonElement(requestBody).jsonObject
-            assertEquals("32", payload["n_predict"]?.jsonPrimitive?.content)
-            assertEquals("false", payload["stream"]?.jsonPrimitive?.content)
-            assertEquals("root ::= \"FINAL: \" (\"move\" | \"stay\")", payload["grammar"]?.jsonPrimitive?.content)
+            val schema = Json.parseToJsonElement(requestBody).jsonObject["json_schema"]!!.jsonObject
+            assertEquals("[\"movement\"]", schema["required"]!!.toString())
+            assertEquals("[\"stay\",\"move\"]", schema["properties"]!!.jsonObject["movement"]!!.jsonObject["enum"]!!.toString())
         } finally { server.stop(0) }
-    }
-    @Test fun `traces the raw world state completion`() = runBlocking {
-        val traces = mutableListOf<Pair<String, String>>()
-        val server = server(ArrayDeque(listOf("FINAL: stay")))
-        try {
-            assertNull(LlamaCppWorldStateResolver(server.address.port, trace = { phase, _, content -> traces += phase to content }).resolve(request("She remains at the harbour.")))
-            assertEquals(listOf("movement" to "FINAL: stay"), traces)
-        } finally { server.stop(0) }
-    }
-    @Test fun `keeps state for stay malformed final or absent location`() = runBlocking {
-        listOf("FINAL: stay", "FINAL: move\nFINAL: stay", "FINAL: move").forEach { movement ->
-            val server = server(ArrayDeque(listOf(movement, "FINAL: Elsewhere")))
-            try {
-                assertNull(LlamaCppWorldStateResolver(server.address.port).resolve(request("She remains at the harbour.")))
-            } finally { server.stop(0) }
-        }
     }
     private fun request(response: String, location: String = "Harbour") = WorldStateResolutionRequest("id", "# S", WorldState(location), "walk", response)
     private fun server(replies: ArrayDeque<String>, onRequest: (String) -> Unit = {}): HttpServer = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0).apply {
