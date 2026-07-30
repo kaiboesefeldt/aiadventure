@@ -13,9 +13,7 @@ import de.aidadventure.server.prefill.CoordinatorKey
 import de.aidadventure.server.prefill.PrefillCoordinator
 import de.aidadventure.server.prefill.PrefillRegistry
 import de.aidadventure.server.runtimefragments.RuntimeFragmentResolver
-import de.aidadventure.server.worldstate.WorldStateEntityProposal
-import de.aidadventure.server.worldstate.WorldStateFactProposal
-import de.aidadventure.server.worldstate.WorldStateProposal
+import de.aidadventure.server.worldstate.WorldState
 import de.aidadventure.server.worldstate.WorldStateResolver
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
@@ -373,7 +371,7 @@ class ApplicationTest {
                 ": connected\n\n" +
                     "event: token\ndata: {\"text\":\"The door opens.\"}\n\n" +
                     "event: input_ready\ndata: {}\n\n" +
-                    "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"revision\":0,\"entities\":{},\"facts\":{}}}\n\n",
+                    "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"\"}}\n\n",
                 response.bodyAsText(),
             )
             assertEquals(listOf(turnRequest()), registry.coordinator.turnRequests)
@@ -381,18 +379,14 @@ class ApplicationTest {
     }
 
     @Test
-    fun `turn emits a state translated from named entity and fact proposals`() = testApplication {
+    fun `turn emits a resolved location`() = testApplication {
         llamaCppServer().use { llama ->
             application {
                 adventureModule(
                     llamaCppGateway = LlamaCppGateway(),
                     prefillRegistry = FakeRegistry(),
                     worldStateResolver = WorldStateResolver {
-                        WorldStateProposal(
-                            baseRevision = 0,
-                            entities = listOf(WorldStateEntityProposal("Leuchtturm", "location", "Seit drei Nächten dunkel.")),
-                            facts = listOf(WorldStateFactProposal("Unruhe", "Leuchtturm", "true")),
-                        )
+                        WorldState("Leuchtturm")
                     },
                 )
             }
@@ -403,8 +397,7 @@ class ApplicationTest {
                 setBody(turnRequest(port = llama.port))
             }
 
-            assertContains(response.bodyAsText(), "\"leuchtturm\"")
-            assertContains(response.bodyAsText(), "\"Unruhe:leuchtturm\":\"true\"")
+            assertContains(response.bodyAsText(), "\"location\":\"Leuchtturm\"")
         }
     }
 

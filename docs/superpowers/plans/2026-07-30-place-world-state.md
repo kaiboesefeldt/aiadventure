@@ -4,7 +4,7 @@
 
 **Goal:** Replace generic world-state proposals with a browser-persisted, validated current-place value.
 
-**Architecture:** Server and web share `WorldState(place: String = "")`. The Secondary resolver first classifies scene movement, then extracts a destination only for a move. Kotlin validates both terminal results and accepts a destination only if it occurs in the completed game-master response.
+**Architecture:** Server and web share `WorldState(location: String = "")`. The Secondary resolver first classifies scene movement, then extracts a destination only for a move. Kotlin validates both terminal results and accepts a destination only if it occurs in the completed game-master response.
 
 **Tech Stack:** Kotlin, kotlinx.serialization, Ktor, llama.cpp `/completion`, Kotlin/JS.
 
@@ -20,9 +20,9 @@
 
 **Files:** server `worldstate/WorldState.kt`; web `model/Models.kt`; their tests and scenario-frontmatter tests.
 
-- [ ] Write failing serialization and frontmatter tests for `WorldState(place = "Küche")` and missing state as `WorldState()`.
-- [ ] Replace revision, entities, facts, proposals, and reducer with `@Serializable data class WorldState(val place: String = "")` and a snapshot containing only a nonblank current place.
-- [ ] Change frontmatter to accept only `world-state.place` as a nonblank string.
+- [ ] Write failing serialization and frontmatter tests for `WorldState(location = "Küche")` and missing state as `WorldState()`.
+- [ ] Replace revision, entities, facts, proposals, and reducer with `@Serializable data class WorldState(val location: String = "")` and a snapshot containing only a nonblank current location.
+- [ ] Change frontmatter to accept only `world-state.location` as a nonblank string.
 - [ ] Run focused server and web tests; commit.
 
 ### Task 2: Add validated two-step place resolution
@@ -39,5 +39,5 @@
 **Files:** `Application.kt`, `PromptFactory.kt`, API and web tests, popover tests.
 
 - [ ] Write failing route and prompt tests that prove accepted places are returned in `done`, invalid candidates preserve the old place, and the Primary snapshot states only the canonical place.
-- [ ] Replace proposal/reducer wiring with the resolver result and migrate all web/API fixtures to `place`.
+- [ ] Replace proposal/reducer wiring with the resolver result and migrate all web/API fixtures to `location`.
 - [ ] Run focused JVM and Kotlin/JS tests, then `./gradlew check`; commit.
