@@ -10,7 +10,9 @@ Er ist eine weiche Erzählhilfe, keine zusätzliche harte Weltwahrheit.
 ## Datenvertrag
 
 `WorldState` besitzt `location: String` und `unresolvedSituation: String`, beide mit
-leerem Standardwert. Eine nichtleere Situation ist höchstens 160 Zeichen lang.
+leerem Standardwert. Das llama.cpp-Schema empfiehlt für eine neue nichtleere
+Situation höchstens 160 Zeichen; Kotlin übernimmt aber jede valide,
+vollständige Modellantwort unabhängig von ihrer Länge.
 Beide Felder sind unabhängig: Eine Handlung kann eine Situation setzen oder
 fortführen, obwohl der Ort unbestimmt bleibt.
 Der Browser persistiert sie wie den Ort und migriert den bisherigen JSON-Namen
@@ -34,8 +36,9 @@ leere String bedeutet, dass keine dominante offene Situation besteht.
 Der feste Prompt definiert das Feld als konkrete, aktuell offene Situation und
 nennt kurze Beispiele für Auftrag, Gefahr und Verpflichtung. Er verbietet
 Zeitstempel, Metadaten, Menünummern und Labels. Er fordert einen vollständigen
-Satz mit höchstens 20 Wörtern. Der Server akzeptiert nur Strings bis 160 Zeichen.
-Bei Schema-, Transport- oder Validierungsfehlern bleibt
+Satz mit höchstens 20 Wörtern. Die 160 Zeichen begrenzen nur die gewünschte
+Generierung, nicht die Kotlin-Übernahme. Bei Schema-, Transport- oder
+Validierungsfehlern bleibt
 die vorherige Situation erhalten. Ein erfolgreicher Situations-Call aktualisiert
 sie auch dann, wenn die
 Ortsauflösung keinen neuen Ort ergeben hat. Im lokalen TRACE-Modus werden die

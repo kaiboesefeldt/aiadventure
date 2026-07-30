@@ -113,20 +113,20 @@ class ApiModelsTest {
     }
 
     @Test
-    fun `request validation rejects unresolved situations longer than 160 characters`() {
-        val oversizedState = WorldState(unresolvedSituation = "x".repeat(161))
+    fun `request validation accepts unresolved situations beyond the generation recommendation`() {
+        val oversizedState = WorldState(unresolvedSituation = "x".repeat(1_000))
 
-        assertNotNull(
+        assertNull(
             RequestValidator.validate(
                 TurnRequest("live-1", "configured-llama-cpp", 8081, "# S", emptyList(), "look", worldState = oversizedState),
             ),
         )
-        assertNotNull(
+        assertNull(
             RequestValidator.validate(
                 PrefillRequest("live-1", 0, "configured-llama-cpp", 8081, "# S", emptyList(), "look", worldState = oversizedState),
             ),
         )
-        assertNotNull(
+        assertNull(
             RequestValidator.validate(
                 WarmupRequest("live-1", "configured-llama-cpp", 8081, "# S", emptyList(), worldState = oversizedState),
             ),

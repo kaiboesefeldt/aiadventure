@@ -297,20 +297,18 @@ class ApplicationTest {
     }
 
     @Test
-    fun `oversized unresolved situation is rejected before warmup coordinator access`() = testApplication {
+    fun `oversized unresolved situation reaches the warmup coordinator`() = testApplication {
         val registry = FakeRegistry()
         application { adventureModule(prefillRegistry = registry) }
         configureJsonClient()
 
         val response = client.post("/api/warmup") {
             contentType(ContentType.Application.Json)
-            setBody(warmupRequest().copy(worldState = WorldState(unresolvedSituation = "x".repeat(161))))
+            setBody(warmupRequest().copy(worldState = WorldState(unresolvedSituation = "x".repeat(1_000))))
         }
 
-        assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertTrue(registry.idleCleanupTimes.isEmpty())
-        assertTrue(registry.keys.isEmpty())
-        assertTrue(registry.coordinator.warmupRequests.isEmpty())
+        assertEquals(HttpStatusCode.Accepted, response.status)
+        assertEquals(listOf(warmupRequest().copy(worldState = WorldState(unresolvedSituation = "x".repeat(1_000)))), registry.coordinator.warmupRequests)
     }
 
     @Test

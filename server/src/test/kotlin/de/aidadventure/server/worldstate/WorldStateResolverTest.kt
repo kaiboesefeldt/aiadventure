@@ -35,10 +35,10 @@ class WorldStateResolverTest {
         try { assertEquals(WorldState("Nebelhafen", "Find the lighthouse saboteur"), LlamaCppWorldStateResolver(server.address.port).resolve(request("Du stehst am Rand des Hafen von Nebelhafen.", ""))) }
         finally { server.stop(0) }
     }
-    @Test fun `retains the previous situation when the resolved situation exceeds 160 characters`() = runBlocking {
+    @Test fun `accepts a resolved situation beyond the schema recommendation`() = runBlocking {
         val tooLong = "x".repeat(161)
         val server = server(ArrayDeque(listOf("{\"movement\":\"move\"}", "{\"location\":\"Market Square\"}", "{\"unresolvedSituation\":\"$tooLong\"}")))
-        try { assertEquals(WorldState("Market Square", "Existing situation"), LlamaCppWorldStateResolver(server.address.port).resolve(request("She arrives at the Market Square.", unresolvedSituation = "Existing situation"))) }
+        try { assertEquals(WorldState("Market Square", tooLong), LlamaCppWorldStateResolver(server.address.port).resolve(request("She arrives at the Market Square.", unresolvedSituation = "Existing situation"))) }
         finally { server.stop(0) }
     }
     @Test fun `retains the previous thread when the thread response is malformed`() = runBlocking {

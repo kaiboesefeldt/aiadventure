@@ -71,7 +71,6 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
         ?.takeIf(String::isNotBlank)
     private fun unresolvedSituation(content: String): String? = runCatching { resultJson.decodeFromString<UnresolvedSituationResult>(content).unresolvedSituation }.getOrNull()
         ?.trim()
-        ?.takeIf { it.length <= 160 }
         ?.takeUnless { it.isNotEmpty() && it.all(Char::isDigit) }
     private fun occursIn(candidate: String, response: String): Boolean = Regex("(?iu)(?<![\\p{L}\\p{N}])${Regex.escape(candidate)}(?![\\p{L}\\p{N}])").containsMatchIn(response)
 

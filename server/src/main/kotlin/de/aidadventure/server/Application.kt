@@ -440,7 +440,6 @@ object RequestValidator {
         runtimeFragments.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
         runtimeFragments.any { !it.isValidRuntimeFragmentDefinition() } -> invalid()
         runtimeFragments.map { it.matchText }.toSet().size != runtimeFragments.size -> invalid()
-        worldState.unresolvedSituation.length > MAX_UNRESOLVED_SITUATION_LENGTH -> invalid()
         else -> null
     }
 
@@ -459,7 +458,6 @@ object RequestValidator {
     private const val MAX_TEXT_LENGTH = 20_000
     private const val MAX_HISTORY_ENTRIES = 200
     private const val MAX_RUNTIME_FRAGMENT_DEFINITIONS = 200
-    private const val MAX_UNRESOLVED_SITUATION_LENGTH = 160
     private val ALLOWED_HISTORY_ROLES = setOf("player", "user", "game-master", "assistant", "ai", "runtime-fragment")
 }
 
