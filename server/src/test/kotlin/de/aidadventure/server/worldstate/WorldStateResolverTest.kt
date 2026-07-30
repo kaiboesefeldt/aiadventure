@@ -42,6 +42,14 @@ class WorldStateResolverTest {
             assertEquals("root ::= \"FINAL: \" (\"move\" | \"stay\")", payload["grammar"]?.jsonPrimitive?.content)
         } finally { server.stop(0) }
     }
+    @Test fun `traces the raw world state completion`() = runBlocking {
+        val traces = mutableListOf<Pair<String, String>>()
+        val server = server(ArrayDeque(listOf("FINAL: stay")))
+        try {
+            assertNull(LlamaCppWorldStateResolver(server.address.port, trace = { phase, _, content -> traces += phase to content }).resolve(request("She remains at the harbour.")))
+            assertEquals(listOf("movement" to "FINAL: stay"), traces)
+        } finally { server.stop(0) }
+    }
     @Test fun `keeps state for stay malformed final or absent location`() = runBlocking {
         listOf("FINAL: stay", "FINAL: move\nFINAL: stay", "FINAL: move").forEach { movement ->
             val server = server(ArrayDeque(listOf(movement, "FINAL: Elsewhere")))

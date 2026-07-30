@@ -11,6 +11,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import org.slf4j.LoggerFactory
 
 data class WorldStateResolutionRequest(
     val sessionId: String,
@@ -25,28 +26,31 @@ fun interface WorldStateResolver { suspend fun resolve(request: WorldStateResolu
 class LlamaCppWorldStateResolver(
     private val port: Int,
     private val client: HttpClient = HttpClient.newBuilder().connectTimeout(TIMEOUT).build(),
+    private val trace: (phase: String, sessionId: String, content: String) -> Unit = { phase, sessionId, content ->
+        if (logger.isTraceEnabled) logger.trace("operation=world_state phase={} sessionId={} response={}", phase, sessionId, content)
+    },
 ) : WorldStateResolver {
     override suspend fun resolve(request: WorldStateResolutionRequest): WorldState? = runInterruptible(Dispatchers.IO) {
-        if (request.previousState.location.isBlank()) return@runInterruptible locationFrom(request.gameMasterResponse)
-        when (singleFinal(complete(MOVEMENT_PROMPT + "\nPLAYER ACTION:\n${request.playerAction}\nGAME-MASTER RESPONSE:\n${request.gameMasterResponse}", MOVEMENT_GRAMMAR))) {
+        if (request.previousState.location.isBlank()) return@runInterruptible locationFrom(request.gameMasterResponse, request.sessionId, "initial_location")
+        when (singleFinal(complete(MOVEMENT_PROMPT + "\nPLAYER ACTION:\n${request.playerAction}\nGAME-MASTER RESPONSE:\n${request.gameMasterResponse}", MOVEMENT_GRAMMAR, request.sessionId, "movement"))) {
             "stay" -> null
-            "move" -> locationFrom(request.gameMasterResponse)
+            "move" -> locationFrom(request.gameMasterResponse, request.sessionId, "moved_location")
             else -> null
         }
     }
 
-    private fun locationFrom(response: String): WorldState? = singleFinal(
-        complete(LOCATION_PROMPT + "\nGAME-MASTER RESPONSE:\n$response", LOCATION_GRAMMAR),
+    private fun locationFrom(response: String, sessionId: String, phase: String): WorldState? = singleFinal(
+        complete(LOCATION_PROMPT + "\nGAME-MASTER RESPONSE:\n$response", LOCATION_GRAMMAR, sessionId, phase),
     )?.takeIf { it.length in 1..96 && occursIn(it, response) }?.let(::WorldState)
 
-    private fun complete(prompt: String, grammar: String): String? = try {
+    private fun complete(prompt: String, grammar: String, sessionId: String, phase: String): String? = try {
         val response = client.send(
             HttpRequest.newBuilder(URI.create("http://localhost:$port/completion"))
                 .timeout(TIMEOUT).header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(CompletionRequest(prompt, nPredict = 32, stream = false, grammar))))
                 .build(), HttpResponse.BodyHandlers.ofString(),
         )
-        if (response.statusCode() !in 200..299) null else json.decodeFromString<CompletionResponse>(response.body()).content
+        if (response.statusCode() !in 200..299) null else json.decodeFromString<CompletionResponse>(response.body()).content?.also { trace(phase, sessionId, it) }
     } catch (_: Exception) { null }
 
     private fun singleFinal(text: String?): String? {
@@ -68,6 +72,7 @@ class LlamaCppWorldStateResolver(
     private companion object {
         val TIMEOUT: Duration = Duration.ofSeconds(300)
         val json = Json { ignoreUnknownKeys = true }
+        val logger = LoggerFactory.getLogger(LlamaCppWorldStateResolver::class.java)
         const val MOVEMENT_PROMPT = """Decide whether the player character leaves the current scene. Return exactly one final line.
 Example: player waits; response says the room stays quiet.
 FINAL: stay
