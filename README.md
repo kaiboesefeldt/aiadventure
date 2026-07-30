@@ -29,6 +29,12 @@ The server listens only on `127.0.0.1:8080` by default.
 Set `ADVENTURE_EXPOSE_LAN=true` only when you intentionally need the API reachable on
 your LAN. Do not use that setting on an untrusted network.
 
+### TRACE diagnostics
+
+`LOG_LEVEL=TRACE` is an opt-in local diagnostic mode. It deliberately records
+scenario, action, prompt and LLM-response content so cache and model behavior
+can be inspected. Do not enable it when those local logs may be exposed.
+
 ### Connect to llama.cpp
 
 Import or open a scenario, then start a new session or resume a saved one. The

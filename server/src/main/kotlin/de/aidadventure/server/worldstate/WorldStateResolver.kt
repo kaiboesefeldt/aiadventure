@@ -42,7 +42,7 @@ class LlamaCppWorldStateResolver(
         val response = client.send(
             HttpRequest.newBuilder(URI.create("http://localhost:$port/completion"))
                 .timeout(TIMEOUT).header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(CompletionRequest(prompt))))
+                .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(CompletionRequest(prompt, nPredict = 32, stream = false))))
                 .build(), HttpResponse.BodyHandlers.ofString(),
         )
         if (response.statusCode() !in 200..299) null else json.decodeFromString<CompletionResponse>(response.body()).content
@@ -57,12 +57,22 @@ class LlamaCppWorldStateResolver(
     private fun occursIn(candidate: String, response: String): Boolean =
         Regex("(?iu)(?<![\\p{L}\\p{N}])${Regex.escape(candidate)}(?![\\p{L}\\p{N}])").containsMatchIn(response)
 
-    @Serializable private data class CompletionRequest(val prompt: String, val n_predict: Int = 32, val stream: Boolean = false)
+    @Serializable private data class CompletionRequest(
+        val prompt: String,
+        @kotlinx.serialization.SerialName("n_predict") val nPredict: Int,
+        val stream: Boolean,
+    )
     @Serializable private data class CompletionResponse(val content: String? = null)
     private companion object {
         val TIMEOUT: Duration = Duration.ofSeconds(300)
         val json = Json { ignoreUnknownKeys = true }
-        const val MOVEMENT_PROMPT = """Decide whether the player character leaves the current scene. Return exactly one final line.\nExample: player waits; response says the room stays quiet.\nFINAL: stay\nExample: player walks through the gate; response says they arrive at the market.\nFINAL: move"""
-        const val LOCATION_PROMPT = """Name the destination established in the game-master response. Return exactly one final line containing the exact location name from that response.\nExample response: She enters the Market Square.\nFINAL: Market Square"""
+        const val MOVEMENT_PROMPT = """Decide whether the player character leaves the current scene. Return exactly one final line.
+Example: player waits; response says the room stays quiet.
+FINAL: stay
+Example: player walks through the gate; response says they arrive at the market.
+FINAL: move"""
+        const val LOCATION_PROMPT = """Name the destination established in the game-master response. Return exactly one final line containing the exact location name from that response.
+Example response: She enters the Market Square.
+FINAL: Market Square"""
     }
 }
