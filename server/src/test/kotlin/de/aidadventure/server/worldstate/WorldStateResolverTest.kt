@@ -27,6 +27,11 @@ class WorldStateResolverTest {
             finally { server.stop(0) }
         }
     }
+    @Test fun `normalizes trailing punctuation before accepting an initial location`() = runBlocking {
+        val server = server(ArrayDeque(listOf("{\"location\":\"Nebelhafen,\"}")))
+        try { assertEquals(WorldState("Nebelhafen"), LlamaCppWorldStateResolver(server.address.port).resolve(request("Du stehst in Nebelhafen, am Kai.", ""))) }
+        finally { server.stop(0) }
+    }
     @Test fun `sends movement schema to llama cpp`() = runBlocking {
         var requestBody = ""
         val server = server(ArrayDeque(listOf("{\"movement\":\"stay\"}"))) { requestBody = it }

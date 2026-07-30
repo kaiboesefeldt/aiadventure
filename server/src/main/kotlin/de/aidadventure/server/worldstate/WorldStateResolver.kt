@@ -44,6 +44,10 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
 
     private fun movement(content: String): String? = runCatching { json.decodeFromString<MovementResult>(content).movement }.getOrNull()
     private fun location(content: String): String? = runCatching { json.decodeFromString<LocationResult>(content).location }.getOrNull()
+        ?.trim()
+        ?.trimEnd(',', ';', ':', '.', '!', '?')
+        ?.trim()
+        ?.takeIf(String::isNotBlank)
     private fun occursIn(candidate: String, response: String): Boolean = Regex("(?iu)(?<![\\p{L}\\p{N}])${Regex.escape(candidate)}(?![\\p{L}\\p{N}])").containsMatchIn(response)
 
     @Serializable private data class CompletionRequest(val prompt: String, @SerialName("n_predict") val nPredict: Int, val stream: Boolean, @SerialName("json_schema") val jsonSchema: JsonObject)

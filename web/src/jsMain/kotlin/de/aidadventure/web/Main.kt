@@ -186,7 +186,9 @@ private val PlayView = FC<PlayViewProps> { props ->
         (if (worldStateOpen) worldStateTooltipContainerId() else openFragmentIndex?.let(::fragmentTooltipContainerId))?.let { containerId ->
             val outsideClick: (Event) -> Unit = { event ->
                 val container = document.getElementById(containerId.unsafeCast<web.dom.ElementId>())
-                if (container == null || !container.asDynamic().contains(event.target)) openFragmentIndex = null
+                if (container == null || !container.asDynamic().contains(event.target)) {
+                    if (worldStateOpen) worldStateOpen = false else openFragmentIndex = null
+                }
             }
             document.asDynamic().addEventListener("click", outsideClick)
             onCleanup { document.asDynamic().removeEventListener("click", outsideClick) }
