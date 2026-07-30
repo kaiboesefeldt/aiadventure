@@ -30,18 +30,18 @@ class WorldStateResolverTest {
         try { assertEquals(WorldState("Market Square", "Find the lighthouse saboteur"), LlamaCppWorldStateResolver(server.address.port).resolve(request("She arrives at the Market Square."))) }
         finally { server.stop(0) }
     }
-    @Test fun `resolves a thread after an initial location even when the previous location is blank`() = runBlocking {
+    @Test fun `resolves narrative focus after an initial location even when the previous location is blank`() = runBlocking {
         val server = server(ArrayDeque(listOf("{\"location\":\"Nebelhafen\"}", "{\"narrativeFocus\":\"Find the lighthouse saboteur\"}")))
         try { assertEquals(WorldState("Nebelhafen", "Find the lighthouse saboteur"), LlamaCppWorldStateResolver(server.address.port).resolve(request("Du stehst am Rand des Hafen von Nebelhafen.", ""))) }
         finally { server.stop(0) }
     }
-    @Test fun `accepts a resolved situation beyond the schema recommendation`() = runBlocking {
+    @Test fun `accepts a resolved narrative focus beyond the schema recommendation`() = runBlocking {
         val tooLong = "x".repeat(161)
         val server = server(ArrayDeque(listOf("{\"movement\":\"move\"}", "{\"location\":\"Market Square\"}", "{\"narrativeFocus\":\"$tooLong\"}")))
         try { assertEquals(WorldState("Market Square", tooLong), LlamaCppWorldStateResolver(server.address.port).resolve(request("She arrives at the Market Square.", narrativeFocus = "Existing situation"))) }
         finally { server.stop(0) }
     }
-    @Test fun `retains the previous thread when the thread response is malformed`() = runBlocking {
+    @Test fun `retains the previous narrative focus when the narrative focus response is malformed`() = runBlocking {
         val server = server(ArrayDeque(listOf("{\"movement\":\"move\"}", "{\"location\":\"Market Square\"}", "{\"thread\":\"wrong field\"}")))
         try { assertEquals(WorldState("Market Square", "Existing situation"), LlamaCppWorldStateResolver(server.address.port).resolve(request("She arrives at the Market Square.", narrativeFocus = "Existing situation"))) }
         finally { server.stop(0) }
@@ -51,12 +51,12 @@ class WorldStateResolverTest {
         try { assertNull(LlamaCppWorldStateResolver(server.address.port).resolve(request("Nothing changes.", narrativeFocus = "Existing situation"))) }
         finally { server.stop(0) }
     }
-    @Test fun `rejects a numeric choice as a story thread`() = runBlocking {
+    @Test fun `rejects a numeric choice as narrative focus`() = runBlocking {
         val server = server(ArrayDeque(listOf("{\"movement\":\"stay\"}", "{\"narrativeFocus\":\"2\"}")))
         try { assertNull(LlamaCppWorldStateResolver(server.address.port).resolve(request("The game master offers options 1 to 4.", narrativeFocus = "Existing situation"))) }
         finally { server.stop(0) }
     }
-    @Test fun `rejects a thread result with an extra property`() = runBlocking {
+    @Test fun `rejects a narrative focus result with an extra property`() = runBlocking {
         val server = server(ArrayDeque(listOf("{\"movement\":\"move\"}", "{\"location\":\"Market Square\"}", "{\"narrativeFocus\":\"New duty\",\"extra\":\"reject\"}")))
         try { assertEquals(WorldState("Market Square", "Existing situation"), LlamaCppWorldStateResolver(server.address.port).resolve(request("She arrives at the Market Square.", narrativeFocus = "Existing situation"))) }
         finally { server.stop(0) }
@@ -75,12 +75,12 @@ class WorldStateResolverTest {
         }
         assertTrue(generateSequence<Throwable>(failure) { it.cause }.any { it is InterruptedException })
     }
-    @Test fun `retains a resolved location when the thread request fails`() = runBlocking {
+    @Test fun `retains a resolved location when the narrative focus request fails`() = runBlocking {
         val server = server(ArrayDeque(listOf("{\"movement\":\"move\"}", "{\"location\":\"Market Square\"}")))
         try { assertEquals(WorldState("Market Square", "Existing situation"), LlamaCppWorldStateResolver(server.address.port).resolve(request("She arrives at the Market Square.", narrativeFocus = "Existing situation"))) }
         finally { server.stop(0) }
     }
-    @Test fun `a valid empty thread clears the previous thread`() = runBlocking {
+    @Test fun `a valid empty narrative focus clears the previous narrative focus`() = runBlocking {
         val server = server(ArrayDeque(listOf("{\"movement\":\"stay\"}", "{\"narrativeFocus\":\"\"}")))
         try { assertEquals(WorldState("Harbour"), LlamaCppWorldStateResolver(server.address.port).resolve(request("She remains at the harbour.", narrativeFocus = "Existing situation"))) }
         finally { server.stop(0) }
