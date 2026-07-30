@@ -37,6 +37,15 @@ class WorldStateResolverTest {
             assertEquals("[\"stay\",\"move\"]", schema["properties"]!!.jsonObject["movement"]!!.jsonObject["enum"]!!.toString())
         } finally { server.stop(0) }
     }
+    @Test fun `limits the location schema to one short name`() = runBlocking {
+        var requestBody = ""
+        val server = server(ArrayDeque(listOf("{\"location\":\"Nebelhafen\"}"))) { requestBody = it }
+        try {
+            LlamaCppWorldStateResolver(server.address.port).resolve(request("Du stehst in Nebelhafen.", ""))
+            val location = Json.parseToJsonElement(requestBody).jsonObject["json_schema"]!!.jsonObject["properties"]!!.jsonObject["location"]!!.jsonObject
+            assertEquals("48", location["maxLength"]?.jsonPrimitive?.content)
+        } finally { server.stop(0) }
+    }
     private fun request(response: String, location: String = "Harbour") = WorldStateResolutionRequest("id", "# S", WorldState(location), "walk", response)
     private fun server(replies: ArrayDeque<String>, onRequest: (String) -> Unit = {}): HttpServer = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0).apply {
         createContext("/completion") { exchange ->

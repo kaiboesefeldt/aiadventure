@@ -55,9 +55,9 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
         val json = Json { ignoreUnknownKeys = true }
         val logger = LoggerFactory.getLogger(LlamaCppWorldStateResolver::class.java)
         val movementSchema = schema("""{"type":"object","additionalProperties":false,"required":["movement"],"properties":{"movement":{"enum":["stay","move"]}}}""")
-        val locationSchema = schema("""{"type":"object","additionalProperties":false,"required":["location"],"properties":{"location":{"type":"string","minLength":1,"maxLength":96}}}""")
+        val locationSchema = schema("""{"type":"object","additionalProperties":false,"required":["location"],"properties":{"location":{"type":"string","minLength":1,"maxLength":48}}}""")
         fun schema(source: String) = json.parseToJsonElement(source).jsonObject
         const val MOVEMENT_PROMPT = "Decide whether the player character leaves the current scene."
-        const val LOCATION_PROMPT = "Name the current scene location established in the game-master response."
+        const val LOCATION_PROMPT = "Name the current scene location established in the game-master response. Return exactly one short location name; never list alternatives, scores, explanations, or punctuation."
     }
 }
