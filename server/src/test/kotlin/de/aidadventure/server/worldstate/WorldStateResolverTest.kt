@@ -131,7 +131,7 @@ class WorldStateResolverTest {
             assertEquals("160", alternatives[1].jsonObject["maxLength"]?.jsonPrimitive?.content)
             val request = Json.parseToJsonElement(requests.last()).jsonObject
             assertFalse(request.containsKey("n_predict"))
-            assertTrue(request["prompt"]!!.jsonPrimitive.content.contains("Return only one complete sentence (max 20 words) naming the single unresolved goal, danger, or obligation. Never describe characters, places, atmosphere, or background."))
+            assertTrue(request["prompt"]!!.jsonPrimitive.content.contains("Ignore questions and choices. Never copy or select an option."))
         } finally { server.stop(0) }
     }
     private fun request(response: String, location: String = "Harbour", unresolvedSituation: String = "") = WorldStateResolutionRequest("id", "# S", WorldState(location, unresolvedSituation), "walk", response)

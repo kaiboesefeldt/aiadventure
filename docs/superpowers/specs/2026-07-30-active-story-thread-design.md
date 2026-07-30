@@ -35,7 +35,8 @@ leere String bedeutet, dass keine dominante offene Situation besteht.
 
 Der feste Prompt verlangt ausschließlich einen vollständigen Satz mit höchstens
 20 Wörtern über den einzelnen offenen Auftrag, die Gefahr oder Verpflichtung.
-Er verbietet Personen-, Orts-, Atmosphären- und Hintergrundbeschreibungen.
+Er ignoriert Fragen und Optionen und darf sie weder kopieren noch auswählen;
+außerdem verbietet er Personen-, Orts-, Atmosphären- und Hintergrundbeschreibungen.
 Die 160 Zeichen begrenzen nur die gewünschte Generierung, nicht die Kotlin-Übernahme. Bei Schema-, Transport- oder
 Validierungsfehlern bleibt
 die vorherige Situation erhalten. Ein erfolgreicher Situations-Call aktualisiert
