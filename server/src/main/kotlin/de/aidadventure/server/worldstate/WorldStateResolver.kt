@@ -71,6 +71,7 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
     private fun thread(content: String): String? = runCatching { resultJson.decodeFromString<ThreadResult>(content).activeThread }.getOrNull()
         ?.trim()
         ?.takeIf { it.length <= 96 }
+        ?.takeUnless { it.isNotEmpty() && it.all(Char::isDigit) }
     private fun occursIn(candidate: String, response: String): Boolean = Regex("(?iu)(?<![\\p{L}\\p{N}])${Regex.escape(candidate)}(?![\\p{L}\\p{N}])").containsMatchIn(response)
 
     @Serializable private data class CompletionRequest(val prompt: String, @SerialName("n_predict") val nPredict: Int, val stream: Boolean, @SerialName("json_schema") val jsonSchema: JsonObject)
@@ -89,6 +90,6 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
         fun schema(source: String) = json.parseToJsonElement(source).jsonObject
         const val MOVEMENT_PROMPT = "Decide whether the player character leaves the current scene."
         const val LOCATION_PROMPT = "Name the current scene location established in the game-master response. Return exactly one short location name; never list alternatives, scores, explanations, or punctuation."
-        const val THREAD_PROMPT = "Retain, replace, or clear the one dominant unresolved task, danger, or obligation established by the inputs. Do not invent plot, explanations, or alternatives. Return only the active thread."
+        const val THREAD_PROMPT = "Retain, replace, or clear the one dominant unresolved task, danger, or obligation established by the inputs. Return one short meaningful phrase or an empty string; never return a menu option number. Do not invent plot, explanations, or alternatives."
     }
 }

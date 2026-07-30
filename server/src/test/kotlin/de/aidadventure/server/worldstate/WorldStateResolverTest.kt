@@ -41,6 +41,11 @@ class WorldStateResolverTest {
         try { assertEquals(WorldState("Market Square", "Existing thread"), LlamaCppWorldStateResolver(server.address.port).resolve(request("She arrives at the Market Square.", activeThread = "Existing thread"))) }
         finally { server.stop(0) }
     }
+    @Test fun `rejects a numeric choice as a story thread`() = runBlocking {
+        val server = server(ArrayDeque(listOf("{\"movement\":\"stay\"}", "{\"activeThread\":\"2\"}")))
+        try { assertNull(LlamaCppWorldStateResolver(server.address.port).resolve(request("The game master offers options 1 to 4.", activeThread = "Existing thread"))) }
+        finally { server.stop(0) }
+    }
     @Test fun `rejects a thread result with an extra property`() = runBlocking {
         val server = server(ArrayDeque(listOf("{\"movement\":\"move\"}", "{\"location\":\"Market Square\"}", "{\"activeThread\":\"New duty\",\"extra\":\"reject\"}")))
         try { assertEquals(WorldState("Market Square", "Existing thread"), LlamaCppWorldStateResolver(server.address.port).resolve(request("She arrives at the Market Square.", activeThread = "Existing thread"))) }
