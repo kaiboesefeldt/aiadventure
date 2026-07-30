@@ -1,15 +1,9 @@
 package de.aidadventure.web
 
-import de.aidadventure.web.model.WorldEntity
 import de.aidadventure.web.model.WorldState
 import kotlin.test.Test
-import kotlin.test.assertContains
+import kotlin.test.assertEquals
 
 class WorldStatePopoverTest {
-    @Test fun `renders the current state as JSON`() {
-        val json = worldStateJson(WorldState(2, mapOf("mira" to WorldEntity("npc", "Mira", "wary"))))
-        assertContains(json, "\"revision\":2")
-        assertContains(json, "\"mira\"")
-        assertContains(json, "\"name\":\"Mira\"")
-    }
+    @Test fun `renders the persisted location`() = assertEquals("{\"location\":\"Küche\"}", worldStateJson(WorldState("Küche")))
 }

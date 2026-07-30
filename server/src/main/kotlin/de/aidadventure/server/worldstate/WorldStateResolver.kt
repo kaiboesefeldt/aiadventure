@@ -7,12 +7,10 @@ import java.net.http.HttpResponse
 import java.time.Duration
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
-import kotlinx.serialization.encodeToString
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonObject
-import org.slf4j.LoggerFactory
 
 data class WorldStateResolutionRequest(
     val sessionId: String,
@@ -22,67 +20,49 @@ data class WorldStateResolutionRequest(
     val gameMasterResponse: String,
 )
 
-fun interface WorldStateResolver { suspend fun resolve(request: WorldStateResolutionRequest): WorldStateProposal? }
+fun interface WorldStateResolver { suspend fun resolve(request: WorldStateResolutionRequest): WorldState? }
 
 class LlamaCppWorldStateResolver(
     private val port: Int,
     private val client: HttpClient = HttpClient.newBuilder().connectTimeout(TIMEOUT).build(),
 ) : WorldStateResolver {
-    override suspend fun resolve(request: WorldStateResolutionRequest): WorldStateProposal? = runInterruptible(Dispatchers.IO) {
-        val prompt = """You update a game world state. Return only valid JSON. Propose at most 8 total entities and facts.
-For each clearly established new NPC, location, or item in the game-master response, add an entity with its ordinary display name, kind (npc for a character, location for a place or building, item for a portable object, other only otherwise), and a short established summary. Do not derive IDs; the server does that.
-For each clearly established fact, add its name, the ordinary display name of the entity it describes, and its value. A fact may reference an entity in this same proposal or an entity named in STATE. Do not invent entities or facts.
-STATE: ${WorldStateReducer.snapshot(request.previousState)}
-PLAYER ACTION: ${request.playerAction}
-GAME-MASTER RESPONSE: ${request.gameMasterResponse}
-JSON: {"baseRevision":${request.previousState.revision},"entities":[{"name":"Leuchtturm","kind":"location","summary":"Seit drei Nächten dunkel."}],"facts":[{"name":"Unruhe","entityName":"Leuchtturm","value":"true"}]}
-"""
+    override suspend fun resolve(request: WorldStateResolutionRequest): WorldState? = runInterruptible(Dispatchers.IO) {
+        when (singleFinal(complete(MOVEMENT_PROMPT + "\nPLAYER ACTION:\n${request.playerAction}\nGAME-MASTER RESPONSE:\n${request.gameMasterResponse}"))) {
+            "stay" -> null
+            "move" -> {
+                val location = singleFinal(complete(LOCATION_PROMPT + "\nGAME-MASTER RESPONSE:\n${request.gameMasterResponse}"))
+                    ?.takeIf { it.length in 1..96 && occursIn(it, request.gameMasterResponse) }
+                location?.let(::WorldState)
+            }
+            else -> null
+        }
+    }
+
+    private fun complete(prompt: String): String? = try {
         val response = client.send(
             HttpRequest.newBuilder(URI.create("http://localhost:$port/completion"))
                 .timeout(TIMEOUT).header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(CompletionRequest(prompt, jsonSchema = patchSchema(request.previousState.revision)))))
+                .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(CompletionRequest(prompt))))
                 .build(), HttpResponse.BodyHandlers.ofString(),
         )
-        if (response.statusCode() !in 200..299) return@runInterruptible null
-        val content = runCatching { json.decodeFromString<CompletionResponse>(response.body()).content.orEmpty() }.getOrNull()
-            ?: return@runInterruptible null
-        runCatching { json.decodeFromString<WorldStateProposal>(content) }
-            .onFailure { logger.trace("operation=world_state phase=invalid_json sessionId={} candidate={}", request.sessionId, content) }
-            .getOrNull()
+        if (response.statusCode() !in 200..299) null else json.decodeFromString<CompletionResponse>(response.body()).content
+    } catch (_: Exception) { null }
+
+    private fun singleFinal(text: String?): String? {
+        val lines = text?.lineSequence()?.filter { it.isNotBlank() }?.toList().orEmpty()
+        val finals = lines.filter { it.startsWith("FINAL:") }
+        return finals.singleOrNull()?.takeIf { it == lines.lastOrNull() }?.removePrefix("FINAL:")?.trim()?.takeIf { it.isNotEmpty() }
     }
 
-    @kotlinx.serialization.Serializable private data class CompletionRequest(
-        val prompt: String,
-        val n_predict: Int = 512,
-        val stream: Boolean = false,
-        @kotlinx.serialization.SerialName("json_schema") val jsonSchema: JsonObject,
-    )
-    @kotlinx.serialization.Serializable private data class CompletionResponse(val content: String? = null)
+    private fun occursIn(candidate: String, response: String): Boolean =
+        Regex("(?iu)(?<![\\p{L}\\p{N}])${Regex.escape(candidate)}(?![\\p{L}\\p{N}])").containsMatchIn(response)
+
+    @Serializable private data class CompletionRequest(val prompt: String, val n_predict: Int = 32, val stream: Boolean = false)
+    @Serializable private data class CompletionResponse(val content: String? = null)
     private companion object {
         val TIMEOUT: Duration = Duration.ofSeconds(300)
         val json = Json { ignoreUnknownKeys = true }
-        val logger = LoggerFactory.getLogger(LlamaCppWorldStateResolver::class.java)
-        fun patchSchema(revision: Long): JsonObject = json.parseToJsonElement(
-            """{
-              "type":"object",
-              "additionalProperties":false,
-              "required":["baseRevision","entities","facts"],
-              "properties":{
-                "baseRevision":{"enum":[$revision]},
-                "entities":{"type":"array","maxItems":8,"items":{"type":"object","additionalProperties":false,
-                  "required":["name","kind","summary"],"properties":{
-                    "name":{"type":"string","minLength":1,"maxLength":96},
-                    "kind":{"enum":["npc","location","item","other"]},
-                    "summary":{"type":"string","minLength":1,"maxLength":240}
-                  }}},
-                "facts":{"type":"array","maxItems":8,"items":{"type":"object","additionalProperties":false,
-                  "required":["name","entityName","value"],"properties":{
-                    "name":{"type":"string","minLength":1,"maxLength":48},
-                    "entityName":{"type":"string","minLength":1,"maxLength":96},
-                    "value":{"type":"string","minLength":1,"maxLength":160}
-                  }}}
-              }
-            }""",
-        ).jsonObject
+        const val MOVEMENT_PROMPT = """Decide whether the player character leaves the current scene. Return exactly one final line.\nExample: player waits; response says the room stays quiet.\nFINAL: stay\nExample: player walks through the gate; response says they arrive at the market.\nFINAL: move"""
+        const val LOCATION_PROMPT = """Name the destination established in the game-master response. Return exactly one final line containing the exact location name from that response.\nExample response: She enters the Market Square.\nFINAL: Market Square"""
     }
 }

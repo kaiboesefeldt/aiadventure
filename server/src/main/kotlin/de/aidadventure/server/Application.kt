@@ -14,7 +14,6 @@ import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.model.WarmupRequest
 import de.aidadventure.server.worldstate.LlamaCppWorldStateResolver
-import de.aidadventure.server.worldstate.WorldStateReducer
 import de.aidadventure.server.worldstate.WorldStateResolutionRequest
 import de.aidadventure.server.worldstate.WorldStateResolver
 import de.aidadventure.server.prefill.CoordinatorKey
@@ -246,16 +245,14 @@ fun Application.adventureModule(
                             val candidate = worldStateResolver.resolve(
                                 WorldStateResolutionRequest(requestId, request.scenarioMarkdown, request.worldState, request.playerAction, generated.toString()),
                             )
-                            val reduced = candidate?.let { WorldStateReducer.applyProposal(request.worldState, it) }
                             if (logger.isTraceEnabled) {
                                 logger.trace(
-                                    "operation=world_state phase=patch sessionId={} accepted={} patch={}",
+                                    "operation=world_state phase=location sessionId={} accepted={}",
                                     request.sessionId,
-                                    reduced != null,
-                                    candidate?.let { eventJson.encodeToString(it) } ?: "null",
+                                    candidate != null,
                                 )
                             }
-                            reduced ?: request.worldState
+                            candidate ?: request.worldState
                         } catch (failure: Exception) {
                             if (failure is CancellationException) throw failure
                             logger.warn("requestId={} operation={} failure={}", requestId, "world_state", failure.javaClass.simpleName)
@@ -263,9 +260,8 @@ fun Application.adventureModule(
                         }
                         if (logger.isTraceEnabled) {
                             logger.trace(
-                                "operation=world_state phase=accepted sessionId={} state={}",
+                                "operation=world_state phase=accepted sessionId={}",
                                 request.sessionId,
-                                eventJson.encodeToString(acceptedWorldState),
                             )
                         }
                         val warmupRequest = WarmupRequest(

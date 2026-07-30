@@ -5,7 +5,7 @@ import de.aidadventure.server.model.FragmentRelevanceRequest
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.WarmupRequest
 import de.aidadventure.server.worldstate.WorldState
-import de.aidadventure.server.worldstate.WorldStateReducer
+import de.aidadventure.server.worldstate.WorldStateSnapshot
 import dev.langchain4j.data.message.AiMessage
 import dev.langchain4j.data.message.ChatMessage
 import dev.langchain4j.data.message.SystemMessage
@@ -16,7 +16,7 @@ class PromptFactory {
         add(SystemMessage.from(GAME_MASTER_INSTRUCTION))
         add(SystemMessage.from(request.scenarioMarkdown))
         request.history.forEach { add(historyMessage(it)) }
-        WorldStateReducer.snapshot(request.worldState).takeIf { it.isNotBlank() }?.let { add(SystemMessage.from(it)) }
+        WorldStateSnapshot.render(request.worldState).takeIf { it.isNotBlank() }?.let { add(SystemMessage.from(it)) }
         add(UserMessage.from(request.playerAction))
     }
 
@@ -24,7 +24,7 @@ class PromptFactory {
         add(SystemMessage.from(GAME_MASTER_INSTRUCTION))
         add(SystemMessage.from(request.scenarioMarkdown))
         request.history.forEach { add(historyMessage(it)) }
-        WorldStateReducer.snapshot(request.worldState).takeIf { it.isNotBlank() }?.let { add(SystemMessage.from(it)) }
+        WorldStateSnapshot.render(request.worldState).takeIf { it.isNotBlank() }?.let { add(SystemMessage.from(it)) }
     }
 
     fun buildRelevance(request: FragmentRelevanceRequest): List<ChatMessage> = buildList {
