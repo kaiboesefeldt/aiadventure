@@ -28,15 +28,15 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
             "move" -> locationFrom(request, "moved_location")
             else -> null
         }
-        val activeThread = complete(
-            THREAD_PROMPT + "\nPRIOR THREAD:\n${request.previousState.activeThread}\nPLAYER ACTION:\n${request.playerAction}\nGAME-MASTER RESPONSE:\n${request.gameMasterResponse}",
-            threadSchema,
+        val unresolvedSituation = complete(
+            SITUATION_PROMPT + "\nPRIOR UNRESOLVED SITUATION:\n${request.previousState.unresolvedSituation}\nPLAYER ACTION:\n${request.playerAction}\nGAME-MASTER RESPONSE:\n${request.gameMasterResponse}",
+            situationSchema,
             request,
-            "thread",
-        )?.let(::thread) ?: request.previousState.activeThread
+            "unresolved_situation",
+        )?.let(::unresolvedSituation) ?: request.previousState.unresolvedSituation
         request.previousState.copy(
             location = resolvedLocation?.location ?: request.previousState.location,
-            activeThread = activeThread,
+            unresolvedSituation = unresolvedSituation,
         ).takeIf { it != request.previousState }
     }
 
@@ -69,7 +69,7 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
         ?.trimEnd(',', ';', ':', '.', '!', '?')
         ?.trim()
         ?.takeIf(String::isNotBlank)
-    private fun thread(content: String): String? = runCatching { resultJson.decodeFromString<ThreadResult>(content).activeThread }.getOrNull()
+    private fun unresolvedSituation(content: String): String? = runCatching { resultJson.decodeFromString<UnresolvedSituationResult>(content).unresolvedSituation }.getOrNull()
         ?.trim()
         ?.takeIf { it.length <= 96 }
         ?.takeUnless { it.isNotEmpty() && it.all(Char::isDigit) }
@@ -79,7 +79,7 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
     @Serializable private data class CompletionResponse(val content: String? = null)
     @Serializable private data class MovementResult(val movement: String)
     @Serializable private data class LocationResult(val location: String)
-    @Serializable private data class ThreadResult(val activeThread: String)
+    @Serializable private data class UnresolvedSituationResult(val unresolvedSituation: String)
     private companion object {
         val TIMEOUT: Duration = Duration.ofSeconds(300)
         val json = Json { ignoreUnknownKeys = true }
@@ -87,10 +87,10 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
         val logger = LoggerFactory.getLogger(LlamaCppWorldStateResolver::class.java)
         val movementSchema = schema("""{"type":"object","additionalProperties":false,"required":["movement"],"properties":{"movement":{"enum":["stay","move"]}}}""")
         val locationSchema = schema("""{"type":"object","additionalProperties":false,"required":["location"],"properties":{"location":{"type":"string","minLength":1,"maxLength":48}}}""")
-        val threadSchema = schema("""{"type":"object","additionalProperties":false,"required":["activeThread"],"properties":{"activeThread":{"anyOf":[{"const":""},{"type":"string","minLength":3,"maxLength":96}]}}}""")
+        val situationSchema = schema("""{"type":"object","additionalProperties":false,"required":["unresolvedSituation"],"properties":{"unresolvedSituation":{"anyOf":[{"const":""},{"type":"string","minLength":3,"maxLength":96}]}}}""")
         fun schema(source: String) = json.parseToJsonElement(source).jsonObject
         const val MOVEMENT_PROMPT = "Decide whether the player character leaves the current scene."
         const val LOCATION_PROMPT = "Name the current scene location established in the game-master response. Return exactly one short location name; never list alternatives, scores, explanations, or punctuation."
-        const val THREAD_PROMPT = "Identify the one dominant unresolved task, danger, or obligation established by the inputs. If the inputs establish a clear unresolved thread, return it as one short meaningful phrase. Only clear it when the inputs establish no unresolved task, danger, or obligation. Never return a menu option number. Do not invent plot, explanations, or alternatives."
+        const val SITUATION_PROMPT = "The unresolvedSituation value is one concrete, currently open story situation: a goal, danger, or obligation that still needs a response. Examples: Find out why the lighthouse is dark; The harbourmaster awaits an answer; The rising tide threatens the pier. If the inputs establish a clear unresolved situation, return it as one short meaningful phrase. Return an empty string only when the inputs establish no unresolved task, danger, or obligation. Never return timestamps, metadata, menu numbers, or labels. Do not invent plot, explanations, or alternatives."
     }
 }

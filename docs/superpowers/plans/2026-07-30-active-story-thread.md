@@ -1,10 +1,10 @@
-# Active Story Thread Implementation Plan
+# Unresolved Story Situation Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Persist and prompt one bounded, unresolved story thread extracted in a separate Secondary-LLM call after each visible turn.
+**Goal:** Persist and prompt one bounded, unresolved story situation extracted in a separate Secondary-LLM call after each visible turn.
 
-**Architecture:** Add `activeThread` with a compatible empty default to the shared server and browser `WorldState` models. Extend the existing sequential resolver after its location work, and use the accepted combined state for both SSE `done` and the canonical warmup. Render the thread separately from the authoritative location.
+**Architecture:** Add `unresolvedSituation` with a compatible empty default to the shared server and browser `WorldState` models. Migrate browser-persisted `activeThread` values on read. Extend the existing sequential resolver after its location work, and use the accepted combined state for both SSE `done` and the canonical warmup. Render the situation separately from the authoritative location.
 
 **Tech Stack:** Kotlin/JVM, Kotlin/JS, kotlinx.serialization, Ktor, local llama.cpp, kotlin.test.
 
@@ -13,7 +13,7 @@
 - The Primary prompt remains deterministic: instruction, scenario, history, accepted world-state snapshot, action.
 - Warmup and following turn use the identical accepted world state and retain the existing cache-prefix tests.
 - The Secondary model receives one bounded structured task at a time; its text is untrusted.
-- The server accepts a thread of at most 96 characters or retains the previous value on resolver failure.
+- The server accepts an unresolved situation of at most 96 characters or retains the previous value on resolver failure.
 - Scenario frontmatter remains location-only; browser IndexedDB remains the state owner.
 
 ---
@@ -28,12 +28,12 @@
 - Modify: `web/src/jsTest/kotlin/de/aidadventure/web/WorldStatePopoverTest.kt`
 
 **Interfaces:**
-- Produces `WorldState(location: String = "", activeThread: String = "")` on both wire endpoints.
-- Produces independent optional `AUTHORITATIVE CURRENT LOCATION` and `OPEN STORY THREAD` lines; a thread renders even if location is empty.
+- Produces `WorldState(location: String = "", unresolvedSituation: String = "")` on both wire endpoints.
+- Produces independent optional `AUTHORITATIVE CURRENT LOCATION` and `UNRESOLVED STORY SITUATION` lines; a situation renders even if location is empty.
 
 - [ ] **Step 1: Write failing JVM and browser tests.**
 
-Add a snapshot expectation for `WorldState("Küche", "Finde den Saboteur")`, a cache-prefix case whose warmup and next turn share that state, and a browser JSON expectation containing `activeThread`.
+Add a snapshot expectation for `WorldState("Küche", "Finde den Saboteur")`, a cache-prefix case whose warmup and next turn share that state, and a browser JSON expectation containing `unresolvedSituation` plus a legacy `activeThread` read migration.
 
 - [ ] **Step 2: Run the focused tests and verify the new expectations fail.**
 
@@ -43,7 +43,7 @@ Expected: assertions fail because the property and snapshot line do not exist.
 
 - [ ] **Step 3: Add the compatible field and rendering.**
 
-Add `activeThread: String = ""` after `location` in both models. Render the location exactly as today, then append `OPEN STORY THREAD: <thread>` only for a nonblank thread.
+Add `unresolvedSituation: String = ""` after `location` in both models. Render the location exactly as today, then append `UNRESOLVED STORY SITUATION: <situation>` only for a nonblank situation.
 
 - [ ] **Step 4: Re-run the focused tests.**
 
@@ -56,22 +56,22 @@ Expected: all Task-1 tests pass and existing JSON keeps `location` first.
 - Modify: `server/src/test/kotlin/de/aidadventure/server/worldstate/WorldStateResolverTest.kt`
 
 **Interfaces:**
-- `LlamaCppWorldStateResolver.resolve` returns a state whose location follows the existing rules and whose `activeThread` comes from a final thread call, including when the previous location was empty.
-- The thread schema requires `activeThread` with `maxLength: 96`; malformed or oversized output retains `previousState.activeThread`.
+- `LlamaCppWorldStateResolver.resolve` returns a state whose location follows the existing rules and whose `unresolvedSituation` comes from a final situation call, including when the previous location is empty.
+- The situation schema requires `unresolvedSituation` with `maxLength: 96`; malformed or oversized output retains `previousState.unresolvedSituation`.
 
 - [ ] **Step 1: Write failing resolver tests.**
 
-Use a local completion server that returns the current movement/location replies followed by `{"activeThread":"Find the lighthouse saboteur"}`; assert the returned state has both fields. Add a response with 97 characters and assert the previous thread remains. Inspect the final request schema for `maxLength` 96.
+Use a local completion server that returns the current movement/location replies followed by `{"unresolvedSituation":"Find the lighthouse saboteur"}`; assert the returned state has both fields. Add a response with 97 characters and assert the previous situation remains. Inspect the final request schema for `maxLength` 96.
 
-- [ ] **Step 2: Run `./gradlew :server:test --tests de.aidadventure.server.worldstate.WorldStateResolverTest` and verify it fails for the missing thread request.**
+- [ ] **Step 2: Run `./gradlew :server:test --tests de.aidadventure.server.worldstate.WorldStateResolverTest` and verify it fails for the missing situation request.**
 
 - [ ] **Step 3: Implement the final, separate structured call.**
 
-First calculate a location intermediate state instead of returning early when the previous location is empty. Then call `complete` with prior thread, player action, and GM response. Parse `ThreadResult(activeThread)`, trim it, reject values longer than 96, and return the intermediate location state merged with the accepted thread. Preserve the entire previous state on transport/schema failure; an explicit empty valid value clears the thread. Log only request metadata, never a completion body or the thread.
+First calculate a location intermediate state instead of returning early when the previous location is empty. Then call `complete` with the prior situation, player action, and GM response. Parse `UnresolvedSituationResult(unresolvedSituation)`, trim it, reject values longer than 96, and return the intermediate location state merged with the accepted situation. Preserve the entire previous state on transport/schema failure; an explicit empty valid value clears the situation. Log only request metadata, never a completion body or the situation.
 
 - [ ] **Step 4: Re-run the focused resolver test.**
 
-Expected: the resolver makes its existing location calls followed by exactly one thread call and all assertions pass.
+Expected: the resolver makes its existing location calls followed by exactly one situation call and all assertions pass.
 
 ### Task 3: Preserve the accepted combined state through completion and prefill
 
@@ -98,4 +98,4 @@ Expected: server tests and the complete multi-module gate pass; report any unrel
 
 - [ ] **Step 5: Commit the implementation and the design/plan documents.**
 
-Run: `git add server web docs/superpowers/specs/2026-07-30-active-story-thread-design.md docs/superpowers/plans/2026-07-30-active-story-thread.md && git commit -m "feat(state): retain active story thread"`
+Run: `git add server web docs/superpowers/specs/2026-07-30-active-story-thread-design.md docs/superpowers/plans/2026-07-30-active-story-thread.md && git commit -m "fix(state): clarify unresolved situation"`

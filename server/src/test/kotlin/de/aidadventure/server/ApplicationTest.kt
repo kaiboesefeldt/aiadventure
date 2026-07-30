@@ -297,14 +297,14 @@ class ApplicationTest {
     }
 
     @Test
-    fun `oversized active thread is rejected before warmup coordinator access`() = testApplication {
+    fun `oversized unresolved situation is rejected before warmup coordinator access`() = testApplication {
         val registry = FakeRegistry()
         application { adventureModule(prefillRegistry = registry) }
         configureJsonClient()
 
         val response = client.post("/api/warmup") {
             contentType(ContentType.Application.Json)
-            setBody(warmupRequest().copy(worldState = WorldState(activeThread = "x".repeat(97))))
+            setBody(warmupRequest().copy(worldState = WorldState(unresolvedSituation = "x".repeat(97))))
         }
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
@@ -388,7 +388,7 @@ class ApplicationTest {
                 ": connected\n\n" +
                     "event: token\ndata: {\"text\":\"The door opens.\"}\n\n" +
                     "event: input_ready\ndata: {}\n\n" +
-                    "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"\",\"activeThread\":\"\"}}\n\n",
+                    "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"\",\"unresolvedSituation\":\"\"}}\n\n",
                 response.bodyAsText(),
             )
             assertEquals(listOf(turnRequest()), registry.coordinator.turnRequests)
@@ -418,7 +418,7 @@ class ApplicationTest {
 
             assertContains(
                 response.bodyAsText(),
-                "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"Leuchtturm\",\"activeThread\":\"Finde den Saboteur\"}}",
+                "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"Leuchtturm\",\"unresolvedSituation\":\"Finde den Saboteur\"}}",
             )
             assertEquals(acceptedWorldState, registry.coordinator.rerankRequests.single().worldState)
         }

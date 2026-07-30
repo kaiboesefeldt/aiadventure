@@ -9,6 +9,8 @@ import kotlin.coroutines.suspendCoroutine
 import kotlin.js.JSON
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 
 interface ScenarioRepository {
     suspend fun list(): List<Scenario>
@@ -32,7 +34,7 @@ sealed class PersistenceError(message: String, cause: Throwable? = null) : Excep
 
 class AdventureDatabase private constructor(private val database: dynamic) {
     private val scenarioStore = RepositoryStore<Scenario>(database, SCENARIOS, Scenario.serializer())
-    private val sessionStore = RepositoryStore<GameSession>(database, SESSIONS, GameSession.serializer())
+    private val sessionStore = RepositoryStore(database, SESSIONS, GameSession.serializer(), ::decodePersistedGameSession)
 
     val scenarios: ScenarioRepository = object : ScenarioRepository {
         override suspend fun list(): List<Scenario> = scenarioStore.list()
@@ -115,6 +117,7 @@ private class RepositoryStore<T>(
     private val database: dynamic,
     private val storeName: String,
     private val serializer: kotlinx.serialization.KSerializer<T>,
+    private val decoder: ((String) -> T)? = null,
 ) {
     suspend fun list(): List<T> {
         val transaction = transaction("readonly")
@@ -156,7 +159,16 @@ private class RepositoryStore<T>(
     }
 
     private fun encode(value: T): dynamic = JSON.parse(Json.encodeToString(serializer, value))
-    private fun decode(value: dynamic): T = Json.decodeFromString(serializer, JSON.stringify(value))
+    private fun decode(value: dynamic): T = decoder?.invoke(JSON.stringify(value)) ?: Json.decodeFromString(serializer, JSON.stringify(value))
+}
+
+internal fun decodePersistedGameSession(source: String): GameSession {
+    val root = Json.parseToJsonElement(source).jsonObject
+    val worldState = root["worldState"]?.jsonObject
+    val migratedRoot = if (worldState != null && "unresolvedSituation" !in worldState && "activeThread" in worldState) {
+        JsonObject(root + ("worldState" to JsonObject((worldState - "activeThread") + ("unresolvedSituation" to worldState.getValue("activeThread")))))
+    } else root
+    return Json.decodeFromJsonElement(GameSession.serializer(), migratedRoot)
 }
 
 internal fun sessionIdsForScenarioDeletion(scenarioId: String, sessions: List<GameSession>): List<String> =

@@ -112,8 +112,8 @@ class ApiModelsTest {
     }
 
     @Test
-    fun `request validation rejects active threads longer than 96 characters`() {
-        val oversizedState = WorldState(activeThread = "x".repeat(97))
+    fun `request validation rejects unresolved situations longer than 96 characters`() {
+        val oversizedState = WorldState(unresolvedSituation = "x".repeat(97))
 
         assertNotNull(
             RequestValidator.validate(
