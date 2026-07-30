@@ -28,7 +28,7 @@ class LlamaCppWorldStateResolver(
 ) : WorldStateResolver {
     override suspend fun resolve(request: WorldStateResolutionRequest): WorldState? = runInterruptible(Dispatchers.IO) {
         if (request.previousState.location.isBlank()) return@runInterruptible locationFrom(request.gameMasterResponse)
-        when (singleFinal(complete(MOVEMENT_PROMPT + "\nPLAYER ACTION:\n${request.playerAction}\nGAME-MASTER RESPONSE:\n${request.gameMasterResponse}"))) {
+        when (singleFinal(complete(MOVEMENT_PROMPT + "\nPLAYER ACTION:\n${request.playerAction}\nGAME-MASTER RESPONSE:\n${request.gameMasterResponse}", MOVEMENT_GRAMMAR))) {
             "stay" -> null
             "move" -> locationFrom(request.gameMasterResponse)
             else -> null
@@ -36,14 +36,14 @@ class LlamaCppWorldStateResolver(
     }
 
     private fun locationFrom(response: String): WorldState? = singleFinal(
-        complete(LOCATION_PROMPT + "\nGAME-MASTER RESPONSE:\n$response"),
+        complete(LOCATION_PROMPT + "\nGAME-MASTER RESPONSE:\n$response", LOCATION_GRAMMAR),
     )?.takeIf { it.length in 1..96 && occursIn(it, response) }?.let(::WorldState)
 
-    private fun complete(prompt: String): String? = try {
+    private fun complete(prompt: String, grammar: String): String? = try {
         val response = client.send(
             HttpRequest.newBuilder(URI.create("http://localhost:$port/completion"))
                 .timeout(TIMEOUT).header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(CompletionRequest(prompt, nPredict = 32, stream = false))))
+                .POST(HttpRequest.BodyPublishers.ofString(json.encodeToString(CompletionRequest(prompt, nPredict = 32, stream = false, grammar))))
                 .build(), HttpResponse.BodyHandlers.ofString(),
         )
         if (response.statusCode() !in 200..299) null else json.decodeFromString<CompletionResponse>(response.body()).content
@@ -62,6 +62,7 @@ class LlamaCppWorldStateResolver(
         val prompt: String,
         @kotlinx.serialization.SerialName("n_predict") val nPredict: Int,
         val stream: Boolean,
+        val grammar: String,
     )
     @Serializable private data class CompletionResponse(val content: String? = null)
     private companion object {
@@ -75,5 +76,7 @@ FINAL: move"""
         const val LOCATION_PROMPT = """Name the current scene location established in the game-master response. Return exactly one final line containing the exact location name from that response.
 Example response: She enters the Market Square.
 FINAL: Market Square"""
+        const val MOVEMENT_GRAMMAR = "root ::= \"FINAL: \" (\"move\" | \"stay\")"
+        const val LOCATION_GRAMMAR = "root ::= \"FINAL: \" [^\\n]+"
     }
 }

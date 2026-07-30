@@ -39,6 +39,7 @@ class WorldStateResolverTest {
             val payload = Json.parseToJsonElement(requestBody).jsonObject
             assertEquals("32", payload["n_predict"]?.jsonPrimitive?.content)
             assertEquals("false", payload["stream"]?.jsonPrimitive?.content)
+            assertEquals("root ::= \"FINAL: \" (\"move\" | \"stay\")", payload["grammar"]?.jsonPrimitive?.content)
         } finally { server.stop(0) }
     }
     @Test fun `keeps state for stay malformed final or absent location`() = runBlocking {
