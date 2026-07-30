@@ -1,5 +1,7 @@
 # Unresolved Story Situation Implementation Plan
 
+> **Superseded:** This plan is replaced by [the narrative-focus plan](2026-07-30-narrative-focus.md). It remains only as historical context.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Persist and prompt one bounded, unresolved story situation extracted in a separate Secondary-LLM call after each visible turn.

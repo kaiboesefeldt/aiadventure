@@ -4,11 +4,27 @@ import de.aidadventure.server.RequestValidator
 import de.aidadventure.server.worldstate.WorldState
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class ApiModelsTest {
+    @Test
+    fun `stream done JSON exposes narrative focus without legacy names`() {
+        val payload = Json.encodeToString(
+            StreamDone(
+                TurnMetrics(totalDurationMs = null, promptTokens = 2, cacheTokens = 1),
+                WorldState(location = "Leuchtturm", narrativeFocus = "Der verrostete Mechanismus"),
+            ),
+        )
+
+        assertContains(payload, "\"narrativeFocus\":\"Der verrostete Mechanismus\"")
+        assertFalse(payload.contains("unresolvedSituation"))
+        assertFalse(payload.contains("activeThread"))
+    }
+
     @Test
     fun `turn JSON carries a live session without browser connection settings`() {
         val request = Json.decodeFromString<TurnRequest>("""

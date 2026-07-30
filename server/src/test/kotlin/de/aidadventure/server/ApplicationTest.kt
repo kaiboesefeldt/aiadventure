@@ -41,6 +41,7 @@ import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ApplicationTest {
@@ -414,10 +415,13 @@ class ApplicationTest {
                 setBody(turnRequest(port = llama.port))
             }
 
+            val donePayload = response.bodyAsText()
             assertContains(
-                response.bodyAsText(),
+                donePayload,
                 "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"Leuchtturm\",\"narrativeFocus\":\"Finde den Saboteur\"}}",
             )
+            assertFalse(donePayload.contains("unresolvedSituation"))
+            assertFalse(donePayload.contains("activeThread"))
             assertEquals(acceptedWorldState, registry.coordinator.rerankRequests.single().worldState)
         }
     }
