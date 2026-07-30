@@ -11,6 +11,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
@@ -109,13 +110,16 @@ class WorldStateResolverTest {
             assertEquals("48", location["maxLength"]?.jsonPrimitive?.content)
         } finally { server.stop(0) }
     }
-    @Test fun `limits the final thread schema to 96 characters`() = runBlocking {
+    @Test fun `thread schema permits clearing or a phrase of three to 96 characters`() = runBlocking {
         val requests = mutableListOf<String>()
         val server = server(ArrayDeque(listOf("{\"movement\":\"stay\"}", "{\"activeThread\":\"\"}"))) { requests += it }
         try {
             LlamaCppWorldStateResolver(server.address.port).resolve(request("She remains at the harbour."))
             val thread = Json.parseToJsonElement(requests.last()).jsonObject["json_schema"]!!.jsonObject["properties"]!!.jsonObject["activeThread"]!!.jsonObject
-            assertEquals("96", thread["maxLength"]?.jsonPrimitive?.content)
+            val alternatives = thread["anyOf"]!!.jsonArray
+            assertEquals("\"\"", alternatives[0].jsonObject["const"].toString())
+            assertEquals("3", alternatives[1].jsonObject["minLength"]?.jsonPrimitive?.content)
+            assertEquals("96", alternatives[1].jsonObject["maxLength"]?.jsonPrimitive?.content)
         } finally { server.stop(0) }
     }
     private fun request(response: String, location: String = "Harbour", activeThread: String = "") = WorldStateResolutionRequest("id", "# S", WorldState(location, activeThread), "walk", response)
