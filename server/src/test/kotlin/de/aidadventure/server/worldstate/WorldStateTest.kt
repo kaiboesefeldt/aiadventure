@@ -4,17 +4,17 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class WorldStateTest {
-    @Test fun `snapshot contains the current location and unresolved story situation`() {
+    @Test fun `snapshot contains the current location and narrative focus`() {
         assertEquals(
-            "AUTHORITATIVE CURRENT LOCATION: Küche\nUNRESOLVED STORY SITUATION: Finde den Saboteur",
-            WorldStateSnapshot.render(WorldState(location = "Küche", unresolvedSituation = "Finde den Saboteur")),
+            "AUTHORITATIVE CURRENT LOCATION: Küche\nNARRATIVE FOCUS: Der verrostete Mechanismus",
+            WorldStateSnapshot.render(WorldState(location = "Küche", narrativeFocus = "Der verrostete Mechanismus")),
         )
     }
 
-    @Test fun `snapshot renders an unresolved story situation without a location`() {
+    @Test fun `snapshot renders a narrative focus without a location`() {
         assertEquals(
-            "UNRESOLVED STORY SITUATION: Finde den Saboteur",
-            WorldStateSnapshot.render(WorldState(unresolvedSituation = "Finde den Saboteur")),
+            "NARRATIVE FOCUS: Der verrostete Mechanismus",
+            WorldStateSnapshot.render(WorldState(narrativeFocus = "Der verrostete Mechanismus")),
         )
     }
 }

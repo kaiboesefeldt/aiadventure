@@ -165,9 +165,12 @@ private class RepositoryStore<T>(
 internal fun decodePersistedGameSession(source: String): GameSession {
     val root = Json.parseToJsonElement(source).jsonObject
     val worldState = root["worldState"]?.jsonObject
-    val migratedRoot = if (worldState != null && "unresolvedSituation" !in worldState && "activeThread" in worldState) {
-        JsonObject(root + ("worldState" to JsonObject((worldState - "activeThread") + ("unresolvedSituation" to worldState.getValue("activeThread")))))
-    } else root
+    val migratedRoot = worldState?.let { state ->
+        val legacyFocus = state["unresolvedSituation"] ?: state["activeThread"]
+        val withoutLegacyKeys = state - "unresolvedSituation" - "activeThread"
+        val migratedState = if ("narrativeFocus" in state || legacyFocus == null) withoutLegacyKeys else withoutLegacyKeys + ("narrativeFocus" to legacyFocus)
+        JsonObject(root + ("worldState" to JsonObject(migratedState)))
+    } ?: root
     return Json.decodeFromJsonElement(GameSession.serializer(), migratedRoot)
 }
 

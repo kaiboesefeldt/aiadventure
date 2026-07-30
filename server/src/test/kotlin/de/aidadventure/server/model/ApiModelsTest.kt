@@ -113,8 +113,8 @@ class ApiModelsTest {
     }
 
     @Test
-    fun `request validation accepts unresolved situations beyond the generation recommendation`() {
-        val oversizedState = WorldState(unresolvedSituation = "x".repeat(1_000))
+    fun `request validation accepts narrative focus beyond the generation recommendation`() {
+        val oversizedState = WorldState(narrativeFocus = "x".repeat(1_000))
 
         assertNull(
             RequestValidator.validate(
@@ -134,8 +134,8 @@ class ApiModelsTest {
     }
 
     @Test
-    fun `request validation accepts an unresolved situation of 160 characters`() {
-        val boundaryState = WorldState(unresolvedSituation = "x".repeat(160))
+    fun `request validation accepts a narrative focus of 160 characters`() {
+        val boundaryState = WorldState(narrativeFocus = "x".repeat(160))
 
         assertNull(
             RequestValidator.validate(

@@ -297,18 +297,18 @@ class ApplicationTest {
     }
 
     @Test
-    fun `oversized unresolved situation reaches the warmup coordinator`() = testApplication {
+    fun `oversized narrative focus reaches the warmup coordinator`() = testApplication {
         val registry = FakeRegistry()
         application { adventureModule(prefillRegistry = registry) }
         configureJsonClient()
 
         val response = client.post("/api/warmup") {
             contentType(ContentType.Application.Json)
-            setBody(warmupRequest().copy(worldState = WorldState(unresolvedSituation = "x".repeat(1_000))))
+            setBody(warmupRequest().copy(worldState = WorldState(narrativeFocus = "x".repeat(1_000))))
         }
 
         assertEquals(HttpStatusCode.Accepted, response.status)
-        assertEquals(listOf(warmupRequest().copy(worldState = WorldState(unresolvedSituation = "x".repeat(1_000)))), registry.coordinator.warmupRequests)
+        assertEquals(listOf(warmupRequest().copy(worldState = WorldState(narrativeFocus = "x".repeat(1_000)))), registry.coordinator.warmupRequests)
     }
 
     @Test
@@ -386,7 +386,7 @@ class ApplicationTest {
                 ": connected\n\n" +
                     "event: token\ndata: {\"text\":\"The door opens.\"}\n\n" +
                     "event: input_ready\ndata: {}\n\n" +
-                    "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"\",\"unresolvedSituation\":\"\"}}\n\n",
+                    "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"\",\"narrativeFocus\":\"\"}}\n\n",
                 response.bodyAsText(),
             )
             assertEquals(listOf(turnRequest()), registry.coordinator.turnRequests)
@@ -416,7 +416,7 @@ class ApplicationTest {
 
             assertContains(
                 response.bodyAsText(),
-                "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"Leuchtturm\",\"unresolvedSituation\":\"Finde den Saboteur\"}}",
+                "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"Leuchtturm\",\"narrativeFocus\":\"Finde den Saboteur\"}}",
             )
             assertEquals(acceptedWorldState, registry.coordinator.rerankRequests.single().worldState)
         }

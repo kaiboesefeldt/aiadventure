@@ -23,7 +23,7 @@ data class GameSession(
     val worldState: WorldState = WorldState(),
 )
 
-@Serializable data class WorldState(val location: String = "", val unresolvedSituation: String = "")
+@Serializable data class WorldState(val location: String = "", val narrativeFocus: String = "")
 
 @Serializable
 data class GameMessage(
