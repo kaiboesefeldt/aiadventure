@@ -110,10 +110,3 @@ etwas Unruhiges gesehen wurde.
 - Beschreibe Konsequenzen knapp, aber erfinde genug Details, damit das Spiel
   voranschreitet.
 - Bleibe bei einer stimmungsvollen, leicht rätselhaften Hafenatmosphäre.
-
-## Mögliche Einstiege
-
-- Untersuche den Leuchtturm von außen.
-- Sprich mit der Hafenmeisterin.
-- Frage in der Kneipe nach dem Signallicht.
-- Suche den Steg nach Spuren ab.

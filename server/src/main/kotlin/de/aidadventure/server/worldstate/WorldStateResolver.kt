@@ -90,7 +90,7 @@ class LlamaCppWorldStateResolver(private val port: Int, private val client: Http
         fun schema(source: String) = json.parseToJsonElement(source).jsonObject
         const val MOVEMENT_PROMPT = "Decide whether the player character leaves the current scene."
         const val LOCATION_PROMPT = "Name the current scene location established in the game-master response. Return exactly one short location name; never list alternatives, scores, explanations, or punctuation."
-        const val FOCUS_PROMPT = "Retrospectively update the prior focus from the action and response. Return one short phrase naming the single story element now most central. Return \"\" only if no narrative focus exists."
+        const val FOCUS_PROMPT = "Reply with a short sentence describing the current narative focus after the player and game-master actions. Ignore future actions or options."
     }
 }
 
