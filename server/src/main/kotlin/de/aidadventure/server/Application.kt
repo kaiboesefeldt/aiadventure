@@ -21,6 +21,7 @@ import de.aidadventure.server.worldstate.WorldStateResolutionRequest
 import de.aidadventure.server.worldstate.WorldStateResolver
 import de.aidadventure.server.prefill.CoordinatorKey
 import de.aidadventure.server.prefill.ExpiringPrefillRegistry
+import de.aidadventure.server.prefill.LlamaCppPrefillGateway
 import de.aidadventure.server.prefill.PrefillRegistry
 import de.aidadventure.server.runtimefragments.DefaultRuntimeFragmentResolver
 import de.aidadventure.server.runtimefragments.RuntimeFragmentResolver
@@ -72,6 +73,7 @@ fun main(args: Array<String>) {
     ServerLogging.configure(config.logLevel)
     embeddedServer(Netty, port = config.port, host = config.host) {
         adventureModule(
+            llamaCppGateway = LlamaCppGateway(contextCompactionThresholdPercent = config.contextCompactionThresholdPercent),
             llamaCppPort = config.llamaCppPort,
             secondaryLlamaCppPort = config.secondaryLlamaCppPort,
             worldStateResolver = LlamaCppWorldStateResolver(config.secondaryLlamaCppPort),
@@ -79,7 +81,14 @@ fun main(args: Array<String>) {
     }.start(wait = true)
 }
 
-data class ServerRuntimeConfig(val host: String, val port: Int, val llamaCppPort: Int, val secondaryLlamaCppPort: Int, val logLevel: String) {
+data class ServerRuntimeConfig(
+    val host: String,
+    val port: Int,
+    val llamaCppPort: Int,
+    val secondaryLlamaCppPort: Int,
+    val logLevel: String,
+    val contextCompactionThresholdPercent: Int,
+) {
     companion object {
         fun from(environment: Map<String, String>, args: Array<String> = emptyArray()): ServerRuntimeConfig {
             val exposeLan = environment["ADVENTURE_EXPOSE_LAN"] ?: "false"
@@ -87,12 +96,17 @@ data class ServerRuntimeConfig(val host: String, val port: Int, val llamaCppPort
                 "ADVENTURE_EXPOSE_LAN must be either true or false."
             }
             val options = parseOptions(args)
+            val contextThreshold = environment["CONTEXT_COMPACTION_THRESHOLD"]?.toIntOrNull() ?: 65
+            require(contextThreshold in 1..99) {
+                "CONTEXT_COMPACTION_THRESHOLD must be an integer between 1 and 99."
+            }
             return ServerRuntimeConfig(
                 host = if (exposeLan == "true") "0.0.0.0" else "127.0.0.1",
                 port = environment["PORT"]?.toIntOrNull() ?: 8080,
                 llamaCppPort = options.llamaCppPort,
                 secondaryLlamaCppPort = options.secondaryLlamaCppPort,
                 logLevel = options.logLevel,
+                contextCompactionThresholdPercent = contextThreshold,
             )
         }
 
@@ -134,14 +148,18 @@ data class ServerRuntimeConfig(val host: String, val port: Int, val llamaCppPort
 }
 
 fun Application.adventureModule(
-    llamaCppGateway: LlamaCppGateway = LlamaCppGateway(),
-    prefillRegistry: PrefillRegistry = ExpiringPrefillRegistry(),
+    contextCompactionThresholdPercent: Int = 65,
+    llamaCppGateway: LlamaCppGateway = LlamaCppGateway(contextCompactionThresholdPercent = contextCompactionThresholdPercent),
+    prefillRegistry: PrefillRegistry = ExpiringPrefillRegistry(LlamaCppPrefillGateway(llamaCppGateway)),
     runtimeFragmentResolver: RuntimeFragmentResolver = ProductionRuntimeFragmentResolver(),
     clock: () -> Long = System::currentTimeMillis,
     llamaCppPort: Int = LlamaCppPort.DEFAULT,
     secondaryLlamaCppPort: Int = 8082,
     worldStateResolver: WorldStateResolver = WorldStateResolver { null },
 ) {
+    require(contextCompactionThresholdPercent in 1..99) {
+        "Context compaction threshold must be between 1 and 99 percent."
+    }
     val logger = LoggerFactory.getLogger("de.aidadventure.server.AdventureApi")
     val postTurnScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     monitor.subscribe(ApplicationStopped) { postTurnScope.cancel() }

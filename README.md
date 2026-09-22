@@ -94,6 +94,11 @@ If the scenario, action and required response reserve cannot fit safely, the gam
 reports a context-limit error. An already oversized old save can require a larger
 llama.cpp context; the application does not silently discard its history.
 
+The early compaction threshold is configurable in `.env` with
+`CONTEXT_COMPACTION_THRESHOLD`, as a percentage of the active slot's `n_ctx`.
+It accepts integer values from `1` to `99` and defaults to `65`. The slot's actual
+`n_ctx` remains the hard limit.
+
 The browser still sends the full archive so the stateless server can verify checkpoint
 coverage. Request safety limits are 100,000 history entries and 20 million history
 characters, independently of the much smaller effective model prompt.

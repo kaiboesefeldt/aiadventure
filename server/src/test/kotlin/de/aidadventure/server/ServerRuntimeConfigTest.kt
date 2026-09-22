@@ -76,6 +76,18 @@ class ServerRuntimeConfigTest {
     }
 
     @Test
+    fun `reads context compaction threshold from environment`() {
+        assertEquals(72, ServerRuntimeConfig.from(mapOf("CONTEXT_COMPACTION_THRESHOLD" to "72")).contextCompactionThresholdPercent)
+    }
+
+    @Test
+    fun `rejects invalid context compaction threshold`() {
+        assertFailsWith<IllegalArgumentException> {
+            ServerRuntimeConfig.from(mapOf("CONTEXT_COMPACTION_THRESHOLD" to "100"))
+        }
+    }
+
+    @Test
     fun `binds all interfaces only with explicit LAN opt in`() {
         assertEquals("0.0.0.0", ServerRuntimeConfig.from(mapOf("ADVENTURE_EXPOSE_LAN" to "true")).host)
     }
