@@ -240,7 +240,7 @@ fun Application.adventureModule(
                             request,
                             generated.toString(),
                             warmupRequest,
-                            WorldStateResolutionRequest(request.sessionId, request.scenarioMarkdown, request.worldState, request.playerAction, generated.toString()),
+                            WorldStateResolutionRequest(request.sessionId, request.scenarioMarkdown, request.worldState, request.playerAction, generated.toString(), request.locations),
                             requestId,
                         )
                         if (logger.isTraceEnabled) {

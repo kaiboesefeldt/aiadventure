@@ -11,7 +11,6 @@ class WorldStateResolverTest {
             WorldState("Market Square", "Find the lighthouse saboteur"),
             WorldStateAnalysis.apply(
                 request("She arrives at the Market Square."),
-                "{\"movement\":\"move\"}",
                 "{\"location\":\"Market Square\"}",
                 "{\"narrativeFocus\":\"Find the lighthouse saboteur\"}",
             ),
@@ -23,7 +22,6 @@ class WorldStateResolverTest {
         assertNull(
             WorldStateAnalysis.apply(
                 request("Nothing changes.", narrativeFocus = "Existing situation"),
-                "{\"movement\":\"stay\"}",
                 "{\"location\":\"Wrong place\"}",
                 "{\"narrativeFocus\":\"2\"}",
             ),
@@ -36,13 +34,19 @@ class WorldStateResolverTest {
             WorldState("Harbour"),
             WorldStateAnalysis.apply(
                 request("She remains at the harbour.", narrativeFocus = "Existing situation"),
-                "{\"movement\":\"stay\"}",
                 null,
                 "{\"narrativeFocus\":\"\"}",
             ),
         )
     }
 
-    private fun request(response: String, location: String = "Harbour", narrativeFocus: String = "") =
-        WorldStateResolutionRequest("id", "# S", WorldState(location, narrativeFocus), "walk", response)
+    @Test fun `accepts a catalogued lighthouse after an explicit arrival`() {
+        assertEquals(WorldState("Leuchtturm"), WorldStateAnalysis.apply(
+            request("Du verlässt den Kai und betrittst den Leuchtturm.", locations = listOf("Kai", "Leuchtturm"), location = "Kai"),
+            "{\"location\":\"Leuchtturm\"}", null,
+        ))
+    }
+
+    private fun request(response: String, location: String = "Harbour", narrativeFocus: String = "", locations: List<String> = listOf("Harbour", "Market Square")) =
+        WorldStateResolutionRequest("id", "# S", WorldState(location, narrativeFocus), "walk", response, locations)
 }

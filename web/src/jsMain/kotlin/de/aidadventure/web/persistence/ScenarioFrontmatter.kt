@@ -10,18 +10,25 @@ data class ParsedScenario(
     val promptMarkdown: String,
     val runtimeFragments: List<RuntimeFragmentDefinition>,
     val initialWorldState: WorldState,
+    val locations: List<String>,
 )
 
 object ScenarioFrontmatter {
     fun parse(markdown: String): ParsedScenario {
         val closingDelimiterStart = closingFrontmatterDelimiter(markdown)
-            ?: return ParsedScenario(markdown, emptyList(), WorldState())
+            ?: return ParsedScenario(markdown, emptyList(), WorldState(), emptyList())
         val frontmatter = markdown.substring(0, closingDelimiterStart)
         val rootEntries = readFrontmatter(frontmatter)
+        val initialWorldState = readInitialWorldState(rootEntries, frontmatter)
+        val locations = readLocations(rootEntries)
+        if (locations.isNotEmpty() && initialWorldState.location.isNotBlank() && initialWorldState.location !in locations) {
+            invalidFrontmatter()
+        }
         return ParsedScenario(
             promptMarkdown = markdown.substring(closingDelimiterStart + 3).removePrefix("\r\n").removePrefix("\n"),
             runtimeFragments = readRuntimeFragments(rootEntries),
-            initialWorldState = readInitialWorldState(rootEntries, frontmatter),
+            initialWorldState = initialWorldState,
+            locations = locations,
         )
     }
 
@@ -56,6 +63,16 @@ object ScenarioFrontmatter {
         val location = worldStateEntries.single()[1] as? String ?: invalidFrontmatter()
         if (location.isBlank()) invalidFrontmatter()
         return WorldState(location)
+    }
+
+    private fun readLocations(rootEntries: Array<Array<dynamic>>): List<String> {
+        val locationsEntry = rootEntries.firstOrNull { it[0] == "locations" } ?: return emptyList()
+        if (!(js("Array.isArray(locationsEntry[1])") as Boolean)) invalidFrontmatter()
+        val locations = locationsEntry[1].unsafeCast<Array<dynamic>>().map { it as? String ?: invalidFrontmatter() }
+        if (locations.isEmpty() || locations.any(String::isBlank) || locations.map(String::lowercase).toSet().size != locations.size) {
+            invalidFrontmatter()
+        }
+        return locations
     }
 
     private fun closingFrontmatterDelimiter(markdown: String): Int? {
