@@ -14,7 +14,7 @@ import de.aidadventure.server.prefill.PrefillCoordinator
 import de.aidadventure.server.prefill.PrefillRegistry
 import de.aidadventure.server.runtimefragments.RuntimeFragmentResolver
 import de.aidadventure.server.worldstate.WorldState
-import de.aidadventure.server.worldstate.WorldStateResolver
+import de.aidadventure.server.worldstate.WorldStateResolutionRequest
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -167,7 +167,6 @@ class ApplicationTest {
             adventureModule(
                 prefillRegistry = registry,
                 runtimeFragmentResolver = resolver,
-                worldStateResolver = WorldStateResolver { null },
             )
         }
         configureJsonClient()
@@ -399,13 +398,11 @@ class ApplicationTest {
         llamaCppServer().use { llama ->
             val registry = FakeRegistry()
             val acceptedWorldState = WorldState("Leuchtturm", "Finde den Saboteur")
+            registry.coordinator.acceptedWorldState = acceptedWorldState
             application {
                 adventureModule(
                     llamaCppGateway = LlamaCppGateway(),
                     prefillRegistry = registry,
-                    worldStateResolver = WorldStateResolver {
-                        acceptedWorldState
-                    },
                 )
             }
             configureJsonClient()
@@ -579,6 +576,7 @@ class ApplicationTest {
         val rerankCompleted = CompletableDeferred<Unit>()
         val turnRequests = mutableListOf<TurnRequest>()
         var turnEvents: Flow<TurnStreamEvent>? = null
+        var acceptedWorldState: WorldState? = null
         var submitFailure: Throwable? = null
         var beginTurnFailure: Throwable? = null
 
@@ -628,6 +626,14 @@ class ApplicationTest {
                 TurnStreamEvent.Done(TurnMetrics(null, 2, 1)),
             )
         }
+
+        override suspend fun resolveWorldStateAndWarmup(
+            primaryRequest: TurnRequest,
+            gameMasterResponse: String,
+            request: WarmupRequest,
+            resolution: WorldStateResolutionRequest,
+            requestId: String,
+        ): WorldState = acceptedWorldState ?: request.worldState
 
         override fun tryBeginIdleClose(): Boolean = false
 

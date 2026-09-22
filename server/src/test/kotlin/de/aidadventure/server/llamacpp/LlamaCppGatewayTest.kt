@@ -9,6 +9,8 @@ import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.model.WarmupRequest
+import de.aidadventure.server.worldstate.WorldState
+import de.aidadventure.server.worldstate.WorldStateResolutionRequest
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.time.Duration
@@ -296,6 +298,32 @@ class LlamaCppGatewayTest {
             assertEquals(2, body.getValue("id_slot").jsonPrimitive.int)
             assertTrue(body.getValue("cache_prompt").jsonPrimitive.boolean)
             assertEquals(true, body.getValue("stream").jsonPrimitive.boolean)
+        }
+    }
+
+    @Test
+    fun `world state analysis uses the primary slot and cache prompt`() = runBlocking {
+        nativeServer().use { server ->
+            val gateway = LlamaCppGateway(promptFactory = PromptFactory())
+            val primary = request(server.port)
+            val resolution = WorldStateResolutionRequest(
+                primary.sessionId,
+                primary.scenarioMarkdown,
+                WorldState(location = "Harbour"),
+                primary.playerAction,
+                "The bell rings at the harbour.",
+            )
+
+            gateway.resolveWorldState(primary, resolution.gameMasterResponse, resolution, LlamaCppSlot(2))
+
+            assertEquals(listOf("/apply-template", "/completion", "/apply-template", "/completion"), server.paths)
+            server.completionBodies.forEach { bodyText ->
+                val body = bodyText.jsonObject
+                assertEquals(2, body.getValue("id_slot").jsonPrimitive.int)
+                assertTrue(body.getValue("cache_prompt").jsonPrimitive.boolean)
+                assertEquals(false, body.getValue("stream").jsonPrimitive.boolean)
+                assertTrue(body.containsKey("json_schema"))
+            }
         }
     }
 

@@ -41,10 +41,9 @@ class LauncherTest(unittest.TestCase):
         self.model = self.root / "model with spaces.gguf"
         self.model.touch()
         self.config = dict(PRIMARY_MODEL_PATH=str(self.model), PRIMARY_THREADS="4",
-                           PRIMARY_PORT="18081", SECONDARY_MODEL_PATH=str(self.model),
-                           SECONDARY_THREADS="2", SECONDARY_PORT="18082", LOG_LEVEL="INFO")
+                           PRIMARY_PORT="18081", LOG_LEVEL="INFO")
         self.env = {key: value for key, value in os.environ.items()
-                    if not key.startswith(("PRIMARY_", "SECONDARY_"))}
+                    if not key.startswith("PRIMARY_")}
         self.env.update(PATH=str(self.root) + os.pathsep + os.environ["PATH"],
                         LAUNCHER_TEST_DIR=str(self.root))
         self.log = (self.root / "output").open("w")
@@ -89,7 +88,7 @@ printf '%s' "$$" > "$LAUNCHER_TEST_DIR/$(basename "$0").pid"
 
     def ready(self):
         self.wait_for(lambda: all((self.root / (name + ".json")).exists()
-                                 for name in ("18081", "18082", "gradle")))
+                                 for name in ("18081", "gradle")))
 
     def args(self, name):
         return json.loads((self.root / (name + ".json")).read_text())
@@ -127,45 +126,37 @@ printf '%s' "$$" > "$LAUNCHER_TEST_DIR/$(basename "$0").pid"
         self.assertEqual(143, self.process.wait(timeout=10), self.output())
         self.assert_clean()
 
-    def assert_launch(self, primary_wrapper=False, secondary_wrapper=False):
+    def assert_launch(self, primary_wrapper=False):
         self.start()
         self.ready()
-        for role, port, threads, wrapped in (("PRIMARY", "18081", "4", primary_wrapper),
-                                             ("SECONDARY", "18082", "2", secondary_wrapper)):
-            args = self.args(port)
-            expected = (["--model", "wrapper model.gguf", "-t", "1"] if wrapped
-                        else ["-t", threads]) + ["-rea", "off", "--port", port]
-            if role == "PRIMARY":
-                slots = args[args.index("--slot-save-path") + 1]
-                self.assertTrue(Path(slots).is_dir())
-                expected += ["--slot-save-path", slots]
-            if not wrapped:
-                expected += ["--model", str(self.model)]
-            self.assertEqual(expected, args)
+        args = self.args("18081")
+        expected = (["--model", "wrapper model.gguf", "-t", "1"] if primary_wrapper
+                    else ["-t", "4"]) + ["-rea", "off", "--port", "18081"]
+        slots = args[args.index("--slot-save-path") + 1]
+        self.assertTrue(Path(slots).is_dir())
+        expected += ["--slot-save-path", slots]
+        if not primary_wrapper:
+            expected += ["--model", str(self.model)]
+        self.assertEqual(expected, args)
         self.assertEqual(["--console=plain", ":server:run",
-                          "--args=--llama-port=18081 --secondary-llama-port=18082 --log-level=INFO"],
+                          "--args=--llama-port=18081 --log-level=INFO"],
                          self.args("gradle"))
         self.stop()
 
     def test_legacy_launch(self):
         self.assert_launch()
 
-    def test_both_wrappers_without_model_or_threads(self):
+    def test_wrapper_without_model_or_threads(self):
         self.wrapper("PRIMARY")
-        self.wrapper("SECONDARY")
-        self.assert_launch(True, True)
+        self.assert_launch(True)
 
     def test_primary_wrapper_overrides_invalid_model_and_threads(self):
         self.wrapper("PRIMARY")
         self.config.update(PRIMARY_MODEL_PATH="/missing/model", PRIMARY_THREADS="invalid")
-        self.assert_launch(True, False)
-
-    def test_secondary_wrapper_and_legacy_primary(self):
-        self.wrapper("SECONDARY")
-        self.assert_launch(False, True)
+        self.assert_launch(True)
 
     def test_empty_scripts_preserve_legacy_mode(self):
-        self.config.update(PRIMARY_MODEL_SCRIPT="", SECONDARY_MODEL_SCRIPT="")
+        self.config.update(PRIMARY_MODEL_SCRIPT="")
         self.assert_launch()
 
     def test_relative_wrapper_path(self):
@@ -176,7 +167,7 @@ printf '%s' "$$" > "$LAUNCHER_TEST_DIR/$(basename "$0").pid"
         bin_dir.mkdir()
         (self.root / "llama-server").rename(bin_dir / "llama-server")
         self.env["PATH"] = str(bin_dir) + os.pathsep + os.environ["PATH"]
-        self.assert_launch(True, False)
+        self.assert_launch(True)
 
     def assert_rejected(self, message):
         self.start()
@@ -185,8 +176,8 @@ printf '%s' "$$" > "$LAUNCHER_TEST_DIR/$(basename "$0").pid"
         self.assertEqual([], list(self.root.glob("*.pid")))
 
     def test_missing_wrapper_rejected_before_start(self):
-        self.config["SECONDARY_MODEL_SCRIPT"] = str(self.root / "missing.sh")
-        self.assert_rejected("SECONDARY_MODEL_SCRIPT must be a readable executable regular file.")
+        self.config["PRIMARY_MODEL_SCRIPT"] = str(self.root / "missing.sh")
+        self.assert_rejected("PRIMARY_MODEL_SCRIPT must be a readable executable regular file.")
 
     def test_non_executable_wrapper_rejected(self):
         self.wrapper("PRIMARY").chmod(0o644)
@@ -202,8 +193,8 @@ printf '%s' "$$" > "$LAUNCHER_TEST_DIR/$(basename "$0").pid"
         self.assert_rejected("PRIMARY_PORT must be an integer between 1 and 65535.")
 
     def test_invalid_legacy_threads_rejected(self):
-        self.config["SECONDARY_THREADS"] = "0"
-        self.assert_rejected("SECONDARY_THREADS must be a positive integer.")
+        self.config["PRIMARY_THREADS"] = "0"
+        self.assert_rejected("PRIMARY_THREADS must be a positive integer.")
 
     def test_wrapper_exit_cleans_remaining_children(self):
         path = self.wrapper("PRIMARY")

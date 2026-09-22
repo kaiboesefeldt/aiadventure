@@ -25,4 +25,5 @@
   `tokens_cached` and `tokens_evaluated` metrics prove cache reuse.
 - Log operational gateway/model failures with request IDs only. The explicitly local,
   loopback-only `TRACE` diagnostic mode is the exception: it may log scenario,
-  history, actions, and complete LLM responses, including Secondary completions.
+  history, actions, and complete LLM responses, including structured World-State
+  completions.
