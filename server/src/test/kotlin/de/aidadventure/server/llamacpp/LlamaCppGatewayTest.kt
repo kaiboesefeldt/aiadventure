@@ -30,6 +30,28 @@ import kotlin.test.assertTrue
 
 class LlamaCppGatewayTest {
     @Test
+    fun `native turn rejects actual templated token overflow before generation`() = runBlocking {
+        nativeServer(contextCapacity = 1030, tokenCount = 100).use { server ->
+            assertFailsWith<de.aidadventure.server.game.ContextLimitException> {
+                LlamaCppGateway().stream(request(server.port), LlamaCppSlot(2)).toList()
+            }
+            assertTrue(server.completionBodies.isEmpty())
+        }
+    }
+
+    @Test
+    fun `budget counts template with native BOS and special token semantics and bounds output`() = runBlocking {
+        nativeServer().use { server ->
+            LlamaCppGateway().stream(request(server.port), LlamaCppSlot(2)).toList()
+            val tokenization = server.tokenizeBodies.single().jsonObject
+            assertEquals("templated prompt", tokenization.getValue("content").jsonPrimitive.content)
+            assertTrue(tokenization.getValue("add_special").jsonPrimitive.boolean)
+            assertTrue(tokenization.getValue("parse_special").jsonPrimitive.boolean)
+            assertEquals(1024, server.completionBodies.single().jsonObject.getValue("n_predict").jsonPrimitive.int)
+        }
+    }
+
+    @Test
     fun `uses a 300 second default llama cpp timeout`() {
         assertEquals(Duration.ofSeconds(300), LlamaCppGateway.LLAMA_CPP_TIMEOUT)
     }
@@ -195,7 +217,7 @@ class LlamaCppGatewayTest {
 
             assertEquals("7", gateway.scoreFragment(relevanceRequest(server.port), LlamaCppSlot(2)))
 
-            assertEquals(listOf("/apply-template", "/completion"), server.paths)
+            assertEquals(listOf("/apply-template", "/tokenize", "/slots", "/completion"), server.paths)
             val completionBody = server.completionBodies.single().jsonObject
             assertEquals(2, completionBody.getValue("id_slot").jsonPrimitive.int)
             assertEquals(1, completionBody.getValue("n_predict").jsonPrimitive.int)
@@ -221,7 +243,7 @@ class LlamaCppGatewayTest {
         nativeServer().use { server ->
             val metrics = LlamaCppGateway(promptFactory = PromptFactory()).warmup(warmup(server.port), LlamaCppSlot(2))
 
-            assertEquals(listOf("/apply-template", "/completion"), server.paths)
+            assertEquals(listOf("/apply-template", "/tokenize", "/slots", "/completion"), server.paths)
             assertEquals(
                 listOf("system", "system"),
                 server.templateBodies.single().jsonObject.getValue("messages").jsonArray.map {
@@ -244,7 +266,7 @@ class LlamaCppGatewayTest {
 
             val metrics = gateway.prefill(request(server.port), LlamaCppSlot(2))
 
-            assertEquals(listOf("/apply-template", "/completion"), server.paths)
+            assertEquals(listOf("/apply-template", "/tokenize", "/slots", "/completion"), server.paths)
             assertEquals(
                 listOf("system", "system", "user", "assistant", "user"),
                 server.templateBodies.single().jsonObject.getValue("messages").jsonArray.map {
@@ -291,7 +313,7 @@ class LlamaCppGatewayTest {
                 ),
                 gateway.stream(request(server.port), LlamaCppSlot(2)).toList(),
             )
-            assertEquals(listOf("/apply-template", "/completion"), server.paths)
+            assertEquals(listOf("/apply-template", "/tokenize", "/slots", "/completion"), server.paths)
             val body = server.completionBodies.single().jsonObject
             assertEquals(2, body.getValue("id_slot").jsonPrimitive.int)
             assertTrue(body.getValue("cache_prompt").jsonPrimitive.boolean)
@@ -350,9 +372,11 @@ class LlamaCppGatewayTest {
         completionDelayMillis: Long = 0,
         completionContent: String? = null,
         streamContents: List<String> = listOf("Hello"),
+        contextCapacity: Int = 8192,
+        tokenCount: Int = 10,
     ): NativeServer {
         val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
-        return NativeServer(server, templatePrompt, templateDelayMillis, completionDelayMillis, completionContent, streamContents).also { it.start() }
+        return NativeServer(server, templatePrompt, templateDelayMillis, completionDelayMillis, completionContent, streamContents, contextCapacity, tokenCount).also { it.start() }
     }
 
     private fun chatServer(streamContents: List<String>): ChatServer {
@@ -367,8 +391,11 @@ class LlamaCppGatewayTest {
         private val completionDelayMillis: Long,
         private val completionContent: String?,
         private val streamContents: List<String>,
+        private val contextCapacity: Int,
+        private val tokenCount: Int,
     ) : AutoCloseable {
         private val executor = Executors.newSingleThreadExecutor()
+        val tokenizeBodies = mutableListOf<String>()
         val paths = mutableListOf<String>()
         val templateBodies = mutableListOf<String>()
         val completionBodies = mutableListOf<String>()
@@ -379,6 +406,15 @@ class LlamaCppGatewayTest {
             server.createContext("/v1/models") { exchange ->
                 record(exchange)
                 exchange.respondJson("{\"data\":[{\"id\":\"local-model\"}]}")
+            }
+            server.createContext("/slots") { exchange ->
+                record(exchange)
+                exchange.respondJson("[{\"id\":2,\"is_processing\":false,\"n_ctx\":$contextCapacity}]")
+            }
+            server.createContext("/tokenize") { exchange ->
+                record(exchange)
+                tokenizeBodies += exchange.requestBody.bufferedReader().use { it.readText() }
+                exchange.respondJson("{\"tokens\":[${List(tokenCount) { "1" }.joinToString(",")}]}")
             }
             server.createContext("/apply-template") { exchange ->
                 record(exchange)

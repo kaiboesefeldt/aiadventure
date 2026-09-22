@@ -5,6 +5,7 @@ import de.aidadventure.server.llamacpp.CacheMetrics
 import de.aidadventure.server.llamacpp.LlamaCppGateway
 import de.aidadventure.server.llamacpp.LlamaCppSlot
 import de.aidadventure.server.llamacpp.escapeForLlmTrace
+import de.aidadventure.server.model.ContextCompression
 import de.aidadventure.server.model.PrefillDisposition
 import de.aidadventure.server.model.PrefillRequest
 import de.aidadventure.server.model.FragmentRelevanceRequest
@@ -45,6 +46,8 @@ private fun PrefillRequest.asTurnRequest() = TurnRequest(
     history = history,
     playerAction = playerAction,
     runtimeFragments = runtimeFragments,
+    worldState = worldState,
+    contextCompression = contextCompression,
 )
 
 data class CoordinatorKey(val sessionId: String, val modelId: String, val port: Int)
@@ -93,12 +96,16 @@ interface PrefillCoordinator {
         candidate: RuntimeFragmentDefinition?,
     ): Boolean = false
     suspend fun resolvedTurnFor(request: TurnRequest): ResolvedTurn? = null
+    suspend fun beginTurn(request: TurnRequest, requestId: String): Flow<TurnStreamEvent> = beginTurn(request)
     suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent>
     fun tryBeginIdleClose(): Boolean
     suspend fun close()
 }
 
 internal interface PrefillGateway {
+    suspend fun prepare(request: TurnRequest, slot: LlamaCppSlot): TurnRequest = request
+    suspend fun prepareWarmup(request: WarmupRequest, slot: LlamaCppSlot): WarmupRequest = request
+    suspend fun maintain(request: WarmupRequest, slot: LlamaCppSlot): ContextCompression = request.contextCompression
     fun acquireIdleSlot(port: Int, excludedSlots: Set<LlamaCppSlot>): LlamaCppSlot
     fun releaseSlot(port: Int, slot: LlamaCppSlot)
     suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics
@@ -112,6 +119,10 @@ internal interface PrefillGateway {
 internal class LlamaCppPrefillGateway(
     private val gateway: LlamaCppGateway = LlamaCppGateway(),
 ) : PrefillGateway {
+    override suspend fun prepare(request: TurnRequest, slot: LlamaCppSlot) = gateway.prepare(request, slot)
+    override suspend fun prepareWarmup(request: WarmupRequest, slot: LlamaCppSlot) = gateway.prepareWarmup(request, slot)
+    override suspend fun maintain(request: WarmupRequest, slot: LlamaCppSlot) = gateway.maintain(request, slot)
+
     override fun acquireIdleSlot(port: Int, excludedSlots: Set<LlamaCppSlot>): LlamaCppSlot =
         gateway.acquireIdleSlot(port, excludedSlots)
 
@@ -164,6 +175,7 @@ internal class SessionPrefillCoordinator(
     private var closed = false
     private var shutdownComplete = false
     private var nextFragment: String? = null
+    private var latestContextCompression = ContextCompression()
     private var state: State = State.Idle
 
     override suspend fun submit(request: PrefillRequest): PrefillDisposition = mutex.withLock {
@@ -175,6 +187,7 @@ internal class SessionPrefillCoordinator(
     }
 
     private fun submitLocked(request: PrefillRequest, resolvedTurn: ResolvedTurn): PrefillDisposition {
+        if (request.contextCompression.epoch < latestContextCompression.epoch) return PrefillDisposition.STALE
         if (closed || state is State.Turning || state is State.TurnWaiting) {
             return PrefillDisposition.TURN_IN_PROGRESS
         }
@@ -214,6 +227,7 @@ internal class SessionPrefillCoordinator(
     }
 
     override suspend fun warmup(request: WarmupRequest, requestId: String): PrefillDisposition = mutex.withLock {
+        if (request.contextCompression.epoch < latestContextCompression.epoch) return@withLock PrefillDisposition.STALE
         if (closed || state is State.Turning || state is State.TurnWaiting) {
             return@withLock PrefillDisposition.TURN_IN_PROGRESS
         }
@@ -307,13 +321,15 @@ internal class SessionPrefillCoordinator(
         reservation.complete(candidate)
     }
 
-    override suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent> = mutex.withLock {
+    override suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent> = beginTurn(request, "unknown")
+
+    override suspend fun beginTurn(request: TurnRequest, requestId: String): Flow<TurnStreamEvent> = mutex.withLock {
         if (closed) return@withLock rejectedTurn("Prefill coordinator is closed.")
 
         when (val current = state) {
-            State.Idle -> startTurnLocked(request.withNextFragment().request)
+            State.Idle -> startTurnLocked(request.withNextFragment().request, requestId = requestId)
             is State.Prefilling -> {
-                val execution = TurnExecution().also(TurnExecution::initialize)
+                val execution = TurnExecution(requestId).also(TurnExecution::initialize)
                 state = State.TurnWaiting(current.lease, current.operation, current.resolvedTurn, request, execution)
                 execution.flow()
             }
@@ -321,12 +337,12 @@ internal class SessionPrefillCoordinator(
             is State.Ready -> {
                 val resolved = current.resolvedTurn?.takeIf { it.matches(request) }?.forRequest(request)
                     ?: request.withNextFragment()
-                startTurnLocked(resolved.request, current.lease)
+                startTurnLocked(resolved.request, current.lease, requestId)
             }
             is State.ReleasePending -> {
                 releaseLeaseLocked(current.lease)
                 state = State.Idle
-                startTurnLocked(request.withNextFragment().request)
+                startTurnLocked(request.withNextFragment().request, requestId = requestId)
             }
 
             is State.TurnWaiting, is State.Turning -> rejectedTurn("A turn is already in progress for this coordinator.")
@@ -387,7 +403,7 @@ internal class SessionPrefillCoordinator(
         state = State.Prefilling(lease, operation, resolvedTurn, pending = null)
         operation.job = scope.launch(start = CoroutineStart.LAZY) {
             val failure = try {
-                gateway.prefill(resolvedTurn.request, lease.slot)
+                gateway.prefill(prepareTurn(resolvedTurn.request, lease.slot), lease.slot)
                 null
             } catch (_: CancellationException) {
                 return@launch
@@ -409,7 +425,7 @@ internal class SessionPrefillCoordinator(
         state = State.Prefilling(lease, operation, resolvedTurn = null, pending = null)
         operation.job = scope.launch(start = CoroutineStart.LAZY) {
             val failure = try {
-                gateway.warmup(request, lease.slot)
+                gateway.warmup(prepareWarmup(request, lease.slot), lease.slot)
                 null
             } catch (_: CancellationException) {
                 return@launch
@@ -434,6 +450,7 @@ internal class SessionPrefillCoordinator(
         operation.job = scope.launch(start = CoroutineStart.LAZY) {
             val failure = try {
                 val candidate = operation.reservation.awaitCandidate()
+                val prepared = prepareWarmup(request, lease.slot)
                 val scoreResponse = candidate?.let {
                     val relevanceRequest = FragmentRelevanceRequest(
                         sessionId = request.sessionId,
@@ -442,6 +459,8 @@ internal class SessionPrefillCoordinator(
                         scenarioMarkdown = request.scenarioMarkdown,
                         history = request.history,
                         candidateKey = it.matchText,
+                        worldState = prepared.worldState,
+                        contextCompression = prepared.contextCompression,
                     )
                     gateway.scoreFragment(relevanceRequest, lease.slot)
                 }
@@ -449,7 +468,7 @@ internal class SessionPrefillCoordinator(
                 val accepted = candidate != null && score != null && score >= 5
                 operation.resolvedFragment = candidate?.takeIf { accepted }?.fragment
                 rerankDiagnosticSink(RerankDiagnostic(scoreResponse, score, accepted))
-                val canonicalWarmup = request.copy(
+                val canonicalWarmup = prepared.copy(
                     history = candidate?.takeIf { accepted }
                         ?.let { request.history + ChatEntry("runtime-fragment", it.fragment) }
                         ?: request.history,
@@ -468,9 +487,9 @@ internal class SessionPrefillCoordinator(
         return operation
     }
 
-    private fun startTurnLocked(request: TurnRequest, existingLease: Lease? = null): Flow<TurnStreamEvent> {
+    private fun startTurnLocked(request: TurnRequest, existingLease: Lease? = null, requestId: String = "unknown"): Flow<TurnStreamEvent> {
         val lease = existingLease ?: acquireLease(request.llamaCppPort)
-        val execution = TurnExecution().also(TurnExecution::initialize)
+        val execution = TurnExecution(requestId).also(TurnExecution::initialize)
         state = State.Turning(lease, execution)
         recordLeaseTransition("turn_handoff", lease)
         execution.handoff(lease, request)
@@ -581,7 +600,9 @@ internal class SessionPrefillCoordinator(
             this.request.scenarioMarkdown == request.scenarioMarkdown &&
             visibleHistory == request.history &&
             this.request.playerAction == request.playerAction &&
-            this.request.runtimeFragments == request.runtimeFragments
+            this.request.runtimeFragments == request.runtimeFragments &&
+            this.request.worldState == request.worldState &&
+            this.request.contextCompression == request.contextCompression
     }
 
     private fun ResolvedTurn.forRequest(request: TurnRequest): ResolvedTurn = copy(
@@ -592,7 +613,25 @@ internal class SessionPrefillCoordinator(
         ResolvedTurn(copy(history = history + ChatEntry("runtime-fragment", fragment)), fragment)
     } ?: ResolvedTurn(this, null)
 
-    private inner class TurnExecution {
+    private suspend fun prepareTurn(request: TurnRequest, slot: LlamaCppSlot): TurnRequest {
+        val reconciled = mutex.withLock {
+            if (request.contextCompression.epoch < latestContextCompression.epoch) request.copy(contextCompression = latestContextCompression) else request
+        }
+        return gateway.prepare(reconciled, slot).also { prepared ->
+            mutex.withLock { if (prepared.contextCompression.epoch >= latestContextCompression.epoch) latestContextCompression = prepared.contextCompression }
+        }
+    }
+
+    private suspend fun prepareWarmup(request: WarmupRequest, slot: LlamaCppSlot): WarmupRequest {
+        val reconciled = mutex.withLock {
+            if (request.contextCompression.epoch < latestContextCompression.epoch) request.copy(contextCompression = latestContextCompression) else request
+        }
+        return gateway.prepareWarmup(reconciled, slot).also { prepared ->
+            mutex.withLock { if (prepared.contextCompression.epoch >= latestContextCompression.epoch) latestContextCompression = prepared.contextCompression }
+        }
+    }
+
+    private inner class TurnExecution(private val requestId: String) {
         private val ready = CompletableDeferred<Lease>()
         private val output = Channel<TurnStreamEvent>(Channel.RENDEZVOUS)
         private val collected = AtomicBoolean()
@@ -608,7 +647,30 @@ internal class SessionPrefillCoordinator(
                     request.history.lastOrNull()
                         ?.takeIf { it.role == "runtime-fragment" }
                         ?.let { output.send(TurnStreamEvent.Fragment(it.content)) }
-                    gateway.stream(request, lease.slot).collect(output::send)
+                    request = prepareTurn(request, lease.slot)
+                    val generated = StringBuilder()
+                    var done: TurnStreamEvent.Done? = null
+                    gateway.stream(request, lease.slot).collect { event ->
+                        when (event) {
+                            is TurnStreamEvent.Token -> { generated.append(event.text); output.send(event) }
+                            is TurnStreamEvent.Done -> done = event
+                            else -> output.send(event)
+                        }
+                    }
+                    done?.let { completed ->
+                        output.send(TurnStreamEvent.InputReady)
+                        val warmup = WarmupRequest(request.sessionId, request.modelId, request.llamaCppPort,
+                            request.scenarioMarkdown, request.history + listOf(ChatEntry("player", request.playerAction), ChatEntry("game-master", generated.toString())),
+                            request.runtimeFragments, request.worldState, request.contextCompression)
+                        val artifact = try {
+                            gateway.maintain(warmup, lease.slot)
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) {
+                            onWarmupFailure(WarmupFailure(requestId, "context_recap", failure.javaClass.simpleName))
+                            request.contextCompression
+                        }
+                        output.send(completed.copy(contextCompression = artifact))
+                    }
                 } catch (failure: Throwable) {
                     streamFailure = failure
                 }

@@ -22,6 +22,7 @@ data class GameSession(
     val llamaCppPort: Int = 8081,
     val worldState: WorldState = WorldState(),
     val introductionPending: Boolean = false,
+    val contextCompression: ContextCompression = ContextCompression(),
 )
 
 @Serializable data class WorldState(val location: String = "", val narrativeFocus: String = "")
@@ -32,4 +33,21 @@ data class GameMessage(
     val content: String,
     val createdAt: Long,
     val hidden: Boolean = false,
+)
+
+@Serializable
+data class ContextCompression(
+    val epoch: Long = 0,
+    val active: ContextCheckpoint? = null,
+    val pending: ContextCheckpoint? = null,
+)
+
+@Serializable
+data class ContextCheckpoint(
+    val recap: String,
+    val coversThroughTurn: Int,
+    val coversThroughEntry: Int,
+    val sourceFingerprint: String,
+    val stateRevision: Long,
+    val modelId: String,
 )

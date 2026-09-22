@@ -46,6 +46,74 @@ import kotlin.test.assertTrue
 
 class ApplicationTest {
     @Test
+    fun `prefill context limit returns actionable HTTP error`() = testApplication {
+        val registry = FakeRegistry()
+        registry.coordinator.submitFailure = de.aidadventure.server.game.ContextLimitException()
+        application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolving(null)) }
+        configureJsonClient()
+        val response = client.post("/api/prefill") {
+            contentType(ContentType.Application.Json)
+            setBody(prefillRequest())
+        }
+        assertEquals(HttpStatusCode.UnprocessableEntity, response.status)
+        assertContains(response.bodyAsText(), "context_limit")
+    }
+
+    @Test
+    fun `long raw histories no longer hit the old 200 entry ceiling`() = testApplication {
+        val registry = FakeRegistry()
+        application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolving(null)) }
+        configureJsonClient()
+        val response = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest(history = List(101) { visiblePair() }.flatten()))
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertContains(response.bodyAsText(), "event: done")
+    }
+
+    @Test
+    fun `completed checkpoint reaches browser and subsequent warmup unchanged`() = testApplication {
+        val registry = FakeRegistry()
+        val completedHistory = visiblePair() + ChatEntry("player", "look") + ChatEntry("game-master", "The door opens.")
+        val checkpoint = de.aidadventure.server.game.ContextEpochs.checkpoint(
+            WarmupRequest("live-1", "configured-llama-cpp", 8081, "# Scenario", completedHistory),
+            "A keeper greeted the player and opened the door.",
+        )
+        val compression = de.aidadventure.server.model.ContextCompression(pending = checkpoint)
+        registry.coordinator.turnEvents = flowOf(
+            TurnStreamEvent.Token("The door opens."),
+            TurnStreamEvent.InputReady,
+            TurnStreamEvent.Done(TurnMetrics(null, 2, 1), compression),
+        )
+        application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolving(null)) }
+        configureJsonClient()
+        val response = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest(history = visiblePair()))
+        }
+        val body = response.bodyAsText()
+        assertContains(body, "A keeper greeted the player and opened the door.")
+        assertEquals(1, Regex("event: input_ready").findAll(body).count())
+        assertEquals(compression, registry.coordinator.rerankRequests.single().contextCompression)
+        assertEquals(completedHistory, registry.coordinator.rerankRequests.single().history)
+    }
+
+    @Test
+    fun `context overflow is a specific stream error`() = testApplication {
+        val registry = FakeRegistry()
+        registry.coordinator.beginTurnFailure = de.aidadventure.server.game.ContextLimitException()
+        application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolving(null)) }
+        configureJsonClient()
+        val response = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest())
+        }
+        assertContains(response.bodyAsText(), "context_limit")
+        assertFalse(response.bodyAsText().contains("llama_cpp_unavailable"))
+    }
+
+    @Test
     fun `prefill and current turn do not resolve a runtime fragment`() = testApplication {
         val registry = FakeRegistry()
         val resolver = RecordingResolver("keep quiet")

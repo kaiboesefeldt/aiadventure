@@ -1,5 +1,6 @@
 package de.aidadventure.web.api
 
+import de.aidadventure.web.model.ContextCompression
 import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
@@ -96,7 +97,7 @@ internal fun processTurnStreamChunk(
             "input_ready" -> onInputReady()
             "fragment" -> onFragment(streamJson.decodeFromString<StreamFragment>(frame.data).fragment)
             "token" -> onToken(streamJson.decodeFromString<StreamToken>(frame.data).text)
-            "done" -> streamJson.decodeFromString<StreamDone>(frame.data).let { return TurnCompletion(it.metrics, it.worldState) }
+            "done" -> streamJson.decodeFromString<StreamDone>(frame.data).let { return TurnCompletion(it.metrics, it.worldState, it.contextCompression) }
             "error" -> throw AdventureApiException(streamJson.decodeFromString<StreamError>(frame.data).message)
         }
     }
@@ -150,6 +151,7 @@ object TurnRequestMapper {
             sessionId = sessionId,
             runtimeFragments = parsed.runtimeFragments.map { RuntimeFragmentDefinition(it.matchText, it.fragment) },
             worldState = session.worldState,
+            contextCompression = session.contextCompression,
         )
     }
 }
@@ -165,6 +167,7 @@ object PrefillRequestMapper {
             playerAction = action,
             runtimeFragments = parsed.runtimeFragments.map { RuntimeFragmentDefinition(it.matchText, it.fragment) },
             worldState = session.worldState,
+            contextCompression = session.contextCompression,
         )
     }
 }
@@ -178,6 +181,7 @@ object WarmupRequestMapper {
             history = session.messages.map { ChatEntry(it.role, it.content) },
             runtimeFragments = parsed.runtimeFragments.map { RuntimeFragmentDefinition(it.matchText, it.fragment) },
             worldState = session.worldState,
+            contextCompression = session.contextCompression,
         )
     }
 }
@@ -196,6 +200,7 @@ data class TurnRequest(
     val sessionId: String,
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
+    val contextCompression: ContextCompression = ContextCompression(),
 )
 
 @Serializable
@@ -207,6 +212,7 @@ data class PrefillRequest(
     val playerAction: String,
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
+    val contextCompression: ContextCompression = ContextCompression(),
 )
 
 @Serializable
@@ -216,6 +222,7 @@ data class WarmupRequest(
     val history: List<ChatEntry>,
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
+    val contextCompression: ContextCompression = ContextCompression(),
 )
 
 @Serializable
@@ -238,8 +245,16 @@ private data class StreamToken(val text: String)
 private data class StreamFragment(val fragment: String)
 
 @Serializable
-private data class StreamDone(val metrics: TurnMetrics, val worldState: WorldState = WorldState())
-data class TurnCompletion(val metrics: TurnMetrics, val worldState: WorldState)
+private data class StreamDone(
+    val metrics: TurnMetrics,
+    val worldState: WorldState = WorldState(),
+    val contextCompression: ContextCompression = ContextCompression(),
+)
+data class TurnCompletion(
+    val metrics: TurnMetrics,
+    val worldState: WorldState,
+    val contextCompression: ContextCompression = ContextCompression(),
+)
 
 @Serializable
 private data class StreamError(val code: String, val message: String)

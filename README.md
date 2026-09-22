@@ -79,6 +79,25 @@ is unnecessary: each active session reserves its own slot, and a full server ret
 a safe busy error rather than using another session's cache. The launcher configures
 llama.cpp with a writable temporary slot directory so it can clear released slots.
 
+### Long adventures
+
+The game automatically creates narrative recaps as the Primary model context fills.
+It keeps recent turns verbatim and switches to a new prompt epoch after three further
+completed turns, or earlier when space runs low. Recaps use the session's reserved
+Primary slot; a maintenance turn can take longer to finish while you continue typing.
+The full transcript and active/pending recaps remain in browser IndexedDB and survive
+reloading a saved game. Recaps do not replace the authoritative world state.
+
+Budgets use the actual chat template and tokenizer plus the retained slot's `n_ctx`.
+The Primary server must expose `/apply-template`, `/tokenize`, `/slots` and `/completion`.
+If the scenario, action and required response reserve cannot fit safely, the game
+reports a context-limit error. An already oversized old save can require a larger
+llama.cpp context; the application does not silently discard its history.
+
+The browser still sends the full archive so the stateless server can verify checkpoint
+coverage. Request safety limits are 100,000 history entries and 20 million history
+characters, independently of the much smaller effective model prompt.
+
 ## Test-Spiel laden
 
 Wenn du nur ein direkt ladbares Beispiel willst, importiere diese Datei in der

@@ -2,6 +2,8 @@ package de.aidadventure.server.model
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import de.aidadventure.server.worldstate.WorldState
 
 @Serializable
@@ -23,6 +25,8 @@ data class FragmentRelevanceRequest(
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
     val candidateKey: String,
+    val worldState: WorldState = WorldState(),
+    val contextCompression: ContextCompression = ContextCompression(),
 )
 
 @Serializable
@@ -35,6 +39,7 @@ data class TurnRequest(
     val playerAction: String,
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
+    val contextCompression: ContextCompression = ContextCompression(),
 )
 
 @Serializable
@@ -48,6 +53,7 @@ data class PrefillRequest(
     val playerAction: String,
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
+    val contextCompression: ContextCompression = ContextCompression(),
 )
 
 @Serializable
@@ -59,6 +65,7 @@ data class WarmupRequest(
     val history: List<ChatEntry>,
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
+    val contextCompression: ContextCompression = ContextCompression(),
 )
 
 @Serializable
@@ -77,7 +84,8 @@ data class TurnMetrics(
 sealed interface TurnStreamEvent {
     data class Token(val text: String) : TurnStreamEvent
     data class Fragment(val fragment: String) : TurnStreamEvent
-    data class Done(val metrics: TurnMetrics) : TurnStreamEvent
+    data object InputReady : TurnStreamEvent
+    data class Done(val metrics: TurnMetrics, val contextCompression: ContextCompression = ContextCompression()) : TurnStreamEvent
 }
 
 @Serializable
@@ -86,8 +94,31 @@ data class StreamToken(val text: String)
 @Serializable
 data class StreamFragment(val fragment: String)
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class StreamDone(val metrics: TurnMetrics, val worldState: WorldState = WorldState())
+data class StreamDone(
+    val metrics: TurnMetrics,
+    val worldState: WorldState = WorldState(),
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val contextCompression: ContextCompression = ContextCompression(),
+)
 
 @Serializable
 data class StreamError(val code: String, val message: String)
+
+@Serializable
+data class ContextCompression(
+    val epoch: Long = 0,
+    val active: ContextCheckpoint? = null,
+    val pending: ContextCheckpoint? = null,
+)
+
+@Serializable
+data class ContextCheckpoint(
+    val recap: String,
+    val coversThroughTurn: Int,
+    val coversThroughEntry: Int,
+    val sourceFingerprint: String,
+    val stateRevision: Long,
+    val modelId: String,
+)

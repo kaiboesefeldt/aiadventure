@@ -1,5 +1,8 @@
 package de.aidadventure.server
 
+import de.aidadventure.server.game.ContextEpochs
+import de.aidadventure.server.game.ContextLimitException
+import de.aidadventure.server.model.ContextCompression
 import de.aidadventure.server.llamacpp.LlamaCppGateway
 import de.aidadventure.server.llamacpp.LlamaCppPort
 import de.aidadventure.server.model.ChatEntry
@@ -173,6 +176,9 @@ fun Application.adventureModule(
                     HttpStatusCode.Accepted,
                     PrefillAccepted(prefillRegistry.coordinatorFor(key).submit(request)),
                 )
+            } catch (failure: ContextLimitException) {
+                logger.warn("requestId={} operation=prefill result=context_limit", call.callId)
+                call.respond(HttpStatusCode.UnprocessableEntity, ApiError("context_limit", failure.message ?: "The model context is full."))
             } catch (failure: IOException) {
                 call.respondLlamaUnavailable(logger, "prefill", failure)
             } catch (failure: RuntimeException) {
@@ -196,6 +202,9 @@ fun Application.adventureModule(
             try {
                 prefillRegistry.removeIdle(clock())
                 call.respond(HttpStatusCode.Accepted, PrefillAccepted(prefillRegistry.coordinatorFor(key).warmup(request, call.callId ?: "unknown")))
+            } catch (failure: ContextLimitException) {
+                logger.warn("requestId={} operation=warmup result=context_limit", call.callId)
+                call.respond(HttpStatusCode.UnprocessableEntity, ApiError("context_limit", failure.message ?: "The model context is full."))
             } catch (failure: IOException) {
                 call.respondLlamaUnavailable(logger, "warmup", failure)
             } catch (failure: RuntimeException) {
@@ -217,9 +226,11 @@ fun Application.adventureModule(
                         .coordinatorFor(CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort))
                     val resolved = coordinator.resolvedTurnFor(request) ?: ResolvedTurn(request, null)
                     val stream = coordinator
-                        .beginTurn(resolved.request)
+                        .beginTurn(resolved.request, call.callId ?: "unknown")
                     val generated = StringBuilder()
                     var completedMetrics: TurnMetrics? = null
+                    var completedCompression = request.contextCompression
+                    var inputReady = false
                     var appliedFragment: String? = resolved.fragment
                     stream.collect { event ->
                         when (event) {
@@ -231,12 +242,19 @@ fun Application.adventureModule(
                                 appliedFragment = event.fragment
                                 sse("fragment", eventJson.encodeToString(StreamFragment(event.fragment)))
                             }
-                            is TurnStreamEvent.Done -> completedMetrics = event.metrics
+                            TurnStreamEvent.InputReady -> {
+                                sse("input_ready", "{}")
+                                inputReady = true
+                            }
+                            is TurnStreamEvent.Done -> {
+                                completedMetrics = event.metrics
+                                completedCompression = event.contextCompression
+                            }
                         }
                     }
                     val metrics = completedMetrics
                     if (generated.isNotEmpty() && metrics != null) {
-                        sse("input_ready", "{}")
+                        if (!inputReady) sse("input_ready", "{}")
                         val requestId = call.callId ?: "unknown"
                         val completedHistory = (appliedFragment?.let { request.history + ChatEntry("runtime-fragment", it) } ?: request.history) +
                             ChatEntry("player", request.playerAction) +
@@ -272,6 +290,7 @@ fun Application.adventureModule(
                             history = completedHistory,
                             runtimeFragments = request.runtimeFragments,
                             worldState = acceptedWorldState,
+                            contextCompression = completedCompression,
                         )
                         var reservation: de.aidadventure.server.prefill.RerankReservation? = null
                         try {
@@ -287,7 +306,7 @@ fun Application.adventureModule(
                                 )
                                 null
                             }
-                            sse("done", eventJson.encodeToString(StreamDone(metrics, acceptedWorldState)))
+                            sse("done", eventJson.encodeToString(StreamDone(metrics, acceptedWorldState, completedCompression)))
                             reservation?.let { rerankReservation ->
                                 postTurnScope.launch {
                                     var candidate: de.aidadventure.server.model.RuntimeFragmentDefinition? = null
@@ -317,12 +336,19 @@ fun Application.adventureModule(
                             throw failure
                         }
                     } else if (metrics != null) {
-                        sse("done", eventJson.encodeToString(StreamDone(metrics, request.worldState)))
+                        sse("done", eventJson.encodeToString(StreamDone(metrics, request.worldState, completedCompression)))
                     }
                 } catch (_: ClosedWriteChannelException) {
                     logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)
                 } catch (failure: CancellationException) {
                     throw failure
+                } catch (failure: ContextLimitException) {
+                    logger.warn("requestId={} operation=turn result=context_limit", call.callId)
+                    try {
+                        sse("error", eventJson.encodeToString(StreamError("context_limit", failure.message ?: "The model context is full.")))
+                    } catch (_: ClosedWriteChannelException) {
+                        logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)
+                    }
                 } catch (failure: Exception) {
                     logger.warn("requestId={} operation=turn result=llama_cpp_unavailable cause={}", call.callId, failure.javaClass.simpleName)
                     try {
@@ -381,6 +407,7 @@ object RequestValidator {
         playerAction = request.playerAction,
         runtimeFragments = request.runtimeFragments,
         worldState = request.worldState,
+        contextCompression = request.contextCompression,
     )
 
     fun validate(request: PrefillRequest): ApiError? = when {
@@ -394,6 +421,7 @@ object RequestValidator {
             playerAction = request.playerAction,
             runtimeFragments = request.runtimeFragments,
             worldState = request.worldState,
+            contextCompression = request.contextCompression,
         )
     }
 
@@ -405,6 +433,7 @@ object RequestValidator {
         history = request.history,
         runtimeFragments = request.runtimeFragments,
         worldState = request.worldState,
+        contextCompression = request.contextCompression,
     )
 
     private fun validate(
@@ -416,8 +445,9 @@ object RequestValidator {
         playerAction: String,
         runtimeFragments: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
         worldState: de.aidadventure.server.worldstate.WorldState,
+        contextCompression: ContextCompression,
     ): ApiError? = when {
-        validateContext(sessionId, modelId, port, scenarioMarkdown, history, runtimeFragments, worldState) != null -> invalid()
+        validateContext(sessionId, modelId, port, scenarioMarkdown, history, runtimeFragments, worldState, contextCompression) != null -> invalid()
         playerAction.isBlank() || playerAction.length > MAX_TEXT_LENGTH -> invalid()
         else -> null
     }
@@ -430,6 +460,7 @@ object RequestValidator {
         history: List<ChatEntry>,
         runtimeFragments: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
         worldState: de.aidadventure.server.worldstate.WorldState,
+        contextCompression: ContextCompression,
     ): ApiError? = when {
         sessionId.isBlank() || sessionId.length > MAX_SESSION_ID_LENGTH -> invalid()
         modelId.isBlank() || modelId.length > MAX_MODEL_ID_LENGTH -> invalid()
@@ -437,6 +468,8 @@ object RequestValidator {
         scenarioMarkdown.isBlank() || scenarioMarkdown.length > MAX_SCENARIO_LENGTH -> invalid()
         history.size > MAX_HISTORY_ENTRIES -> invalid()
         history.any { !it.isValidHistoryEntry() } -> invalid()
+        history.sumOf { it.content.length.toLong() } > MAX_HISTORY_CHARS -> invalid()
+        runCatching { ContextEpochs.validate(sessionId, scenarioMarkdown, history, modelId, contextCompression) }.isFailure -> invalid()
         runtimeFragments.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
         runtimeFragments.any { !it.isValidRuntimeFragmentDefinition() } -> invalid()
         runtimeFragments.map { it.matchText }.toSet().size != runtimeFragments.size -> invalid()
@@ -456,7 +489,8 @@ object RequestValidator {
     private const val MAX_MODEL_ID_LENGTH = 256
     private const val MAX_SCENARIO_LENGTH = 200_000
     private const val MAX_TEXT_LENGTH = 20_000
-    private const val MAX_HISTORY_ENTRIES = 200
+    private const val MAX_HISTORY_ENTRIES = 100_000
+    private const val MAX_HISTORY_CHARS = 20_000_000L
     private const val MAX_RUNTIME_FRAGMENT_DEFINITIONS = 200
     private val ALLOWED_HISTORY_ROLES = setOf("player", "user", "game-master", "assistant", "ai", "runtime-fragment")
 }

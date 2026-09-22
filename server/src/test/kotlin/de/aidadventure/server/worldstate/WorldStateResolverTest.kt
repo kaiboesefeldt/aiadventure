@@ -134,7 +134,7 @@ class WorldStateResolverTest {
             val request = Json.parseToJsonElement(requests.last()).jsonObject
             assertFalse(request.containsKey("n_predict"))
             assertEquals(
-                "Retrospectively update the prior focus from the action and response. Return one short phrase naming the single story element now most central. Return \"\" only if no narrative focus exists.\nPRIOR NARRATIVE FOCUS:\n\nPLAYER ACTION:\nwalk\nGAME-MASTER RESPONSE:\nShe remains at the harbour.",
+                "Reply with a short sentence describing the current narative focus after the player and game-master actions. Ignore future actions or options.\nPRIOR NARRATIVE FOCUS:\n\nPLAYER ACTION:\nwalk\nGAME-MASTER RESPONSE:\nShe remains at the harbour.",
                 request["prompt"]!!.jsonPrimitive.content,
             )
         } finally { server.stop(0) }

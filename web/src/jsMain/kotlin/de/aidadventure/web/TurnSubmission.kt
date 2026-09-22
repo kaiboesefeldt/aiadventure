@@ -69,6 +69,7 @@ internal class TurnSubmission(
             messages = messages + GameMessage("game-master", streamedText.toString(), clock()),
             updatedAt = clock(),
             worldState = completion.worldState,
+            contextCompression = completion.contextCompression,
             introductionPending = if (introduction) false else session.introductionPending,
         )
         if (introduction) check(streamedText.isNotBlank()) { "The introduction was empty. Please try again." }

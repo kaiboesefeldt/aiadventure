@@ -15,7 +15,7 @@ class PromptFactory {
     fun build(request: TurnRequest): List<ChatMessage> = buildList {
         add(SystemMessage.from(GAME_MASTER_INSTRUCTION))
         add(SystemMessage.from(request.scenarioMarkdown))
-        request.history.forEach { add(historyMessage(it)) }
+        ContextEpochs.history(request.sessionId, request.scenarioMarkdown, request.history, request.modelId, request.contextCompression).forEach { add(historyMessage(it)) }
         WorldStateSnapshot.render(request.worldState).takeIf { it.isNotBlank() }?.let { add(SystemMessage.from(it)) }
         add(UserMessage.from(request.playerAction))
     }
@@ -23,14 +23,15 @@ class PromptFactory {
     fun buildWarmup(request: WarmupRequest): List<ChatMessage> = buildList {
         add(SystemMessage.from(GAME_MASTER_INSTRUCTION))
         add(SystemMessage.from(request.scenarioMarkdown))
-        request.history.forEach { add(historyMessage(it)) }
+        ContextEpochs.history(request.sessionId, request.scenarioMarkdown, request.history, request.modelId, request.contextCompression).forEach { add(historyMessage(it)) }
         WorldStateSnapshot.render(request.worldState).takeIf { it.isNotBlank() }?.let { add(SystemMessage.from(it)) }
     }
 
     fun buildRelevance(request: FragmentRelevanceRequest): List<ChatMessage> = buildList {
         add(SystemMessage.from(GAME_MASTER_INSTRUCTION))
         add(SystemMessage.from(request.scenarioMarkdown))
-        request.history.forEach { add(historyMessage(it)) }
+        ContextEpochs.history(request.sessionId, request.scenarioMarkdown, request.history, request.modelId, request.contextCompression).forEach { add(historyMessage(it)) }
+        WorldStateSnapshot.render(request.worldState).takeIf { it.isNotBlank() }?.let { add(SystemMessage.from(it)) }
         add(SystemMessage.from(request.candidateKey))
         add(UserMessage.from(FRAGMENT_RELEVANCE_PROMPT))
     }
