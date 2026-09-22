@@ -18,7 +18,7 @@ interface AdventureApi {
 }
 
 class AdventureApiClient(
-    private val baseUrl: String = resolveAdventureApiBaseUrl(window.location.hostname, window.location.port),
+    private val baseUrl: String = "",
 ) : AdventureApi {
     override suspend fun prefill(request: PrefillRequest): PrefillAccepted {
         val response = browserFetch("/api/prefill", encodePrefillRequest(request))
@@ -83,11 +83,6 @@ internal fun encodePrefillRequest(request: PrefillRequest): String =
 
 internal fun encodeWarmupRequest(request: WarmupRequest): String =
     streamJson.encodeToString(WarmupRequest.serializer(), request)
-
-internal fun resolveAdventureApiBaseUrl(hostname: String, port: String): String = when {
-    port == "8088" && hostname in setOf("localhost", "127.0.0.1") -> "http://$hostname:8080"
-    else -> ""
-}
 
 internal fun processTurnStreamChunk(
     decoder: SseFrameDecoder,

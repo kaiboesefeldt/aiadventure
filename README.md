@@ -26,6 +26,8 @@ Ctrl-C or `TERM`, it terminates both llama.cpp and application children.
 Open [http://127.0.0.1:8080/](http://127.0.0.1:8080/) in the browser.
 
 The server listens only on `127.0.0.1:8080` by default.
+Set `PORT` in `.env` to use another port (for example, `PORT=8088`), then open
+that port in the browser. API requests use the same origin as the page.
 Set `ADVENTURE_EXPOSE_LAN=true` only when you intentionally need the API reachable on
 your LAN. Do not use that setting on an untrusted network.
 
