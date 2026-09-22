@@ -24,7 +24,7 @@ internal object WorldStateAnalysis {
     const val LOCATION_PROMPT = "Select the one canonical location where the player character actually is after the preceding player action and game-master response. Do not select a place that is only planned, mentioned, inaccessible, or refused."
     const val FOCUS_PROMPT = "Reply with a short sentence describing the current narative focus after the player and game-master actions. Ignore future actions or options."
 
-    val narrativeFocusSchema = schema("""{"type":"object","additionalProperties":false,"required":["narrativeFocus"],"properties":{"narrativeFocus":{"anyOf":[{"const":""},{"type":"string","minLength":3,"maxLength":160}]}}}""")
+    val narrativeFocusSchema = schema("""{"type":"object","additionalProperties":false,"required":["narrativeFocus"],"properties":{"narrativeFocus":{"anyOf":[{"const":""},{"type":"string","minLength":3,"maxLength":400}]}}}""")
 
     fun apply(
         request: WorldStateResolutionRequest,
@@ -32,7 +32,7 @@ internal object WorldStateAnalysis {
         narrativeFocusContent: String?,
     ): WorldState? {
         val location = locationContent?.let(::location)
-            ?.takeIf { it in request.locations && occursIn(it, request.gameMasterResponse) }
+            ?.takeIf { it in request.locations }
         val narrativeFocus = narrativeFocusContent?.let(::narrativeFocus) ?: request.previousState.narrativeFocus
         return request.previousState.copy(
             location = location ?: request.previousState.location,
@@ -60,9 +60,6 @@ internal object WorldStateAnalysis {
         .getOrNull()
         ?.trim()
         ?.takeUnless { it.isNotEmpty() && it.all(Char::isDigit) }
-
-    private fun occursIn(candidate: String, response: String): Boolean =
-        Regex("(?iu)(?<![\\p{L}\\p{N}])${Regex.escape(candidate)}(?![\\p{L}\\p{N}])").containsMatchIn(response)
 
     @Serializable private data class LocationResult(val location: String)
     @Serializable private data class NarrativeFocusResult(val narrativeFocus: String)

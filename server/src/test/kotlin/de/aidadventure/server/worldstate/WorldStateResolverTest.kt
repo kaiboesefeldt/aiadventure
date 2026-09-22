@@ -47,6 +47,13 @@ class WorldStateResolverTest {
         ))
     }
 
+    @Test fun `accepts a catalogued location when the response uses an indirect reference`() {
+        assertEquals(WorldState("Leuchtturm"), WorldStateAnalysis.apply(
+            request("Du verlässt den Kai und betrittst den Turm.", locations = listOf("Kai", "Leuchtturm"), location = "Kai"),
+            "{\"location\":\"Leuchtturm\"}", null,
+        ))
+    }
+
     private fun request(response: String, location: String = "Harbour", narrativeFocus: String = "", locations: List<String> = listOf("Harbour", "Market Square")) =
         WorldStateResolutionRequest("id", "# S", WorldState(location, narrativeFocus), "walk", response, locations)
 }

@@ -60,9 +60,7 @@ private class Slf4jLlmTraceLogger(private val logger: org.slf4j.Logger) : LlmTra
             "operation=llama_trace phase=prompt operation={} sessionId={} historyDelta={}",
             operation,
             sessionId,
-            historyDelta.joinToString(prefix = "[", postfix = "]") { message ->
-                "{role=\"${message.role.escapeForLlmTrace()}\",content=\"${message.content.escapeForLlmTrace()}\"}"
-            },
+            formatLlmTraceMessages(historyDelta),
         )
     }
 
@@ -78,10 +76,10 @@ private class Slf4jLlmTraceLogger(private val logger: org.slf4j.Logger) : LlmTra
 
     override fun finalResponse(operation: String, sessionId: String, content: String) {
         logger.trace(
-            "operation=llama_trace phase=final_response operation={} sessionId={} content=\"{}\"",
+            "operation=llama_trace phase=final_response operation={} sessionId={} content=\n{}",
             operation,
             sessionId,
-            content.escapeForLlmTrace(),
+            formatLlmTraceContent(content, "  "),
         )
     }
 
@@ -92,6 +90,7 @@ internal fun String.escapeForLlmTrace(): String = buildString(length) {
         append(
             when (character) {
                 '\\' -> "\\\\"
+                '"' -> "\\\""
                 '\n' -> "\\n"
                 '\r' -> "\\r"
                 '\t' -> "\\t"
@@ -100,6 +99,25 @@ internal fun String.escapeForLlmTrace(): String = buildString(length) {
         )
     }
 }
+
+internal fun formatLlmTraceMessages(messages: List<LlmTraceMessage>): String = buildString {
+    append("[\n")
+    messages.forEachIndexed { index, message ->
+        append("  {\n")
+        append("    \"role\": \"")
+        append(message.role.escapeForLlmTrace())
+        append("\",\n    \"content\":\n")
+        append(formatLlmTraceContent(message.content, "      "))
+        append("\n  }")
+        if (index < messages.lastIndex) append(',')
+        append('\n')
+    }
+    append(']')
+}
+
+internal fun formatLlmTraceContent(content: String, indent: String): String = content
+    .split('\n')
+    .joinToString("\n") { line -> "$indent${line.escapeForLlmTrace()}" }
 
 @OptIn(ExperimentalSerializationApi::class)
 class LlamaCppGateway private constructor(
@@ -213,6 +231,7 @@ class LlamaCppGateway private constructor(
             slot,
             primaryRequest.llamaCppPort,
             "narrative_focus",
+            predictedTokens = 128,
         )
         WorldStateAnalysis.apply(request, location, narrativeFocus)
     }
@@ -224,6 +243,7 @@ class LlamaCppGateway private constructor(
         slot: LlamaCppSlot,
         port: Int,
         phase: String,
+        predictedTokens: Int = 64,
     ): String? {
         val prompt = applyTemplate(request.sessionId, "world_state_$phase", port, messages)
         val response = postCompletion(
@@ -231,7 +251,7 @@ class LlamaCppGateway private constructor(
             CompletionRequest(
                 prompt = prompt,
                 slotId = slot.id,
-                predictedTokens = 64,
+                predictedTokens = predictedTokens,
                 stream = false,
                 jsonSchema = schema,
             ),

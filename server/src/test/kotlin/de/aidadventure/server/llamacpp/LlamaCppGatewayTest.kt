@@ -191,6 +191,23 @@ class LlamaCppGatewayTest {
     }
 
     @Test
+    fun `trace messages use indented readable content instead of escaped line feeds`() {
+        assertEquals(
+            """
+            [
+              {
+                "role": "system",
+                "content":
+                  First line
+                  Second \"quoted\" line
+              }
+            ]
+            """.trimIndent(),
+            formatLlmTraceMessages(listOf(LlmTraceMessage("system", "First line\nSecond \"quoted\" line"))),
+        )
+    }
+
+    @Test
     fun `fragment scoring generates exactly one token on the retained slot`() = runBlocking {
         nativeServer(completionContent = "7").use { server ->
             val gateway = LlamaCppGateway(promptFactory = PromptFactory())
@@ -325,6 +342,14 @@ class LlamaCppGatewayTest {
                 assertEquals(false, body.getValue("stream").jsonPrimitive.boolean)
                 assertTrue(body.containsKey("json_schema"))
             }
+            assertEquals(64, server.completionBodies[0].jsonObject.getValue("n_predict").jsonPrimitive.int)
+            assertEquals(128, server.completionBodies[1].jsonObject.getValue("n_predict").jsonPrimitive.int)
+            assertEquals(
+                400,
+                server.completionBodies[1].jsonObject.getValue("json_schema").jsonObject
+                    .getValue("properties").jsonObject.getValue("narrativeFocus").jsonObject
+                    .getValue("anyOf").jsonArray[1].jsonObject.getValue("maxLength").jsonPrimitive.int,
+            )
         }
     }
 
