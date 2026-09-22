@@ -72,19 +72,30 @@ class AdventureAppNavigationTest {
 
     @OptIn(DelicateCoroutinesApi::class)
     @Test
-    fun `starting a new session renders the play view without model discovery`() = GlobalScope.promise<Unit> {
+    fun `new session introduces the adventure once and resumes its saved introduction`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
         val scenario = Scenario("scenario", "scenario.md", "# Scenario", 1)
+        val saved = mutableListOf<GameSession>()
+        val requests = mutableListOf<TurnRequest>()
         try {
             flushSync {
                 createRoot(container).render(AdventureApp.create {
                     scenarioRepository = scenarioRepository(scenario)
-                    sessionRepository = sessionRepository()
+                    sessionRepository = object : SessionRepository {
+                        override suspend fun list() = saved.asReversed().distinctBy { it.id }
+                        override suspend fun save(session: GameSession) { saved += session }
+                        override suspend fun find(id: String) = saved.lastOrNull { it.id == id }
+                        override suspend fun delete(id: String) = Unit
+                    }
                     api = object : AdventureApi {
                         override suspend fun prefill(request: PrefillRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
                         override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
-                        override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("unused")
+                        override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
+                            requests += request
+                            onToken("You stand at the harbor. What do you do?")
+                            return TurnCompletion(TurnMetrics(null, null, null), WorldState("Harbor"))
+                        }
                     }
                     initialScenarios = listOf(scenario)
                 })
@@ -99,6 +110,20 @@ class AdventureAppNavigationTest {
             nextBrowserTick()
 
             assertNotNull(container.querySelector("#player-action"))
+            assertEquals(1, requests.size)
+            assertEquals(true, container.textContent?.contains("You stand at the harbor."))
+            assertEquals("game-master", saved.last().messages.last().role)
+            assertEquals(saved.last().id, requests.single().sessionId)
+            assertEquals(false, saved.last().introductionPending)
+            assertEquals(false, container.textContent?.contains(requests.single().playerAction))
+
+            container.clickButtonNamed("Back to sessions")
+            nextBrowserTick()
+            container.clickButtonNamed(saved.last().title)
+            nextBrowserTick()
+            nextBrowserTick()
+            assertEquals(1, requests.size)
+            assertEquals(true, container.textContent?.contains("You stand at the harbor."))
         } finally {
             container.remove()
         }
@@ -288,6 +313,134 @@ class AdventureAppNavigationTest {
             assertEquals("false", fragmentInformationButton.getAttribute("aria-expanded"))
             assertNull(fragmentInformationButton.getAttribute("aria-describedby"))
         } finally {
+            container.remove()
+        }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `introduction streams with input locked and can be retried after failure`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+        val failFirst = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val finishRetry = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var stored: GameSession? = null
+        val requests = mutableListOf<TurnRequest>()
+        val warmups = mutableListOf<WarmupRequest>()
+        try {
+            flushSync {
+                root.render(AdventureApp.create {
+                    scenarioRepository = scenarioRepository(scenario)
+                    sessionRepository = object : SessionRepository {
+                        override suspend fun list() = listOfNotNull(stored)
+                        override suspend fun save(session: GameSession) { stored = session }
+                        override suspend fun find(id: String) = stored?.takeIf { it.id == id }
+                        override suspend fun delete(id: String) = Unit
+                    }
+                    api = object : AdventureApi {
+                        override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unexpected prefill")
+                        override suspend fun warmup(request: WarmupRequest): PrefillAccepted {
+                            warmups += request
+                            return PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+                        }
+                        override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
+                            assertEquals(request.sessionId, warmups.last().sessionId)
+                            requests += request
+                            onToken(if (requests.size == 1) "Incomplete opening" else "You arrive at the harbor.")
+                            onInputReady()
+                            if (requests.size == 1) {
+                                failFirst.await()
+                                error("model unavailable")
+                            }
+                            finishRetry.await()
+                            return TurnCompletion(TurnMetrics(null, null, null), WorldState("Harbor"))
+                        }
+                    }
+                    initialScenarios = listOf(scenario)
+                })
+            }
+            container.clickButtonNamed(scenario.name)
+            nextBrowserTick()
+            container.clickButtonNamed("New session")
+            nextBrowserTick()
+            nextBrowserTick()
+            assertEquals(1, requests.size)
+            assertEquals(true, container.textContent?.contains("Incomplete opening"))
+            assertEquals(true, container.querySelector("#player-action")?.asDynamic()?.disabled)
+            assertEquals(true, stored?.introductionPending)
+            assertEquals(emptyList(), stored?.messages)
+
+            failFirst.complete(Unit)
+            nextBrowserTick()
+            nextBrowserTick()
+            assertEquals(false, container.textContent?.contains("Incomplete opening"))
+            assertNotNull(container.buttonNamed("Retry introduction"))
+            assertEquals(true, container.querySelector("#player-action")?.asDynamic()?.disabled)
+            container.clickButtonNamed("Retry introduction")
+            nextBrowserTick()
+            assertEquals(2, requests.size)
+            assertEquals(requests[0], requests[1])
+            assertEquals(true, container.textContent?.contains("You arrive at the harbor."))
+            assertEquals(true, container.querySelector("#player-action")?.asDynamic()?.disabled)
+            finishRetry.complete(Unit)
+            nextBrowserTick()
+            nextBrowserTick()
+            assertEquals(false, stored?.introductionPending)
+            assertEquals(false, container.querySelector("#player-action")?.asDynamic()?.disabled)
+            assertNull(container.buttonNamed("Retry introduction"))
+            assertEquals(1, stored?.messages?.count { it.role == "game-master" })
+        } finally {
+            failFirst.complete(Unit)
+            finishRetry.complete(Unit)
+            flushSync { root.unmount() }
+            container.remove()
+        }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `resuming an unfinished new session automatically generates its introduction`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+        var stored = newGameSession(scenario, "pending-session", 1)
+        val requests = mutableListOf<TurnRequest>()
+        try {
+            flushSync {
+                root.render(AdventureApp.create {
+                    scenarioRepository = scenarioRepository(scenario)
+                    sessionRepository = object : SessionRepository {
+                        override suspend fun list() = listOf(stored)
+                        override suspend fun save(session: GameSession) { stored = session }
+                        override suspend fun find(id: String) = stored.takeIf { it.id == id }
+                        override suspend fun delete(id: String) = Unit
+                    }
+                    api = object : AdventureApi {
+                        override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unexpected prefill")
+                        override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+                        override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
+                            requests += request
+                            onToken("Welcome to the harbor.")
+                            return TurnCompletion(TurnMetrics(null, null, null), WorldState("Harbor"))
+                        }
+                    }
+                    initialScenarios = listOf(scenario)
+                })
+            }
+            container.clickButtonNamed(scenario.name)
+            nextBrowserTick()
+            nextBrowserTick()
+            container.clickButtonNamed(stored.title)
+            nextBrowserTick()
+            nextBrowserTick()
+            assertEquals("pending-session", requests.single().sessionId)
+            assertEquals(false, stored.introductionPending)
+            assertEquals(true, container.textContent?.contains("Welcome to the harbor."))
+        } finally {
+            flushSync { root.unmount() }
             container.remove()
         }
     }

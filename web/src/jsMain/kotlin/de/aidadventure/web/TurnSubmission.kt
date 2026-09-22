@@ -15,6 +15,21 @@ internal class TurnSubmission(
     private val api: AdventureApi,
     private val clock: () -> Long = ::now,
 ) {
+    suspend fun submitIntroduction(
+        session: GameSession,
+        scenario: Scenario,
+        onStarted: (GameSession) -> Unit,
+        onStreamed: (GameSession) -> Unit,
+    ): CompletedTurn {
+        require(session.introductionPending && session.messages.isEmpty())
+        return try {
+            submit(session, scenario, INTRODUCTION_INSTRUCTION, onStarted, onStreamed, introduction = true)
+        } catch (cause: Throwable) {
+            onStreamed(session)
+            throw cause
+        }
+    }
+
     suspend fun submit(
         session: GameSession,
         scenario: Scenario,
@@ -23,9 +38,10 @@ internal class TurnSubmission(
         onStreamed: (GameSession) -> Unit,
         onInputReady: () -> Unit = {},
         liveSessionId: String = session.id,
+        introduction: Boolean = false,
     ): CompletedTurn {
         val started = session.copy(
-            messages = session.messages + GameMessage("player", playerAction, clock()),
+            messages = session.messages + GameMessage("player", playerAction, clock(), hidden = introduction),
             updatedAt = clock(),
         )
         onStarted(started)
@@ -53,8 +69,18 @@ internal class TurnSubmission(
             messages = messages + GameMessage("game-master", streamedText.toString(), clock()),
             updatedAt = clock(),
             worldState = completion.worldState,
+            introductionPending = if (introduction) false else session.introductionPending,
         )
+        if (introduction) check(streamedText.isNotBlank()) { "The introduction was empty. Please try again." }
         sessions.save(completed)
         return CompletedTurn(completed, completion.metrics)
+    }
+
+    companion object {
+        const val INTRODUCTION_INSTRUCTION =
+            "Begin this new adventure with a short, immersive introduction in the scenario's language. " +
+                "Establish the player's starting situation and surroundings using the scenario and initial world state. " +
+                "Do not reveal hidden scenario information or choose actions, thoughts, or decisions for the player. " +
+                "End by inviting the player's first action."
     }
 }

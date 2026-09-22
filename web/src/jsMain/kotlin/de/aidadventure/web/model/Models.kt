@@ -21,6 +21,7 @@ data class GameSession(
     val updatedAt: Long,
     val llamaCppPort: Int = 8081,
     val worldState: WorldState = WorldState(),
+    val introductionPending: Boolean = false,
 )
 
 @Serializable data class WorldState(val location: String = "", val narrativeFocus: String = "")
@@ -30,4 +31,5 @@ data class GameMessage(
     val role: String,
     val content: String,
     val createdAt: Long,
+    val hidden: Boolean = false,
 )

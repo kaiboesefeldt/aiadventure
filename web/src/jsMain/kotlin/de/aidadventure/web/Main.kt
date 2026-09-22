@@ -175,12 +175,37 @@ private val DetailView = FC<DetailViewProps> { props ->
 
 private external interface PlayViewProps : Props { var scenario: Scenario; var session: GameSession; var api: AdventureApi; var sessions: SessionRepository; var onBack: () -> Unit; var onSessionChanged: (GameSession) -> Unit }
 private val PlayView = FC<PlayViewProps> { props ->
-    var action by useState(""); var pending by useState(false); var inputReady by useState(false); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null); var openFragmentIndex by useState<Int?>(null); var worldStateOpen by useState(false)
+    var action by useState(""); var pending by useState(props.session.introductionPending); var inputReady by useState(false); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null); var openFragmentIndex by useState<Int?>(null); var worldStateOpen by useState(false)
     val liveId = props.session.id
     val (prefill) = useState(PrefillSubmission(props.api))
     val displayed = sessionForDisplay(props.session, streamed)
+    fun introduce() {
+        prefill.turnStarted()
+        pending = true
+        error = null
+        scope.launch {
+            try {
+                runCatching { WarmupSubmission(props.api).submit(props.session, props.scenario) }
+                val completed = TurnSubmission(props.sessions, props.api).submitIntroduction(
+                    props.session, props.scenario,
+                    { flushStreamUpdate { streamed = it } },
+                    { flushStreamUpdate { streamed = it } },
+                )
+                metrics = completed.metrics
+                streamed = completed.session
+                props.onSessionChanged(completed.session)
+            } catch (failure: Throwable) {
+                streamed = null
+                error = clientMessage(failure)
+            } finally {
+                prefill.turnFinished()
+                pending = false
+            }
+        }
+    }
     useEffect(dependencies = emptyArray()) {
-        scope.launch { runCatching { WarmupSubmission(props.api).submit(props.session, props.scenario) } }
+        if (props.session.introductionPending) introduce()
+        else scope.launch { runCatching { WarmupSubmission(props.api).submit(props.session, props.scenario) } }
     }
     useEffectWithCleanup(dependencies = arrayOf(openFragmentIndex, worldStateOpen)) {
         (if (worldStateOpen) worldStateTooltipContainerId() else openFragmentIndex?.let(::fragmentTooltipContainerId))?.let { containerId ->
@@ -194,7 +219,7 @@ private val PlayView = FC<PlayViewProps> { props ->
             onCleanup { document.asDynamic().removeEventListener("click", outsideClick) }
         }
     }
-    fun submit() { val text = action.trim(); if (text.isBlank() || pending) return; prefill.turnStarted(); pending = true; inputReady = false; action = ""; error = null; scope.launch { try {
+    fun submit() { val text = action.trim(); if (text.isBlank() || pending || props.session.introductionPending) return; prefill.turnStarted(); pending = true; inputReady = false; action = ""; error = null; scope.launch { try {
         val completed = TurnSubmission(props.sessions, props.api).submit(props.session, props.scenario, text, { flushStreamUpdate { streamed = it } }, { flushStreamUpdate { streamed = it } }, { inputReady = true }, liveId)
         metrics = completed.metrics; streamed = completed.session; props.onSessionChanged(completed.session); prefill.turnFinished(); prefill.changed(completed.session, props.scenario, liveId, action)
     } catch (failure: Throwable) { error = clientMessage(failure) } finally { prefill.turnFinished(); pending = false; inputReady = false } } }
@@ -254,8 +279,13 @@ private val PlayView = FC<PlayViewProps> { props ->
             }
         }
         metrics?.let { renderMetrics(it) }; error?.let { ReactHTML.p { className = ClassName("status-error"); +it } }
-        ReactHTML.textarea { id = "player-action".unsafeCast<web.dom.ElementId>(); className = ClassName("action-input"); value = action; disabled = pending && !inputReady; onChange = { action = it.target.unsafeCast<HTMLTextAreaElement>().value; if (!pending) prefill.changed(props.session, props.scenario, liveId, action) }; onKeyDown = { event -> if (shouldSubmitOnEnter(event.key, event.shiftKey, event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>(), pending, action)) { event.preventDefault(); submit() } } }
-        ReactHTML.button { className = ClassName("primary-button"); disabled = pending || action.isBlank(); onClick = { submit() }; +(if (pending && inputReady) "Updating world…" else if (pending) "Sending…" else "Send") }
+        if (props.session.introductionPending && !pending && error != null) ReactHTML.button {
+            className = ClassName("primary-button")
+            onClick = { introduce() }
+            +"Retry introduction"
+        }
+        ReactHTML.textarea { id = "player-action".unsafeCast<web.dom.ElementId>(); className = ClassName("action-input"); value = action; disabled = props.session.introductionPending || (pending && !inputReady); onChange = { action = it.target.unsafeCast<HTMLTextAreaElement>().value; if (!pending) prefill.changed(props.session, props.scenario, liveId, action) }; onKeyDown = { event -> if (shouldSubmitOnEnter(event.key, event.shiftKey, event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>(), pending, action)) { event.preventDefault(); submit() } } }
+        ReactHTML.button { className = ClassName("primary-button"); disabled = props.session.introductionPending || pending || action.isBlank(); onClick = { submit() }; +(if (pending && props.session.introductionPending) "Introducing adventure…" else if (pending && inputReady) "Updating world…" else if (pending) "Sending…" else "Send") }
     }
 }
 
@@ -271,8 +301,9 @@ internal fun newGameSession(scenario: Scenario, id: String, time: Long): GameSes
     createdAt = time,
     updatedAt = time,
     worldState = ScenarioFrontmatter.parse(scenario.markdown).initialWorldState,
+    introductionPending = true,
 )
-internal fun isVisibleTranscriptMessage(message: GameMessage) = message.role != "runtime-fragment"
+internal fun isVisibleTranscriptMessage(message: GameMessage) = !message.hidden && message.role != "runtime-fragment"
 internal fun runtimeFragmentForGameMaster(messages: List<GameMessage>, index: Int): String? =
     messages.getOrNull(index)?.takeIf { it.role == "game-master" }
         ?.let { messages.getOrNull(index - 2)?.takeIf { it.role == "runtime-fragment" }?.content

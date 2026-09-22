@@ -53,6 +53,100 @@ class TurnSubmissionTest {
         assertEquals(emptyList(), sessions.saved)
     }
 
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `introduction keeps hidden start instruction in every subsequent request history`() = GlobalScope.promise<Unit> {
+        val sessions = RecordingSessions()
+        val initial = newGameSession(scenario(), "session-1", 1)
+        val completed = TurnSubmission(sessions, FragmentEmittingAdventureApi(), clock = { 3 })
+            .submitIntroduction(initial, scenario(), {}, {}).session
+
+        assertEquals(false, completed.introductionPending)
+        assertEquals(listOf("runtime-fragment", "player", "game-master"), completed.messages.map { it.role })
+        assertEquals(true, completed.messages[1].hidden)
+        assertEquals(false, isVisibleTranscriptMessage(completed.messages[1]))
+        assertEquals(listOf("The keeper points east."), completed.messages.filter(::isVisibleTranscriptMessage).map { it.content })
+        val expected = completed.messages.map { de.aidadventure.web.api.ChatEntry(it.role, it.content) }
+        assertEquals(expected, de.aidadventure.web.api.TurnRequestMapper.map(completed, scenario(), "look", completed.id).history)
+        assertEquals(expected, de.aidadventure.web.api.PrefillRequestMapper.map(completed, scenario(), completed.id, 1, "look").history)
+        assertEquals(expected, de.aidadventure.web.api.WarmupRequestMapper.map(completed, scenario()).history)
+        assertEquals(completed, de.aidadventure.web.persistence.decodePersistedGameSession(
+            kotlinx.serialization.json.Json.encodeToString(GameSession.serializer(), completed),
+        ))
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `failed introduction restores original pending session without saving partial history`() = GlobalScope.promise<Unit> {
+        val sessions = RecordingSessions()
+        val initial = newGameSession(scenario(), "session-1", 1)
+        val updates = mutableListOf<GameSession>()
+        try {
+            TurnSubmission(sessions, FailingFragmentAdventureApi()).submitIntroduction(initial, scenario(), {}, updates::add)
+            error("Expected failure")
+        } catch (failure: IllegalStateException) {
+            assertEquals("model unavailable", failure.message)
+        }
+        assertEquals(initial, updates.last())
+        assertEquals(emptyList(), sessions.saved)
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `empty introduction is rejected and remains retryable`() = GlobalScope.promise<Unit> {
+        val sessions = RecordingSessions()
+        val initial = newGameSession(scenario(), "session-1", 1)
+        val updates = mutableListOf<GameSession>()
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+            override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
+                onToken("  ")
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+            }
+        }
+        try {
+            TurnSubmission(sessions, api).submitIntroduction(initial, scenario(), {}, updates::add)
+            error("Expected failure")
+        } catch (failure: IllegalStateException) {
+            assertEquals("The introduction was empty. Please try again.", failure.message)
+        }
+        assertEquals(initial, updates.last())
+        assertEquals(emptyList(), sessions.saved)
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `failed introduction save restores retryable session`() = GlobalScope.promise<Unit> {
+        val initial = newGameSession(scenario(), "session-1", 1)
+        val updates = mutableListOf<GameSession>()
+        val sessions = object : SessionRepository {
+            override suspend fun list() = listOf(initial)
+            override suspend fun save(session: GameSession): Unit = error("storage unavailable")
+            override suspend fun find(id: String) = initial
+            override suspend fun delete(id: String) = Unit
+        }
+        try {
+            TurnSubmission(sessions, FragmentEmittingAdventureApi()).submitIntroduction(initial, scenario(), {}, updates::add)
+            error("Expected failure")
+        } catch (failure: IllegalStateException) {
+            assertEquals("storage unavailable", failure.message)
+        }
+        assertEquals(initial, updates.last())
+    }
+
+    @Test
+    fun `legacy empty sessions remain playable without automatic introduction`() {
+        val legacy = de.aidadventure.web.persistence.decodePersistedGameSession(
+            """{"id":"old","scenarioId":"scenario-1","title":"Old","messages":[],"createdAt":1,"updatedAt":1}""",
+        )
+        assertEquals(false, legacy.introductionPending)
+        val legacyMessage = kotlinx.serialization.json.Json.decodeFromString(
+            GameMessage.serializer(), """{"role":"player","content":"look","createdAt":1}""",
+        )
+        assertEquals(true, isVisibleTranscriptMessage(legacyMessage))
+    }
+
     private fun sessionWithPreviousPair() = GameSession(
         id = "session-1", scenarioId = "scenario-1", title = "Harbor", modelId = "model",
         messages = listOf(GameMessage("player", "look", 1), GameMessage("game-master", "A bell rings", 2)),
