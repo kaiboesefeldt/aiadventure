@@ -312,6 +312,7 @@ class LlamaCppGatewayTest {
                 WorldState(location = "Harbour"),
                 primary.playerAction,
                 "The bell rings at the harbour.",
+                locations = listOf("Harbour", "Bell Tower"),
             )
 
             gateway.resolveWorldState(primary, resolution.gameMasterResponse, resolution, LlamaCppSlot(2))
