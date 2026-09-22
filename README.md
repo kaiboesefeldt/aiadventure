@@ -23,6 +23,32 @@ cp .env.example .env
 `server.sh` starts primary and secondary local llama.cpp servers. The primary owns cache slots; on
 Ctrl-C or `TERM`, it terminates both llama.cpp and application children.
 
+To use existing model wrapper scripts, set either or both of these in `.env`:
+
+```dotenv
+PRIMARY_MODEL_SCRIPT=/opt/models/primary-model.sh
+# SECONDARY_MODEL_SCRIPT=/opt/models/secondary-wrapper.sh
+```
+
+A nonempty `PRIMARY_MODEL_SCRIPT` or `SECONDARY_MODEL_SCRIPT` overrides that
+role's `MODEL_PATH` and `THREADS`; those values can be omitted in wrapper mode.
+The other role can still use a GGUF directly. Empty script values retain the
+GGUF configuration. Script files must be readable and executable; relative paths
+are resolved from the project directory. Quote paths containing spaces.
+
+The launcher calls the script with `llama-server` as its first argument, then
+`-rea off --port <configured port>` and, for the primary, `--slot-save-path
+<temporary directory>`. The wrapper supplies model and performance settings and
+must forward the remaining arguments **after** its own options, for example:
+
+```bash
+#!/usr/bin/env bash
+exec "$1" --model /opt/models/model.gguf -t 1 "${@:2}"
+```
+
+Keep the server in the foreground; do not detach it with `setsid` or daemonize it.
+The launcher terminates wrapper children when stopped or when any component exits.
+
 Open [http://127.0.0.1:8080/](http://127.0.0.1:8080/) in the browser.
 
 The server listens only on `127.0.0.1:8080` by default.
@@ -72,6 +98,9 @@ geschrieben, dass du es sofort als kleines Smoke-Test-Spiel starten kannst.
 ```
 
 The command compiles both modules and runs their test suites.
+
+Run `bash scripts/test-server-launcher.sh` for isolated launcher regression tests
+(requires Python 3; does not start actual models or modify your `.env`).
 
 ### Local smoke test
 

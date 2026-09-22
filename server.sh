@@ -13,24 +13,46 @@ set -a
 source .env
 set +a
 
-for variable_name in PRIMARY_MODEL_PATH PRIMARY_THREADS PRIMARY_PORT SECONDARY_MODEL_PATH SECONDARY_THREADS SECONDARY_PORT LOG_LEVEL; do
+for variable_name in PRIMARY_PORT SECONDARY_PORT LOG_LEVEL; do
     if [[ -z "${!variable_name:-}" ]]; then
         echo "Missing required configuration: $variable_name" >&2
         exit 1
     fi
 done
 
-if [[ ! -f "$PRIMARY_MODEL_PATH" || ! -r "$PRIMARY_MODEL_PATH" ]]; then
-    echo "PRIMARY_MODEL_PATH must be a readable regular file." >&2
-    exit 1
-fi
-if [[ ! -f "$SECONDARY_MODEL_PATH" || ! -r "$SECONDARY_MODEL_PATH" ]]; then echo "SECONDARY_MODEL_PATH must be a readable regular file." >&2; exit 1; fi
+validate_model() {
+    local role="$1"
+    local script_variable="${role}_MODEL_SCRIPT"
+    local model_variable="${role}_MODEL_PATH"
+    local threads_variable="${role}_THREADS"
+    local script="${!script_variable:-}"
 
-if [[ ! "$PRIMARY_THREADS" =~ ^[1-9][0-9]*$ ]]; then
-    echo "PRIMARY_THREADS must be a positive integer." >&2
-    exit 1
-fi
-if [[ ! "$SECONDARY_THREADS" =~ ^[1-9][0-9]*$ ]]; then echo "SECONDARY_THREADS must be a positive integer." >&2; exit 1; fi
+    if [[ -n "$script" ]]; then
+        if [[ ! -f "$script" || ! -r "$script" || ! -x "$script" ]]; then
+            echo "$script_variable must be a readable executable regular file." >&2
+            exit 1
+        fi
+    else
+        local variable_name
+        for variable_name in "$model_variable" "$threads_variable"; do
+            if [[ -z "${!variable_name:-}" ]]; then
+                echo "Missing required configuration: $variable_name" >&2
+                exit 1
+            fi
+        done
+        if [[ ! -f "${!model_variable}" || ! -r "${!model_variable}" ]]; then
+            echo "$model_variable must be a readable regular file." >&2
+            exit 1
+        fi
+        if [[ ! "${!threads_variable}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "$threads_variable must be a positive integer." >&2
+            exit 1
+        fi
+    fi
+}
+
+validate_model PRIMARY
+validate_model SECONDARY
 
 if [[ ! "$PRIMARY_PORT" =~ ^[1-9][0-9]*$ ]] || (( ${#PRIMARY_PORT} > 5 )) || (( PRIMARY_PORT > 65535 )); then
     echo "PRIMARY_PORT must be an integer between 1 and 65535." >&2
@@ -116,28 +138,36 @@ trap 'exit 143' TERM
 
 slot_directory="$(mktemp -d "${TMPDIR:-/tmp}/ai-adventure-primary-slots.XXXXXX")"
 
-setsid llama-server -t "$PRIMARY_THREADS" -rea off --port "$PRIMARY_PORT" \
-    --slot-save-path "$slot_directory" --model "$PRIMARY_MODEL_PATH" &
+model_command() {
+    local role="$1"
+    shift
+    local script_variable="${role}_MODEL_SCRIPT"
+    local model_variable="${role}_MODEL_PATH"
+    local threads_variable="${role}_THREADS"
+    local script="${!script_variable:-}"
+
+    if [[ -n "$script" ]]; then
+        # Resolve relative files against the project, not the executable PATH.
+        [[ "$script" == /* ]] || script="$ROOT_DIR/$script"
+        command=("$script" llama-server "$@")
+    else
+        command=(llama-server -t "${!threads_variable}" "$@" --model "${!model_variable}")
+    fi
+}
+
+model_command PRIMARY -rea off --port "$PRIMARY_PORT" --slot-save-path "$slot_directory"
+setsid "${command[@]}" &
 llama_pid=$!
-setsid llama-server -t "$SECONDARY_THREADS" -rea off --port "$SECONDARY_PORT" --model "$SECONDARY_MODEL_PATH" &
+model_command SECONDARY -rea off --port "$SECONDARY_PORT"
+setsid "${command[@]}" &
 secondary_llama_pid=$!
 
 setsid ./gradlew --console=plain :server:run --args="--llama-port=$PRIMARY_PORT --secondary-llama-port=$SECONDARY_PORT --log-level=$LOG_LEVEL" &
 gradle_pid=$!
 
-while [[ -n "$llama_pid" && -n "$secondary_llama_pid" && -n "$gradle_pid" ]]; do
-    if wait -n -p completed_pid "$llama_pid" "$secondary_llama_pid" "$gradle_pid"; then
-        completed_status=0
-    else
-        completed_status=$?
-    fi
-
-    if [[ "$completed_pid" == "$llama_pid" ]]; then
-        llama_pid=""
-        exit "$completed_status"
-    fi
-    if [[ "$completed_pid" == "$secondary_llama_pid" ]]; then secondary_llama_pid=""; exit "$completed_status"; fi
-
-    gradle_pid=""
-    exit "$completed_status"
-done
+# Retain every group ID: an exited wrapper can still have live children.
+if wait -n "$llama_pid" "$secondary_llama_pid" "$gradle_pid"; then
+    exit 0
+else
+    exit "$?"
+fi
