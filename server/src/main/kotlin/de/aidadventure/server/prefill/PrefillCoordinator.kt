@@ -717,6 +717,7 @@ internal class SessionPrefillCoordinator(
                         ?.takeIf { it.role == "runtime-fragment" }
                         ?.let { output.send(TurnStreamEvent.Fragment(it.content)) }
                     request = prepareTurn(request, lease.slot)
+                    output.send(TurnStreamEvent.GenerationReady)
                     val generated = StringBuilder()
                     var done: TurnStreamEvent.Done? = null
                     gateway.stream(request, lease.slot).collect { event ->

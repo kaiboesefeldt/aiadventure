@@ -16,11 +16,24 @@ interface AdventureApi {
     suspend fun prefill(request: PrefillRequest): PrefillAccepted
     suspend fun warmup(request: WarmupRequest): PrefillAccepted
     suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion
+    suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion =
+        play(request, onInputReady, onFragment, onToken)
+    fun stopActiveTurn() = Unit
 }
 
 class AdventureApiClient(
     private val baseUrl: String = "",
 ) : AdventureApi {
+    private var activeTurnController: dynamic = null
+    private var activeTurnReader: dynamic = null
+    private var activeTurnStopped = false
+
+    override fun stopActiveTurn() {
+        if (activeTurnController == null && activeTurnReader == null) return
+        activeTurnStopped = true
+        runCatching { activeTurnReader?.cancel() }
+        runCatching { activeTurnController?.abort() }
+    }
     override suspend fun prefill(request: PrefillRequest): PrefillAccepted {
         val response = browserFetch("/api/prefill", encodePrefillRequest(request))
         if (response.status.unsafeCast<Int>() != 202) throw browserFailure(response)
@@ -34,22 +47,47 @@ class AdventureApiClient(
     }
 
     override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
-        val response = requireBrowserSuccess(browserFetchTurn(request))
+        return play(request, {}, onInputReady, onFragment, onToken)
+    }
+
+    override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
+        activeTurnStopped = false
+        val controller = js("new AbortController()")
+        activeTurnController = controller
+        try {
+        val response = requireBrowserSuccess(browserFetchTurn(request, controller))
         val reader = response.body?.getReader() ?: throw AdventureApiException("The model response ended unexpectedly.")
+        activeTurnReader = reader
         val textDecoder = js("new TextDecoder()")
 
         val decoder = SseFrameDecoder()
         while (true) {
-            val result = reader.read().unsafeCast<Promise<dynamic>>().await()
+            val result = try { reader.read().unsafeCast<Promise<dynamic>>().await() } catch (failure: Throwable) {
+                if (activeTurnStopped) throw TurnStreamStoppedException()
+                throw failure
+            }
+            if (activeTurnStopped) throw TurnStreamStoppedException()
             if (result.done.unsafeCast<Boolean>()) break
-            processTurnStreamChunk(decoder, decodeText(textDecoder, result.value, stream = true), onInputReady, onFragment, onToken)?.let { return it }
+            processTurnStreamChunk(decoder, decodeText(textDecoder, result.value, stream = true), onInputReady, onFragment, onToken, onGenerationReady) { activeTurnStopped }?.let { return it }
         }
-        processTurnStreamChunk(decoder, decodeText(textDecoder, null, stream = false), onInputReady, onFragment, onToken)?.let { return it }
+        processTurnStreamChunk(decoder, decodeText(textDecoder, null, stream = false), onInputReady, onFragment, onToken, onGenerationReady) { activeTurnStopped }?.let { return it }
         throw AdventureApiException("The model response ended unexpectedly.")
+        } finally {
+            activeTurnReader = null
+            activeTurnController = null
+        }
     }
 
-    private suspend fun browserFetchTurn(request: TurnRequest): dynamic {
-        return browserFetch("/api/turn", encodeTurnRequest(request))
+    private suspend fun browserFetchTurn(request: TurnRequest, controller: dynamic): dynamic {
+        val options = js("({})")
+        options.method = "POST"
+        options.headers = js("({ 'Content-Type': 'application/json' })")
+        options.body = encodeTurnRequest(request)
+        options.signal = controller.signal
+        return try { window.fetch("$normalizedBaseUrl/api/turn", options).await() } catch (failure: Throwable) {
+            if (activeTurnStopped) throw TurnStreamStoppedException()
+            throw failure
+        }
     }
 
     private suspend fun browserFetch(path: String, body: String): dynamic {
@@ -76,6 +114,8 @@ class AdventureApiClient(
 
 }
 
+class TurnStreamStoppedException : Exception("Turn stream stopped by player input.")
+
 internal fun encodeTurnRequest(request: TurnRequest): String =
     streamJson.encodeToString(TurnRequest.serializer(), request)
 
@@ -91,9 +131,15 @@ internal fun processTurnStreamChunk(
     onInputReady: () -> Unit = {},
     onFragment: (String) -> Unit,
     onToken: (String) -> Unit,
+    onGenerationReady: () -> Unit = {},
+    shouldStop: () -> Boolean = { false },
 ): TurnCompletion? {
     for (frame in decoder.push(chunk)) {
         when (frame.event) {
+            "generation_ready" -> {
+                onGenerationReady()
+                if (shouldStop()) throw TurnStreamStoppedException()
+            }
             "input_ready" -> onInputReady()
             "fragment" -> onFragment(streamJson.decodeFromString<StreamFragment>(frame.data).fragment)
             "token" -> onToken(streamJson.decodeFromString<StreamToken>(frame.data).text)
