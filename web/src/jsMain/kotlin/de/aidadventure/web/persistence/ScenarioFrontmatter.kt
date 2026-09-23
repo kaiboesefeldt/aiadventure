@@ -69,8 +69,9 @@ object ScenarioFrontmatter {
 
         return fragmentEntries.map { entry ->
             val matchText = entry[0] as? String
-            val definitionEntries = mappingEntries(entry[1])
-            val fragment = definitionEntries?.firstOrNull { it[0] == "fragment" }?.get(1) as? String
+            val fragmentValue = entry[1]
+            val fragment = (fragmentValue as? String)
+                ?: mappingEntries(fragmentValue)?.firstOrNull { it[0] == "fragment" }?.get(1) as? String
             if (matchText.isNullOrBlank() || fragment.isNullOrBlank()) invalidFrontmatter()
             RuntimeFragmentDefinition(matchText, fragment)
         }
