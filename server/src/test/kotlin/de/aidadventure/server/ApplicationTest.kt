@@ -90,7 +90,7 @@ class ApplicationTest {
         configureJsonClient()
         val response = client.post("/api/turn") {
             contentType(ContentType.Application.Json)
-            setBody(turnRequest(history = visiblePair()))
+            setBody(turnRequest(history = visiblePair(), worldState = WorldState(location = "Harbour")))
         }
         val body = response.bodyAsText()
         assertContains(body, "A keeper greeted the player and opened the door.")
@@ -117,7 +117,7 @@ class ApplicationTest {
 
         client.post("/api/turn") {
             contentType(ContentType.Application.Json)
-            setBody(turnRequest(history = history))
+            setBody(turnRequest(history = history, worldState = WorldState(location = "Harbour")))
         }
 
         val primary = registry.coordinator.worldStatePrimaryRequests.single()
@@ -157,7 +157,7 @@ class ApplicationTest {
         }
         val response = client.post("/api/turn") {
             contentType(ContentType.Application.Json)
-            setBody(turnRequest(history = visiblePair()))
+            setBody(turnRequest(history = visiblePair(), worldState = WorldState(location = "Harbour")))
         }
 
         assertContains(response.bodyAsText(), "event: token")
@@ -188,7 +188,7 @@ class ApplicationTest {
 
         val response = client.post("/api/turn") {
             contentType(ContentType.Application.Json)
-            setBody(turnRequest(history = visiblePair()))
+            setBody(turnRequest(history = visiblePair(), worldState = WorldState(location = "Harbour")))
         }
 
         assertContains(response.bodyAsText(), "event: done")
@@ -222,7 +222,7 @@ class ApplicationTest {
 
         val response = client.post("/api/turn") {
             contentType(ContentType.Application.Json)
-            setBody(turnRequest(history = visiblePair()))
+            setBody(turnRequest(history = visiblePair(), worldState = WorldState(location = "Harbour")))
         }
 
         assertContains(response.bodyAsText(), "event: done")
@@ -244,7 +244,7 @@ class ApplicationTest {
 
         val response = client.post("/api/turn") {
             contentType(ContentType.Application.Json)
-            setBody(turnRequest(history = visiblePair()))
+            setBody(turnRequest(history = visiblePair(), worldState = WorldState(location = "Harbour")))
         }
 
         assertContains(response.bodyAsText(), "event: done")
@@ -269,7 +269,7 @@ class ApplicationTest {
             withTimeout(1_000) {
                 client.post("/api/turn") {
                     contentType(ContentType.Application.Json)
-                    setBody(turnRequest(history = visiblePair()))
+                    setBody(turnRequest(history = visiblePair(), worldState = WorldState(location = "Harbour")))
                 }
             }
         }
@@ -296,7 +296,7 @@ class ApplicationTest {
 
         val response = client.post("/api/turn") {
             contentType(ContentType.Application.Json)
-            setBody(turnRequest(history = visiblePair()))
+            setBody(turnRequest(history = visiblePair(), worldState = WorldState(location = "Harbour")))
         }
 
         assertContains(response.bodyAsText(), "event: token")
@@ -492,11 +492,13 @@ class ApplicationTest {
         llamaCppServer().use { llama ->
             val registry = FakeRegistry()
             val acceptedWorldState = WorldState("Leuchtturm", "Finde den Saboteur")
+            val resolver = RecordingResolver(null)
             registry.coordinator.acceptedWorldState = acceptedWorldState
             application {
                 adventureModule(
                     llamaCppGateway = LlamaCppGateway(),
                     prefillRegistry = registry,
+                    runtimeFragmentResolver = resolver,
                 )
             }
             configureJsonClient()
@@ -513,7 +515,48 @@ class ApplicationTest {
             )
             assertFalse(donePayload.contains("unresolvedSituation"))
             assertFalse(donePayload.contains("activeThread"))
+            runBlocking { withTimeout(1_000) { registry.coordinator.rerankCompleted.await() } }
             assertEquals(acceptedWorldState, registry.coordinator.rerankRequests.single().worldState)
+            assertEquals(listOf<String?>(acceptedWorldState.narrativeFocus), resolver.narrativeFoci)
+        }
+    }
+
+    @Test
+    fun `production runtime fragment resolver delegates narrative focus`() = runBlocking {
+        val delegate = RecordingResolver(null)
+        val resolver = ProductionRuntimeFragmentResolver { delegate }
+
+        resolver.resolve(
+            visiblePair(),
+            listOf(de.aidadventure.server.model.RuntimeFragmentDefinition("lighthouse", "memory")),
+            "Find the saboteur",
+        )
+
+        assertEquals(listOf<String?>("Find the saboteur"), delegate.narrativeFoci)
+    }
+
+    @Test
+    fun `turn skips runtime fragment retrieval when accepted world state is empty`() = testApplication {
+        llamaCppServer().use { llama ->
+            val registry = FakeRegistry()
+            val resolver = CountingResolver()
+            application {
+                adventureModule(llamaCppGateway = LlamaCppGateway(), prefillRegistry = registry, runtimeFragmentResolver = resolver)
+            }
+            configureJsonClient()
+
+            val response = client.post("/api/turn") {
+                contentType(ContentType.Application.Json)
+                setBody(turnRequest(port = llama.port).copy(
+                    runtimeFragments = listOf(de.aidadventure.server.model.RuntimeFragmentDefinition("lighthouse", "hidden detail")),
+                ))
+            }
+
+            assertEquals(HttpStatusCode.OK, response.status)
+            runBlocking { withTimeout(1_000) { registry.coordinator.rerankCompleted.await() } }
+            assertEquals(0, resolver.resolveCalls)
+            assertEquals(1, registry.coordinator.rerankRequests.size)
+            assertEquals(listOf<de.aidadventure.server.model.RuntimeFragmentDefinition?>(null), registry.coordinator.rerankCandidates)
         }
     }
 
@@ -573,7 +616,8 @@ class ApplicationTest {
         modelId: String = "configured-llama-cpp",
         port: Int = 8081,
         history: List<de.aidadventure.server.model.ChatEntry> = emptyList(),
-    ) = TurnRequest("live-1", modelId, port, "# Scenario", history, "look")
+        worldState: WorldState = WorldState(),
+    ) = TurnRequest("live-1", modelId, port, "# Scenario", history, "look").copy(worldState = worldState)
 
     private fun visiblePair() = listOf(
         de.aidadventure.server.model.ChatEntry("player", "ask Mira about the lighthouse"),
@@ -588,6 +632,18 @@ class ApplicationTest {
             definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
         ): de.aidadventure.server.model.RuntimeFragmentDefinition? =
             fragment?.let { de.aidadventure.server.model.RuntimeFragmentDefinition("match", it) }
+    }
+
+    private class CountingResolver : RuntimeFragmentResolver {
+        var resolveCalls = 0
+        override suspend fun prepare(definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>) = Unit
+        override suspend fun resolve(
+            history: List<de.aidadventure.server.model.ChatEntry>,
+            definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
+        ): de.aidadventure.server.model.RuntimeFragmentDefinition? {
+            resolveCalls++
+            return null
+        }
     }
 
     private fun resolving(vararg fragments: String?) = object : RuntimeFragmentResolver {
@@ -631,6 +687,7 @@ class ApplicationTest {
 
     private class RecordingResolver(private val fragment: String?) : RuntimeFragmentResolver {
         val histories = mutableListOf<List<ChatEntry>>()
+        val narrativeFoci = mutableListOf<String?>()
 
         override suspend fun prepare(definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>) = Unit
 
@@ -640,6 +697,15 @@ class ApplicationTest {
         ): de.aidadventure.server.model.RuntimeFragmentDefinition? {
             histories += history
             return fragment?.let { de.aidadventure.server.model.RuntimeFragmentDefinition("match", it) }
+        }
+
+        override suspend fun resolve(
+            history: List<ChatEntry>,
+            definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
+            narrativeFocus: String?,
+        ): de.aidadventure.server.model.RuntimeFragmentDefinition? {
+            narrativeFoci += narrativeFocus
+            return resolve(history, definitions)
         }
     }
 

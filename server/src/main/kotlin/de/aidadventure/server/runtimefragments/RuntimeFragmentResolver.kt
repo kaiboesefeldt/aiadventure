@@ -10,6 +10,12 @@ interface RuntimeFragmentResolver {
     suspend fun prepare(definitions: List<RuntimeFragmentDefinition>)
 
     suspend fun resolve(history: List<ChatEntry>, definitions: List<RuntimeFragmentDefinition>): RuntimeFragmentDefinition?
+
+    suspend fun resolve(
+        history: List<ChatEntry>,
+        definitions: List<RuntimeFragmentDefinition>,
+        narrativeFocus: String?,
+    ): RuntimeFragmentDefinition? = resolve(history, definitions)
 }
 
 class DefaultRuntimeFragmentResolver private constructor(
@@ -33,12 +39,16 @@ class DefaultRuntimeFragmentResolver private constructor(
     override suspend fun resolve(
         history: List<ChatEntry>,
         definitions: List<RuntimeFragmentDefinition>,
+    ): RuntimeFragmentDefinition? = resolve(history, definitions, null)
+
+    override suspend fun resolve(
+        history: List<ChatEntry>,
+        definitions: List<RuntimeFragmentDefinition>,
+        narrativeFocus: String?,
     ): RuntimeFragmentDefinition? {
         if (definitions.isEmpty()) return null
-        val visibleHistory = history.filter { it.role != RUNTIME_FRAGMENT_ROLE }
-        val lastPlayer = visibleHistory.lastOrNull { it.role == PLAYER_ROLE } ?: return null
-        val lastGameMaster = visibleHistory.lastOrNull { it.role == GAME_MASTER_ROLE } ?: return null
-        val componentTexts = listOf(lastPlayer.content, lastGameMaster.content).filter { it.length >= MIN_COMPONENT_LENGTH }
+        val componentTexts = narrativeFocus?.trim()?.takeIf { it.isNotEmpty() }?.let(::listOf)
+            ?: latestVisiblePairComponents(history)
         if (componentTexts.isEmpty()) return null
         prepare(definitions)
         val componentVectors = componentTexts.map { boundedEmbedding.embed(it) }
@@ -48,6 +58,13 @@ class DefaultRuntimeFragmentResolver private constructor(
             FloatArray(dimension) { index -> componentVectors.sumOf { it[index].toDouble() }.toFloat() / componentVectors.size },
         )
         return indexes.query(definitions, embedding, queryVector)
+    }
+
+    private fun latestVisiblePairComponents(history: List<ChatEntry>): List<String> {
+        val visibleHistory = history.filter { it.role != RUNTIME_FRAGMENT_ROLE }
+        val lastPlayer = visibleHistory.lastOrNull { it.role == PLAYER_ROLE } ?: return emptyList()
+        val lastGameMaster = visibleHistory.lastOrNull { it.role == GAME_MASTER_ROLE } ?: return emptyList()
+        return listOf(lastPlayer.content, lastGameMaster.content).filter { it.length >= MIN_COMPONENT_LENGTH }
     }
 
     override fun close() {

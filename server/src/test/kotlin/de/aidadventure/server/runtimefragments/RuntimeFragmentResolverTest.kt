@@ -12,6 +12,52 @@ import kotlin.test.assertNull
 
 class RuntimeFragmentResolverTest {
     @Test
+    fun resolverUsesNarrativeFocusAsQueryWhenPresent() = runTest {
+        val focus = "The saboteur's plan is centered on the lighthouse."
+        val embedding = RecordingEmbeddingService(
+            mapOf(
+                "match" to floatArrayOf(1f, 1f),
+                focus to floatArrayOf(0f, 5f),
+                "player input" to floatArrayOf(5f, 0f),
+                "answer reply" to floatArrayOf(5f, 0f),
+            ),
+        )
+        val definition = RuntimeFragmentDefinition("match", "fragment")
+        val index = RecordingIndex(definition)
+
+        DefaultRuntimeFragmentResolver(embedding, index).resolve(
+            listOf(ChatEntry("player", "player input"), ChatEntry("game-master", "answer reply")),
+            listOf(definition),
+            narrativeFocus = focus,
+        )
+
+        assertEquals(listOf("match", focus), embedding.inputs)
+        assertContentEquals(floatArrayOf(0f, 1f), index.queryVectors.single())
+    }
+
+    @Test
+    fun resolverFallsBackToLatestVisiblePairWhenNarrativeFocusIsBlank() = runTest {
+        val embedding = RecordingEmbeddingService(
+            mapOf(
+                "match" to floatArrayOf(1f, 1f),
+                "player input" to floatArrayOf(3f, 0f),
+                "answer reply" to floatArrayOf(0f, 4f),
+            ),
+        )
+        val definition = RuntimeFragmentDefinition("match", "fragment")
+        val index = RecordingIndex(definition)
+
+        DefaultRuntimeFragmentResolver(embedding, index).resolve(
+            listOf(ChatEntry("player", "player input"), ChatEntry("game-master", "answer reply")),
+            listOf(definition),
+            narrativeFocus = "  ",
+        )
+
+        assertEquals(listOf("match", "player input", "answer reply"), embedding.inputs)
+        assertContentEquals(floatArrayOf(0.6f, 0.8f), index.queryVectors.single())
+    }
+
+    @Test
     fun resolverUsesNormalizedEqualWeightOfLatestVisiblePair() = runTest {
         val embedding = RecordingEmbeddingService(
             mapOf(
