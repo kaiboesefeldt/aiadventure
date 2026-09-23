@@ -13,6 +13,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class PromptFactoryTest {
     @Test
@@ -21,10 +22,10 @@ class PromptFactoryTest {
             TurnRequest("live-1", "test-model", 8081, "# Harbor", listOf(ChatEntry("player", "look")), "open door"),
         )
 
-        assertEquals(listOf("system", "system", "user", "user"), prompt.map { it.type().name.lowercase() })
-        assertEquals("# Harbor", (prompt[1] as SystemMessage).text())
-        assertEquals("look", (prompt[2] as UserMessage).singleText())
-        assertEquals("open door", (prompt[3] as UserMessage).singleText())
+        assertEquals(listOf("system", "user", "user"), prompt.map { it.type().name.lowercase() })
+        assertTrue((prompt[0] as SystemMessage).text().contains("SCENARIO:\n# Harbor"))
+        assertEquals("look", (prompt[1] as UserMessage).singleText())
+        assertEquals("open door", (prompt[2] as UserMessage).singleText())
     }
 
     @Test
@@ -37,12 +38,15 @@ class PromptFactoryTest {
     }
 
     @Test
-    fun `runtime fragment history maps to a system message`() {
+    fun `runtime fragment history maps to labeled generated context`() {
         val prompt = PromptFactory().build(
             TurnRequest("live-1", "test-model", 8081, "# Harbor", listOf(ChatEntry("runtime-fragment", "keep quiet")), "look"),
         )
 
-        assertEquals("keep quiet", (prompt[2] as SystemMessage).text())
+        assertEquals(
+            "GM GUIDANCE / RUNTIME CONTEXT (generated context; not a player statement):\nkeep quiet",
+            (prompt[1] as UserMessage).singleText(),
+        )
     }
 
     @Test
@@ -51,13 +55,13 @@ class PromptFactoryTest {
             WarmupRequest("live-1", "test-model", 8081, "# Harbor", listOf(ChatEntry("player", "look"))),
         )
 
-        assertEquals(listOf("system", "system", "user"), prompt.map { it.type().name.lowercase() })
-        assertEquals("# Harbor", (prompt[1] as SystemMessage).text())
-        assertEquals("look", (prompt[2] as UserMessage).singleText())
+        assertEquals(listOf("system", "user"), prompt.map { it.type().name.lowercase() })
+        assertTrue((prompt[0] as SystemMessage).text().contains("SCENARIO:\n# Harbor"))
+        assertEquals("look", (prompt[1] as UserMessage).singleText())
     }
 
     @Test
-    fun `buildRelevance appends the candidate key as system context before its fixed analysis action`() {
+    fun `buildRelevance appends the candidate key as labeled analysis context before its fixed analysis action`() {
         val prompt = PromptFactory().buildRelevance(
             FragmentRelevanceRequest(
                 sessionId = "live-1",
@@ -69,11 +73,11 @@ class PromptFactoryTest {
             ),
         )
 
-        assertEquals(listOf("system", "system", "user", "system", "user"), prompt.map { it.type().name.lowercase() })
-        assertEquals("lighthouse", (prompt[3] as SystemMessage).text())
+        assertEquals(listOf("system", "user", "user", "user"), prompt.map { it.type().name.lowercase() })
+        assertEquals("ANALYSIS CONTEXT (candidate key; not a player statement):\nlighthouse", (prompt[2] as UserMessage).singleText())
         assertEquals(
             "Rate how well the preceding text fits the current game situation. Return a single ASCII digit between 0 (=no fit) and 9 (=perfect fit).",
-            (prompt[4] as UserMessage).singleText(),
+            (prompt[3] as UserMessage).singleText(),
         )
     }
 
@@ -92,16 +96,16 @@ class PromptFactoryTest {
         val factory = PromptFactory()
 
         assertEquals(
-            "# Der Leuchtturm von Nebelhafen",
-            (factory.build(TurnRequest("live-1", "test-model", 8081, scenario, emptyList(), "look"))[1] as SystemMessage).text(),
+            "GAME-MASTER INSTRUCTION:\n${PromptFactory.GAME_MASTER_INSTRUCTION}\n\nSCENARIO:\n# Der Leuchtturm von Nebelhafen",
+            (factory.build(TurnRequest("live-1", "test-model", 8081, scenario, emptyList(), "look"))[0] as SystemMessage).text(),
         )
         assertEquals(
-            "# Der Leuchtturm von Nebelhafen",
-            (factory.buildWarmup(WarmupRequest("live-1", "test-model", 8081, scenario, emptyList()))[1] as SystemMessage).text(),
+            "GAME-MASTER INSTRUCTION:\n${PromptFactory.GAME_MASTER_INSTRUCTION}\n\nSCENARIO:\n# Der Leuchtturm von Nebelhafen",
+            (factory.buildWarmup(WarmupRequest("live-1", "test-model", 8081, scenario, emptyList()))[0] as SystemMessage).text(),
         )
         assertEquals(
-            "# Der Leuchtturm von Nebelhafen",
-            (factory.buildRelevance(FragmentRelevanceRequest("live-1", "test-model", 8081, scenario, emptyList(), "lighthouse"))[1] as SystemMessage).text(),
+            "GAME-MASTER INSTRUCTION:\n${PromptFactory.GAME_MASTER_INSTRUCTION}\n\nSCENARIO:\n# Der Leuchtturm von Nebelhafen",
+            (factory.buildRelevance(FragmentRelevanceRequest("live-1", "test-model", 8081, scenario, emptyList(), "lighthouse"))[0] as SystemMessage).text(),
         )
     }
 

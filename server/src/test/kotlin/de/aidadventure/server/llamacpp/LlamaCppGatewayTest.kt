@@ -264,7 +264,7 @@ class LlamaCppGatewayTest {
 
             assertEquals(listOf("/apply-template", "/tokenize", "/slots", "/completion"), server.paths)
             assertEquals(
-                listOf("system", "system"),
+                listOf("system"),
                 server.templateBodies.single().jsonObject.getValue("messages").jsonArray.map {
                     it.jsonObject.getValue("role").jsonPrimitive.content
                 },
@@ -287,7 +287,7 @@ class LlamaCppGatewayTest {
 
             assertEquals(listOf("/apply-template", "/tokenize", "/slots", "/completion"), server.paths)
             assertEquals(
-                listOf("system", "system", "user", "assistant", "user"),
+                listOf("system", "user", "assistant", "user"),
                 server.templateBodies.single().jsonObject.getValue("messages").jsonArray.map {
                     it.jsonObject.getValue("role").jsonPrimitive.content
                 },
