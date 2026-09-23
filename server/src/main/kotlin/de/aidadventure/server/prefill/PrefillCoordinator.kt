@@ -70,8 +70,8 @@ internal data class CoordinatorLeaseDiagnostic(
 )
 
 internal data class RerankDiagnostic(
-    val scoreResponse: String?,
-    val score: Int?,
+    val response: String?,
+    val decision: Boolean?,
     val accepted: Boolean,
 )
 
@@ -121,8 +121,8 @@ internal interface PrefillGateway {
     suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics
     suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics =
         error("Warmup is not supported by this gateway.")
-    suspend fun scoreFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String =
-        error("Fragment scoring is not supported by this gateway.")
+    suspend fun classifyFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String =
+        error("Fragment classification is not supported by this gateway.")
     suspend fun resolveWorldState(
         primaryRequest: TurnRequest,
         gameMasterResponse: String,
@@ -149,8 +149,8 @@ internal class LlamaCppPrefillGateway(
 
     override suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics = gateway.warmup(request, slot)
 
-    override suspend fun scoreFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String =
-        gateway.scoreFragment(request, slot)
+    override suspend fun classifyFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String =
+        gateway.classifyFragment(request, slot)
 
     override suspend fun resolveWorldState(
         primaryRequest: TurnRequest,
@@ -185,9 +185,9 @@ internal class SessionPrefillCoordinator(
     },
     private val rerankDiagnosticSink: (RerankDiagnostic) -> Unit = { diagnostic ->
         coordinatorLogger.trace(
-            "operation=rerank scoreResponse=\"{}\" score={} accepted={}",
-            diagnostic.scoreResponse?.escapeForLlmTrace(),
-            diagnostic.score,
+            "operation=rerank response=\"{}\" decision={} accepted={}",
+            diagnostic.response?.escapeForLlmTrace(),
+            diagnostic.decision,
             diagnostic.accepted,
         )
     },
@@ -514,7 +514,7 @@ internal class SessionPrefillCoordinator(
             val failure = try {
                 val candidate = operation.reservation.awaitCandidate()
                 val prepared = prepareWarmup(request, lease.slot)
-                val scoreResponse = candidate?.let {
+                val response = candidate?.let {
                     val relevanceRequest = FragmentRelevanceRequest(
                         sessionId = request.sessionId,
                         modelId = request.modelId,
@@ -526,12 +526,12 @@ internal class SessionPrefillCoordinator(
                         contextCompression = prepared.contextCompression,
                         locations = request.locations,
                     )
-                    gateway.scoreFragment(relevanceRequest, lease.slot)
+                    gateway.classifyFragment(relevanceRequest, lease.slot)
                 }
-                val score = scoreResponse?.let(::parseFragmentRelevance)
-                val accepted = candidate != null && score != null && score >= 5
+                val decision = response?.let(::parseFragmentDecision)
+                val accepted = candidate != null && decision == true
                 operation.resolvedFragment = candidate?.takeIf { accepted }?.fragment
-                rerankDiagnosticSink(RerankDiagnostic(scoreResponse, score, accepted))
+                rerankDiagnosticSink(RerankDiagnostic(response, decision, accepted))
                 val canonicalWarmup = prepared.copy(
                     history = candidate?.takeIf { accepted }
                         ?.let { request.history + ChatEntry("runtime-fragment", it.fragment) }

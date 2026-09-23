@@ -6,11 +6,13 @@ import kotlin.test.assertNull
 
 class FragmentRelevanceTest {
     @Test
-    fun `parses only a trimmed single digit relevance score`() {
-        assertEquals(5, parseFragmentRelevance("5"))
-        assertEquals(9, parseFragmentRelevance(" 9\n"))
-        assertNull(parseFragmentRelevance("5."))
-        assertNull(parseFragmentRelevance("10"))
-        assertNull(parseFragmentRelevance("five"))
+    fun `parses only exact Y or N relevance decisions`() {
+        assertEquals<Boolean?>(true, parseFragmentDecision("Y"))
+        assertEquals<Boolean?>(false, parseFragmentDecision("N"))
+        assertNull(parseFragmentDecision(" N\n"))
+        assertNull(parseFragmentDecision("y"))
+        assertNull(parseFragmentDecision("YES"))
+        assertNull(parseFragmentDecision("5"))
+        assertNull(parseFragmentDecision("N."))
     }
 }
