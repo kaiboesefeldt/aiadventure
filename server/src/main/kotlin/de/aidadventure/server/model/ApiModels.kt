@@ -27,6 +27,7 @@ data class FragmentRelevanceRequest(
     val candidateKey: String,
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
+    val locations: Map<String, String> = emptyMap(),
 )
 
 @Serializable
@@ -40,7 +41,7 @@ data class TurnRequest(
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
-    val locations: List<String> = emptyList(),
+    val locations: Map<String, String> = emptyMap(),
 )
 
 @Serializable
@@ -55,7 +56,7 @@ data class PrefillRequest(
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
-    val locations: List<String> = emptyList(),
+    val locations: Map<String, String> = emptyMap(),
 )
 
 @Serializable
@@ -68,6 +69,7 @@ data class WarmupRequest(
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
+    val locations: Map<String, String> = emptyMap(),
 )
 
 @Serializable

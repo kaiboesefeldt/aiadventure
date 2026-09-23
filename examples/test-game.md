@@ -2,12 +2,11 @@
 world-state:
   location: Kai
 locations:
-  - Kai
-  - Leuchtturm
-  - Hafenkneipe
-  - Schuppen der Hafenmeisterin
-  - Steg
----
+  Kai: "Umschlagplatz am Nebelhafen mit Pollern, Tauwerk und Blick auf die Mole."
+  Leuchtturm: "Alter Steinturm am Ende der Mole; seit drei Nächten ohne Signallicht."
+  Hafenkneipe: "Raues Gasthaus am Wasser, in dem Seeleute Gerüchte austauschen."
+  Schuppen der Hafenmeisterin: "Abgelegener Lagerschuppen nahe dem Kai, verwaltet von der Hafenmeisterin."
+  Steg: "Schmaler, nasser Holzsteg über dunklem Hafenwasser."
 runtime-fragments:
   "Die Figur untersucht den dunklen Leuchtturm von außen und sucht einen Zugang":
     fragment: "Lass die Erkundung eine greifbare Unregelmäßigkeit offenbaren, die zum Betreten oder zu einer vorsichtigen Entscheidung einlädt."

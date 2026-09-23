@@ -15,13 +15,13 @@ data class WorldStateResolutionRequest(
     val previousState: WorldState,
     val playerAction: String,
     val gameMasterResponse: String,
-    val locations: List<String> = emptyList(),
+    val locations: Map<String, String> = emptyMap(),
 )
 
 internal object WorldStateAnalysis {
     private val resultJson = Json
 
-    const val LOCATION_PROMPT = "Select the one canonical location where the player character actually is after the preceding player action and game-master response. Do not select a place that is only planned, mentioned, inaccessible, or refused."
+    const val LOCATION_PROMPT = "Return exactly one key from the canonical location catalog for where the player character actually is after the preceding player action and game-master response. Use descriptions to distinguish places, but return the key rather than its description. Do not select a place that is only planned, mentioned, inaccessible, or refused."
     const val FOCUS_PROMPT = "Reply with a short sentence describing the current narative focus after the player and game-master actions. Ignore future actions or options."
 
     val narrativeFocusSchema = schema("""{"type":"object","additionalProperties":false,"required":["narrativeFocus"],"properties":{"narrativeFocus":{"anyOf":[{"const":""},{"type":"string","minLength":3,"maxLength":400}]}}}""")
@@ -32,7 +32,7 @@ internal object WorldStateAnalysis {
         narrativeFocusContent: String?,
     ): WorldState? {
         val location = locationContent?.let(::location)
-            ?.takeIf { it in request.locations }
+            ?.takeIf { it in request.locations.keys }
         val narrativeFocus = narrativeFocusContent?.let(::narrativeFocus) ?: request.previousState.narrativeFocus
         return request.previousState.copy(
             location = location ?: request.previousState.location,
@@ -40,12 +40,16 @@ internal object WorldStateAnalysis {
         ).takeIf { it != request.previousState }
     }
 
-    fun locationSchema(locations: List<String>): JsonObject = buildJsonObject {
+    fun locationSchema(locations: Map<String, String>): JsonObject = buildJsonObject {
         put("type", JsonPrimitive("object"))
         put("additionalProperties", JsonPrimitive(false))
         put("required", buildJsonArray { add(JsonPrimitive("location")) })
         put("properties", buildJsonObject {
-            put("location", buildJsonObject { put("enum", buildJsonArray { locations.forEach { add(JsonPrimitive(it)) } }) })
+            put("location", buildJsonObject {
+                put("enum", buildJsonArray {
+                    locations.keys.sortedWith(compareBy<String> { it.lowercase() }.thenBy { it }).forEach { add(JsonPrimitive(it)) }
+                })
+            })
         })
     }
 

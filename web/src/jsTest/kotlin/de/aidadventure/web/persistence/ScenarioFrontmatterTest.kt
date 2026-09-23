@@ -14,16 +14,16 @@ class ScenarioFrontmatterTest {
     }
     @Test fun `parses the canonical location catalog`() {
         assertEquals(
-            listOf("Kai", "Leuchtturm"),
-            ScenarioFrontmatter.parse("---\nworld-state:\n  location: Kai\nlocations:\n  - Kai\n  - Leuchtturm\n---\n# Hafen").locations,
+            mapOf("Kai" to "", "Leuchtturm" to ""),
+            ScenarioFrontmatter.parse("---\nworld-state:\n  location: Kai\nlocations:\n  Kai:\n  Leuchtturm: ''\n---\n# Hafen").locations,
         )
     }
     @Test fun `rejects a catalog without its initial location or duplicate locations`() {
         assertFailsWith<IllegalArgumentException> {
-            ScenarioFrontmatter.parse("---\nworld-state:\n  location: Kai\nlocations:\n  - Leuchtturm\n---\n# Hafen")
+            ScenarioFrontmatter.parse("---\nworld-state:\n  location: Kai\nlocations:\n  Leuchtturm: ''\n---\n# Hafen")
         }
         assertFailsWith<IllegalArgumentException> {
-            ScenarioFrontmatter.parse("---\nlocations:\n  - Kai\n  - Kai\n---\n# Hafen")
+            ScenarioFrontmatter.parse("---\nlocations:\n  Kai: ''\n  kai: ''\n---\n# Hafen")
         }
     }
     @Test fun `rejects blank or additional location fields`() {

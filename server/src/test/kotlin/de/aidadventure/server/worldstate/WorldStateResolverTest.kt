@@ -42,17 +42,17 @@ class WorldStateResolverTest {
 
     @Test fun `accepts a catalogued lighthouse after an explicit arrival`() {
         assertEquals(WorldState("Leuchtturm"), WorldStateAnalysis.apply(
-            request("Du verlässt den Kai und betrittst den Leuchtturm.", locations = listOf("Kai", "Leuchtturm"), location = "Kai"),
+            request("Du verlässt den Kai und betrittst den Leuchtturm.", locations = mapOf("Kai" to "", "Leuchtturm" to "Turm an der Mole"), location = "Kai"),
             "{\"location\":\"Leuchtturm\"}", null,
         ))
     }
     @Test fun `accepts a catalogued location when the response uses an indirect reference`() {
         assertEquals(WorldState("Leuchtturm"), WorldStateAnalysis.apply(
-            request("Du verlässt den Kai und betrittst den Turm.", locations = listOf("Kai", "Leuchtturm"), location = "Kai"),
+            request("Du verlässt den Kai und betrittst den Turm.", locations = mapOf("Kai" to "", "Leuchtturm" to "Turm an der Mole"), location = "Kai"),
             "{\"location\":\"Leuchtturm\"}", null,
         ))
     }
 
-    private fun request(response: String, location: String = "Harbour", narrativeFocus: String = "", locations: List<String> = listOf("Harbour", "Market Square")) =
+    private fun request(response: String, location: String = "Harbour", narrativeFocus: String = "", locations: Map<String, String> = mapOf("Harbour" to "", "Market Square" to "")) =
         WorldStateResolutionRequest("id", "# S", WorldState(location, narrativeFocus), "walk", response, locations)
 }

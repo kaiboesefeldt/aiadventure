@@ -344,14 +344,14 @@ class LlamaCppGatewayTest {
     fun `world state analysis uses the primary slot and cache prompt`() = runBlocking {
         nativeServer().use { server ->
             val gateway = LlamaCppGateway(promptFactory = PromptFactory())
-            val primary = request(server.port)
+            val primary = request(server.port).copy(locations = mapOf("Harbour" to "A quay", "Bell Tower" to ""))
             val resolution = WorldStateResolutionRequest(
                 primary.sessionId,
                 primary.scenarioMarkdown,
                 WorldState(location = "Harbour"),
                 primary.playerAction,
                 "The bell rings at the harbour.",
-                locations = listOf("Harbour", "Bell Tower"),
+                locations = mapOf("Harbour" to "A quay", "Bell Tower" to ""),
             )
 
             gateway.resolveWorldState(primary, resolution.gameMasterResponse, resolution, LlamaCppSlot(2))
@@ -381,14 +381,14 @@ class LlamaCppGatewayTest {
     @Test
     fun `world state analysis rejects a structured prompt beyond the retained slot capacity`() = runBlocking {
         nativeServer(contextCapacity = 150, tokenCount = 100).use { server ->
-            val primary = request(server.port)
+            val primary = request(server.port).copy(locations = mapOf("Harbour" to "A quay", "Bell Tower" to ""))
             val resolution = WorldStateResolutionRequest(
                 primary.sessionId,
                 primary.scenarioMarkdown,
                 WorldState(location = "Harbour"),
                 primary.playerAction,
                 "The bell rings at the harbour.",
-                locations = listOf("Harbour", "Bell Tower"),
+                locations = mapOf("Harbour" to "A quay", "Bell Tower" to ""),
             )
 
             assertFailsWith<de.aidadventure.server.game.ContextLimitException> {

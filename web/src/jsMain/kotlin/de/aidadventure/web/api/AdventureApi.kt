@@ -184,6 +184,7 @@ object WarmupRequestMapper {
             runtimeFragments = parsed.runtimeFragments.map { RuntimeFragmentDefinition(it.matchText, it.fragment) },
             worldState = session.worldState,
             contextCompression = session.contextCompression,
+            locations = parsed.locations,
         )
     }
 }
@@ -203,7 +204,7 @@ data class TurnRequest(
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
-    val locations: List<String> = emptyList(),
+    val locations: Map<String, String> = emptyMap(),
 )
 
 @Serializable
@@ -216,7 +217,7 @@ data class PrefillRequest(
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
-    val locations: List<String> = emptyList(),
+    val locations: Map<String, String> = emptyMap(),
 )
 
 @Serializable
@@ -227,6 +228,7 @@ data class WarmupRequest(
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
+    val locations: Map<String, String> = emptyMap(),
 )
 
 @Serializable

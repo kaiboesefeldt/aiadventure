@@ -15,7 +15,8 @@ class PromptFactory {
     fun build(request: TurnRequest): List<ChatMessage> = buildList {
         add(SystemMessage.from(GAME_MASTER_INSTRUCTION))
         add(SystemMessage.from(scenarioForPrompt(request.scenarioMarkdown)))
-        ContextEpochs.history(request.sessionId, request.scenarioMarkdown, request.history, request.modelId, request.contextCompression).forEach { add(historyMessage(it)) }
+        addLocationCatalog(request.locations)
+        ContextEpochs.history(request.sessionId, request.scenarioMarkdown, request.history, request.modelId, request.contextCompression, request.locations).forEach { add(historyMessage(it)) }
         WorldStateSnapshot.render(request.worldState).takeIf { it.isNotBlank() }?.let { add(SystemMessage.from(it)) }
         add(UserMessage.from(request.playerAction))
     }
@@ -23,14 +24,16 @@ class PromptFactory {
     fun buildWarmup(request: WarmupRequest): List<ChatMessage> = buildList {
         add(SystemMessage.from(GAME_MASTER_INSTRUCTION))
         add(SystemMessage.from(scenarioForPrompt(request.scenarioMarkdown)))
-        ContextEpochs.history(request.sessionId, request.scenarioMarkdown, request.history, request.modelId, request.contextCompression).forEach { add(historyMessage(it)) }
+        addLocationCatalog(request.locations)
+        ContextEpochs.history(request.sessionId, request.scenarioMarkdown, request.history, request.modelId, request.contextCompression, request.locations).forEach { add(historyMessage(it)) }
         WorldStateSnapshot.render(request.worldState).takeIf { it.isNotBlank() }?.let { add(SystemMessage.from(it)) }
     }
 
     fun buildRelevance(request: FragmentRelevanceRequest): List<ChatMessage> = buildList {
         add(SystemMessage.from(GAME_MASTER_INSTRUCTION))
         add(SystemMessage.from(scenarioForPrompt(request.scenarioMarkdown)))
-        ContextEpochs.history(request.sessionId, request.scenarioMarkdown, request.history, request.modelId, request.contextCompression).forEach { add(historyMessage(it)) }
+        addLocationCatalog(request.locations)
+        ContextEpochs.history(request.sessionId, request.scenarioMarkdown, request.history, request.modelId, request.contextCompression, request.locations).forEach { add(historyMessage(it)) }
         WorldStateSnapshot.render(request.worldState).takeIf { it.isNotBlank() }?.let { add(SystemMessage.from(it)) }
         add(SystemMessage.from(request.candidateKey))
         add(UserMessage.from(FRAGMENT_RELEVANCE_PROMPT))
@@ -41,6 +44,17 @@ class PromptFactory {
         "game-master", "assistant", "ai" -> AiMessage.from(entry.content)
         "runtime-fragment" -> SystemMessage.from(entry.content)
         else -> throw IllegalArgumentException("Unknown chat role: ${entry.role}")
+    }
+
+    private fun MutableList<ChatMessage>.addLocationCatalog(locations: Map<String, String>) {
+        if (locations.isEmpty()) return
+        val entries = locations.entries
+            .sortedWith(compareBy<Map.Entry<String, String>> { it.key.lowercase() }.thenBy { it.key })
+            .joinToString("\n") { (key, description) ->
+                val compactDescription = description.replace(Regex("\\s+"), " ").trim()
+                if (compactDescription.isEmpty()) "- $key" else "- $key — $compactDescription"
+            }
+        add(SystemMessage.from("CANONICAL LOCATION CATALOG (use each key as the location name; descriptions give spatial context):\n$entries"))
     }
 
     private fun scenarioForPrompt(markdown: String): String {

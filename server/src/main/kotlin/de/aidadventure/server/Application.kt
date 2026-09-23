@@ -275,6 +275,7 @@ fun Application.adventureModule(
                             runtimeFragments = request.runtimeFragments,
                             worldState = request.worldState,
                             contextCompression = completedCompression,
+                            locations = request.locations,
                         )
                         val acceptedWorldState = coordinator.resolveWorldStateAndWarmup(
                             resolved.request.copy(contextCompression = completedCompression),
@@ -403,6 +404,7 @@ object RequestValidator {
         runtimeFragments = request.runtimeFragments,
         worldState = request.worldState,
         contextCompression = request.contextCompression,
+        locations = request.locations,
     )
 
     fun validate(request: PrefillRequest): ApiError? = when {
@@ -417,6 +419,7 @@ object RequestValidator {
             runtimeFragments = request.runtimeFragments,
             worldState = request.worldState,
             contextCompression = request.contextCompression,
+            locations = request.locations,
         )
     }
 
@@ -429,6 +432,7 @@ object RequestValidator {
         runtimeFragments = request.runtimeFragments,
         worldState = request.worldState,
         contextCompression = request.contextCompression,
+        locations = request.locations,
     )
 
     private fun validate(
@@ -441,8 +445,9 @@ object RequestValidator {
         runtimeFragments: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
         worldState: de.aidadventure.server.worldstate.WorldState,
         contextCompression: ContextCompression,
+        locations: Map<String, String>,
     ): ApiError? = when {
-        validateContext(sessionId, modelId, port, scenarioMarkdown, history, runtimeFragments, worldState, contextCompression) != null -> invalid()
+        validateContext(sessionId, modelId, port, scenarioMarkdown, history, runtimeFragments, worldState, contextCompression, locations) != null -> invalid()
         playerAction.isBlank() || playerAction.length > MAX_TEXT_LENGTH -> invalid()
         else -> null
     }
@@ -456,6 +461,7 @@ object RequestValidator {
         runtimeFragments: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
         worldState: de.aidadventure.server.worldstate.WorldState,
         contextCompression: ContextCompression,
+        locations: Map<String, String>,
     ): ApiError? = when {
         sessionId.isBlank() || sessionId.length > MAX_SESSION_ID_LENGTH -> invalid()
         modelId.isBlank() || modelId.length > MAX_MODEL_ID_LENGTH -> invalid()
@@ -464,7 +470,7 @@ object RequestValidator {
         history.size > MAX_HISTORY_ENTRIES -> invalid()
         history.any { !it.isValidHistoryEntry() } -> invalid()
         history.sumOf { it.content.length.toLong() } > MAX_HISTORY_CHARS -> invalid()
-        runCatching { ContextEpochs.validate(sessionId, scenarioMarkdown, history, modelId, contextCompression) }.isFailure -> invalid()
+        runCatching { ContextEpochs.validate(sessionId, scenarioMarkdown, history, modelId, contextCompression, locations) }.isFailure -> invalid()
         runtimeFragments.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
         runtimeFragments.any { !it.isValidRuntimeFragmentDefinition() } -> invalid()
         runtimeFragments.map { it.matchText }.toSet().size != runtimeFragments.size -> invalid()

@@ -10,18 +10,18 @@ data class ParsedScenario(
     val promptMarkdown: String,
     val runtimeFragments: List<RuntimeFragmentDefinition>,
     val initialWorldState: WorldState,
-    val locations: List<String>,
+    val locations: Map<String, String>,
 )
 
 object ScenarioFrontmatter {
     fun parse(markdown: String): ParsedScenario {
         val closingDelimiterStart = closingFrontmatterDelimiter(markdown)
-            ?: return ParsedScenario(markdown, emptyList(), WorldState(), emptyList())
+            ?: return ParsedScenario(markdown, emptyList(), WorldState(), emptyMap())
         val frontmatter = markdown.substring(0, closingDelimiterStart)
         val rootEntries = readFrontmatter(frontmatter)
         val initialWorldState = readInitialWorldState(rootEntries, frontmatter)
         val locations = readLocations(rootEntries)
-        if (locations.isNotEmpty() && initialWorldState.location.isNotBlank() && initialWorldState.location !in locations) {
+        if (locations.isNotEmpty() && initialWorldState.location.isNotBlank() && initialWorldState.location !in locations.keys) {
             invalidFrontmatter()
         }
         return ParsedScenario(
@@ -65,11 +65,21 @@ object ScenarioFrontmatter {
         return WorldState(location)
     }
 
-    private fun readLocations(rootEntries: Array<Array<dynamic>>): List<String> {
-        val locationsEntry = rootEntries.firstOrNull { it[0] == "locations" } ?: return emptyList()
-        if (!(js("Array.isArray(locationsEntry[1])") as Boolean)) invalidFrontmatter()
-        val locations = locationsEntry[1].unsafeCast<Array<dynamic>>().map { it as? String ?: invalidFrontmatter() }
-        if (locations.isEmpty() || locations.any(String::isBlank) || locations.map(String::lowercase).toSet().size != locations.size) {
+    private fun readLocations(rootEntries: Array<Array<dynamic>>): Map<String, String> {
+        val locationsEntry = rootEntries.firstOrNull { it[0] == "locations" } ?: return emptyMap()
+        val entries = mappingEntries(locationsEntry[1]) ?: invalidFrontmatter()
+        val locations = linkedMapOf<String, String>()
+        entries.forEach { entry ->
+            val key = entry[0] as? String ?: invalidFrontmatter()
+            val description = when (val value = entry[1]) {
+                null -> ""
+                is String -> value
+                else -> invalidFrontmatter()
+            }
+            if (key.isBlank() || locations.keys.any { it.equals(key, ignoreCase = true) }) invalidFrontmatter()
+            locations[key] = description
+        }
+        if (locations.isEmpty()) {
             invalidFrontmatter()
         }
         return locations

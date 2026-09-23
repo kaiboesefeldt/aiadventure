@@ -564,7 +564,7 @@ class LlamaCppGateway private constructor(
         context.copy(pending = checkpoint)
     }
 
-    private fun TurnRequest.asWarmup() = WarmupRequest(sessionId, modelId, llamaCppPort, scenarioMarkdown, history, runtimeFragments, worldState, contextCompression)
+    private fun TurnRequest.asWarmup() = WarmupRequest(sessionId, modelId, llamaCppPort, scenarioMarkdown, history, runtimeFragments, worldState, contextCompression, locations)
 
     private fun endpoint(port: Int, path: String): URI = URI.create("http://localhost:${requirePort(port)}$path")
 

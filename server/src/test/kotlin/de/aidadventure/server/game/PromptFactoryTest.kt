@@ -84,8 +84,8 @@ class PromptFactoryTest {
             runtime-fragments:
               lighthouse: "Reveal a clue"
             locations:
-              - Kai
-              - Leuchtturm
+              Kai: "Der zentrale Hafenumschlagplatz"
+              Leuchtturm: "Alter Turm auf der Mole"
             ---
             # Der Leuchtturm von Nebelhafen
             """.trimIndent()

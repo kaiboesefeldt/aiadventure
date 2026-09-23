@@ -524,6 +524,7 @@ internal class SessionPrefillCoordinator(
                         candidateKey = it.matchText,
                         worldState = prepared.worldState,
                         contextCompression = prepared.contextCompression,
+                        locations = request.locations,
                     )
                     gateway.scoreFragment(relevanceRequest, lease.slot)
                 }
@@ -729,7 +730,7 @@ internal class SessionPrefillCoordinator(
                         output.send(TurnStreamEvent.InputReady)
                         val warmup = WarmupRequest(request.sessionId, request.modelId, request.llamaCppPort,
                             request.scenarioMarkdown, request.history + listOf(ChatEntry("player", request.playerAction), ChatEntry("game-master", generated.toString())),
-                            request.runtimeFragments, request.worldState, request.contextCompression)
+                            request.runtimeFragments, request.worldState, request.contextCompression, request.locations)
                         val artifact = try {
                             gateway.maintain(warmup, lease.slot)
                         } catch (cancelled: CancellationException) { throw cancelled }

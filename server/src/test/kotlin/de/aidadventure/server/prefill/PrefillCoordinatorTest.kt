@@ -40,7 +40,7 @@ class PrefillCoordinatorTest {
     fun `prefill forwards the location catalog to the primary request`() = runBlocking {
         val fake = ControllableGateway(prefill = { CacheMetrics(null, null) })
         val coordinator = SessionPrefillCoordinator(fake)
-        val request = prefill(1, "open").copy(locations = listOf("Harbour", "Tower"))
+        val request = prefill(1, "open").copy(locations = mapOf("Harbour" to "", "Tower" to "A stone tower"))
 
         coordinator.submit(request)
         fake.awaitPrefill(1)
