@@ -78,6 +78,34 @@ class PromptFactoryTest {
     }
 
     @Test
+    fun `prompt builders omit delimited YAML frontmatter from scenario context`() {
+        val scenario = """
+            ---
+            runtime-fragments:
+              lighthouse: "Reveal a clue"
+            locations:
+              - Kai
+              - Leuchtturm
+            ---
+            # Der Leuchtturm von Nebelhafen
+            """.trimIndent()
+        val factory = PromptFactory()
+
+        assertEquals(
+            "# Der Leuchtturm von Nebelhafen",
+            (factory.build(TurnRequest("live-1", "test-model", 8081, scenario, emptyList(), "look"))[1] as SystemMessage).text(),
+        )
+        assertEquals(
+            "# Der Leuchtturm von Nebelhafen",
+            (factory.buildWarmup(WarmupRequest("live-1", "test-model", 8081, scenario, emptyList()))[1] as SystemMessage).text(),
+        )
+        assertEquals(
+            "# Der Leuchtturm von Nebelhafen",
+            (factory.buildRelevance(FragmentRelevanceRequest("live-1", "test-model", 8081, scenario, emptyList(), "lighthouse"))[1] as SystemMessage).text(),
+        )
+    }
+
+    @Test
     fun `new game warmup is a prefix of its first turn`() {
         val factory = PromptFactory()
         val warmup = factory.buildWarmup(WarmupRequest("live-1", "test-model", 8081, "# Harbor", emptyList()))

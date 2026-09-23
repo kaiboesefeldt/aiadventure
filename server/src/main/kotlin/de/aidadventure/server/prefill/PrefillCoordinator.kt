@@ -14,6 +14,8 @@ import de.aidadventure.server.model.ChatEntry
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.model.WarmupRequest
+import de.aidadventure.server.worldstate.WorldState
+import de.aidadventure.server.worldstate.WorldStateResolutionRequest
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -48,6 +50,7 @@ private fun PrefillRequest.asTurnRequest() = TurnRequest(
     runtimeFragments = runtimeFragments,
     worldState = worldState,
     contextCompression = contextCompression,
+    locations = locations,
 )
 
 data class CoordinatorKey(val sessionId: String, val modelId: String, val port: Int)
@@ -95,6 +98,13 @@ interface PrefillCoordinator {
         reservation: RerankReservation,
         candidate: RuntimeFragmentDefinition?,
     ): Boolean = false
+    suspend fun resolveWorldStateAndWarmup(
+        primaryRequest: TurnRequest,
+        gameMasterResponse: String,
+        request: WarmupRequest,
+        resolution: WorldStateResolutionRequest,
+        requestId: String = "unknown",
+    ): WorldState = request.worldState
     suspend fun resolvedTurnFor(request: TurnRequest): ResolvedTurn? = null
     suspend fun beginTurn(request: TurnRequest, requestId: String): Flow<TurnStreamEvent> = beginTurn(request)
     suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent>
@@ -113,6 +123,13 @@ internal interface PrefillGateway {
         error("Warmup is not supported by this gateway.")
     suspend fun scoreFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String =
         error("Fragment scoring is not supported by this gateway.")
+    suspend fun resolveWorldState(
+        primaryRequest: TurnRequest,
+        gameMasterResponse: String,
+        request: WorldStateResolutionRequest,
+        slot: LlamaCppSlot,
+    ): WorldState? =
+        error("World-State resolution is not supported by this gateway.")
     fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent>
 }
 
@@ -134,6 +151,13 @@ internal class LlamaCppPrefillGateway(
 
     override suspend fun scoreFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String =
         gateway.scoreFragment(request, slot)
+
+    override suspend fun resolveWorldState(
+        primaryRequest: TurnRequest,
+        gameMasterResponse: String,
+        request: WorldStateResolutionRequest,
+        slot: LlamaCppSlot,
+    ): WorldState? = gateway.resolveWorldState(primaryRequest, gameMasterResponse, request, slot)
 
     override fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> = gateway.stream(request, slot)
 }
@@ -254,6 +278,45 @@ internal class SessionPrefillCoordinator(
 
             is State.Turning, is State.TurnWaiting -> PrefillDisposition.TURN_IN_PROGRESS
         }
+    }
+
+    override suspend fun resolveWorldStateAndWarmup(
+        primaryRequest: TurnRequest,
+        gameMasterResponse: String,
+        request: WarmupRequest,
+        resolution: WorldStateResolutionRequest,
+        requestId: String,
+    ): WorldState {
+        val operation = mutex.withLock {
+            check(!closed) { "Prefill coordinator is closed." }
+            val current = state as? State.Ready ?: error("World-State resolution requires a retained turn slot.")
+            val worldStateOperation = WorldStateOperation(++generation)
+            state = State.Prefilling(current.lease, worldStateOperation, resolvedTurn = null, pending = null)
+            worldStateOperation.job = scope.launch(start = CoroutineStart.LAZY) {
+                val accepted = try {
+                    gateway.resolveWorldState(primaryRequest, gameMasterResponse, resolution, current.lease.slot) ?: request.worldState
+                } catch (_: CancellationException) {
+                    throw CancellationException("World-State resolution cancelled.")
+                } catch (failure: Throwable) {
+                    onWarmupFailure(WarmupFailure(requestId, "world_state", failure.javaClass.simpleName))
+                    request.worldState
+                }
+                val canonicalWarmup = request.copy(worldState = accepted)
+                worldStateOperation.acceptedState = accepted
+                try {
+                    gateway.warmup(canonicalWarmup, current.lease.slot)
+                } catch (failure: Throwable) {
+                    if (failure is CancellationException) throw failure
+                    onWarmupFailure(WarmupFailure(requestId, "warmup", failure.javaClass.simpleName))
+                } finally {
+                    worldStateOperation.result.complete(accepted)
+                    prefillFinished(current.lease, worldStateOperation, null)
+                }
+            }
+            worldStateOperation.job.start()
+            worldStateOperation
+        }
+        return operation.result.await()
     }
 
     override suspend fun rerankAndWarmup(
@@ -510,6 +573,11 @@ internal class SessionPrefillCoordinator(
                         if (operation is RerankingOperation) nextFragment = operation.resolvedFragment
                         val resolved = if (operation is RerankingOperation) {
                             pending.request.asTurnRequest().withNextFragment()
+                        } else if (operation is WorldStateOperation) {
+                            val acceptedState = operation.acceptedState ?: pending.resolvedTurn.request.worldState
+                            pending.resolvedTurn.copy(
+                                request = pending.resolvedTurn.request.copy(worldState = acceptedState),
+                            )
                         } else {
                             pending.resolvedTurn
                         }
@@ -785,6 +853,12 @@ internal class SessionPrefillCoordinator(
         override val generation: Long get() = reservation.generation
         override lateinit var job: Job
         var resolvedFragment: String? = null
+    }
+
+    private class WorldStateOperation(override val generation: Long) : Operation {
+        override lateinit var job: Job
+        val result = CompletableDeferred<WorldState>()
+        var acceptedState: WorldState? = null
     }
 
     private data class PendingPrefill(val request: PrefillRequest, val resolvedTurn: ResolvedTurn)

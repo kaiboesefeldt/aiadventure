@@ -11,8 +11,8 @@ provides the API and serves the Kotlin/JS React client.
 
 ## Start
 
-Create a local configuration, set `PRIMARY_MODEL_PATH`, `SECONDARY_MODEL_PATH` and, if necessary, the
-remaining values, then start both local processes:
+Create a local configuration, set `PRIMARY_MODEL_PATH` and, if necessary, the
+remaining values, then start the local process:
 
 ```bash
 cp .env.example .env
@@ -20,24 +20,24 @@ cp .env.example .env
 ./server.sh
 ```
 
-`server.sh` starts primary and secondary local llama.cpp servers. The primary owns cache slots; on
-Ctrl-C or `TERM`, it terminates both llama.cpp and application children.
+`server.sh` starts one local llama.cpp server. It owns the cache slots and also
+performs the structured World-State update after each visible turn. On `Ctrl-C`
+or `TERM`, it terminates the llama.cpp and application children.
 
-To use existing model wrapper scripts, set either or both of these in `.env`:
+To use an existing model wrapper script, set this in `.env`:
 
 ```dotenv
 PRIMARY_MODEL_SCRIPT=/opt/models/primary-model.sh
-# SECONDARY_MODEL_SCRIPT=/opt/models/secondary-wrapper.sh
 ```
 
-A nonempty `PRIMARY_MODEL_SCRIPT` or `SECONDARY_MODEL_SCRIPT` overrides that
-role's `MODEL_PATH` and `THREADS`; those values can be omitted in wrapper mode.
-The other role can still use a GGUF directly. Empty script values retain the
-GGUF configuration. Script files must be readable and executable; relative paths
-are resolved from the project directory. Quote paths containing spaces.
+A nonempty `PRIMARY_MODEL_SCRIPT` overrides `PRIMARY_MODEL_PATH` and
+`PRIMARY_THREADS`; those values can be omitted in wrapper mode. Empty script
+values retain the GGUF configuration. Script files must be readable and
+executable; relative paths are resolved from the project directory. Quote paths
+containing spaces.
 
 The launcher calls the script with `llama-server` as its first argument, then
-`-rea off --port <configured port>` and, for the primary, `--slot-save-path
+`-rea off --port <configured port> --slot-save-path
 <temporary directory>`. The wrapper supplies model and performance settings and
 must forward the remaining arguments **after** its own options, for example:
 
@@ -61,9 +61,8 @@ your LAN. Do not use that setting on an untrusted network.
 
 `LOG_LEVEL=TRACE` is an opt-in local diagnostic mode. It deliberately records
 scenario, action, prompt and complete LLM-response content, including the raw
-Secondary `/completion` response used for WorldState resolution, so cache and
-model behavior can be inspected. Do not enable it when those local logs may be
-exposed.
+structured World-State response, so cache and model behavior can be inspected.
+Do not enable it when those local logs may be exposed.
 
 ### Connect to llama.cpp
 

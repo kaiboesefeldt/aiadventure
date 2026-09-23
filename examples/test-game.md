@@ -1,4 +1,13 @@
 ---
+world-state:
+  location: Kai
+locations:
+  - Kai
+  - Leuchtturm
+  - Hafenkneipe
+  - Schuppen der Hafenmeisterin
+  - Steg
+---
 runtime-fragments:
   "Die Figur untersucht den dunklen Leuchtturm von außen und sucht einen Zugang":
     fragment: "Lass die Erkundung eine greifbare Unregelmäßigkeit offenbaren, die zum Betreten oder zu einer vorsichtigen Entscheidung einlädt."

@@ -9,6 +9,9 @@ import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.model.WarmupRequest
 import de.aidadventure.server.model.FragmentRelevanceRequest
+import de.aidadventure.server.worldstate.WorldState
+import de.aidadventure.server.worldstate.WorldStateAnalysis
+import de.aidadventure.server.worldstate.WorldStateResolutionRequest
 import dev.langchain4j.data.message.AiMessage
 import dev.langchain4j.data.message.ChatMessage
 import dev.langchain4j.data.message.SystemMessage
@@ -37,6 +40,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import org.slf4j.LoggerFactory
 
 data class CacheMetrics(val cachedTokens: Int?, val evaluatedTokens: Int?)
@@ -59,9 +63,7 @@ private class Slf4jLlmTraceLogger(private val logger: org.slf4j.Logger) : LlmTra
             "operation=llama_trace phase=prompt operation={} sessionId={} historyDelta={}",
             operation,
             sessionId,
-            historyDelta.joinToString(prefix = "[", postfix = "]") { message ->
-                "{role=\"${message.role.escapeForLlmTrace()}\",content=\"${message.content.escapeForLlmTrace()}\"}"
-            },
+            formatLlmTraceMessages(historyDelta),
         )
     }
 
@@ -77,10 +79,10 @@ private class Slf4jLlmTraceLogger(private val logger: org.slf4j.Logger) : LlmTra
 
     override fun finalResponse(operation: String, sessionId: String, content: String) {
         logger.trace(
-            "operation=llama_trace phase=final_response operation={} sessionId={} content=\"{}\"",
+            "operation=llama_trace phase=final_response operation={} sessionId={} content=\n{}",
             operation,
             sessionId,
-            content.escapeForLlmTrace(),
+            formatLlmTraceContent(content, "  "),
         )
     }
 
@@ -91,6 +93,7 @@ internal fun String.escapeForLlmTrace(): String = buildString(length) {
         append(
             when (character) {
                 '\\' -> "\\\\"
+                '"' -> "\\\""
                 '\n' -> "\\n"
                 '\r' -> "\\r"
                 '\t' -> "\\t"
@@ -99,6 +102,25 @@ internal fun String.escapeForLlmTrace(): String = buildString(length) {
         )
     }
 }
+
+internal fun formatLlmTraceMessages(messages: List<LlmTraceMessage>): String = buildString {
+    append("[\n")
+    messages.forEachIndexed { index, message ->
+        append("  {\n")
+        append("    \"role\": \"")
+        append(message.role.escapeForLlmTrace())
+        append("\",\n    \"content\":\n")
+        append(formatLlmTraceContent(message.content, "      "))
+        append("\n  }")
+        if (index < messages.lastIndex) append(',')
+        append('\n')
+    }
+    append(']')
+}
+
+internal fun formatLlmTraceContent(content: String, indent: String): String = content
+    .split('\n')
+    .joinToString("\n") { line -> "$indent${line.escapeForLlmTrace()}" }
 
 @OptIn(ExperimentalSerializationApi::class)
 class LlamaCppGateway private constructor(
@@ -194,6 +216,72 @@ class LlamaCppGateway private constructor(
             logDiagnostic("completed", port, slot, prompt, metrics)
             traceCompletion("warmup", request.sessionId, metrics)
         }
+    }
+
+    suspend fun resolveWorldState(
+        primaryRequest: TurnRequest,
+        gameMasterResponse: String,
+        request: WorldStateResolutionRequest,
+        slot: LlamaCppSlot,
+    ): WorldState? = runInterruptible {
+        val completedTurn = promptFactory.build(primaryRequest) + AiMessage.from(gameMasterResponse)
+        val location = if (request.locations.isNotEmpty()) {
+            completeStructured(
+                completedTurn + UserMessage.from(WorldStateAnalysis.LOCATION_PROMPT),
+                WorldStateAnalysis.locationSchema(request.locations),
+                request,
+                slot,
+                primaryRequest.llamaCppPort,
+                "location",
+            )
+        } else {
+            null
+        }
+        val narrativeFocus = completeStructured(
+            completedTurn + UserMessage.from(WorldStateAnalysis.FOCUS_PROMPT),
+            WorldStateAnalysis.narrativeFocusSchema,
+            request,
+            slot,
+            primaryRequest.llamaCppPort,
+            "narrative_focus",
+            predictedTokens = 128,
+        )
+        WorldStateAnalysis.apply(request, location, narrativeFocus)
+    }
+
+    private fun completeStructured(
+        messages: List<ChatMessage>,
+        schema: JsonObject,
+        request: WorldStateResolutionRequest,
+        slot: LlamaCppSlot,
+        port: Int,
+        phase: String,
+        predictedTokens: Int = 64,
+    ): String? {
+        val prompt = applyTemplate(request.sessionId, "world_state_$phase", port, messages)
+        guard(port, slot, prompt, predictedTokens)
+        val response = postCompletion(
+            port,
+            CompletionRequest(
+                prompt = prompt,
+                slotId = slot.id,
+                predictedTokens = predictedTokens,
+                stream = false,
+                jsonSchema = schema,
+            ),
+        )
+        traceCompletion("world_state_$phase", request.sessionId, CacheMetrics(response.tokensCached, response.tokensEvaluated))
+        val content = response.content
+        if (traceLogger.isTraceEnabled) {
+            logger.trace(
+                "operation=world_state phase={} requestId={} output={}",
+                phase,
+                request.sessionId,
+                content,
+            )
+        }
+        content?.let { traceFinalResponse("world_state_$phase", request.sessionId, it) }
+        return content
     }
 
     suspend fun scoreFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String = runInterruptible {
@@ -616,6 +704,7 @@ class LlamaCppGateway private constructor(
         @SerialName("n_predict") val predictedTokens: Int,
         val stream: Boolean,
         val grammar: String? = null,
+        @SerialName("json_schema") val jsonSchema: JsonObject? = null,
     )
 
     @Serializable

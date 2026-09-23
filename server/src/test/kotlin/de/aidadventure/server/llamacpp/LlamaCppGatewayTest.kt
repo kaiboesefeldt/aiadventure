@@ -9,6 +9,8 @@ import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.model.WarmupRequest
+import de.aidadventure.server.worldstate.WorldState
+import de.aidadventure.server.worldstate.WorldStateResolutionRequest
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.time.Duration
@@ -211,6 +213,23 @@ class LlamaCppGatewayTest {
     }
 
     @Test
+    fun `trace messages use indented readable content instead of escaped line feeds`() {
+        assertEquals(
+            """
+            [
+              {
+                "role": "system",
+                "content":
+                  First line
+                  Second \"quoted\" line
+              }
+            ]
+            """.trimIndent(),
+            formatLlmTraceMessages(listOf(LlmTraceMessage("system", "First line\nSecond \"quoted\" line"))),
+        )
+    }
+
+    @Test
     fun `fragment scoring generates exactly one token on the retained slot`() = runBlocking {
         nativeServer(completionContent = "7").use { server ->
             val gateway = LlamaCppGateway(promptFactory = PromptFactory())
@@ -318,6 +337,66 @@ class LlamaCppGatewayTest {
             assertEquals(2, body.getValue("id_slot").jsonPrimitive.int)
             assertTrue(body.getValue("cache_prompt").jsonPrimitive.boolean)
             assertEquals(true, body.getValue("stream").jsonPrimitive.boolean)
+        }
+    }
+
+    @Test
+    fun `world state analysis uses the primary slot and cache prompt`() = runBlocking {
+        nativeServer().use { server ->
+            val gateway = LlamaCppGateway(promptFactory = PromptFactory())
+            val primary = request(server.port)
+            val resolution = WorldStateResolutionRequest(
+                primary.sessionId,
+                primary.scenarioMarkdown,
+                WorldState(location = "Harbour"),
+                primary.playerAction,
+                "The bell rings at the harbour.",
+                locations = listOf("Harbour", "Bell Tower"),
+            )
+
+            gateway.resolveWorldState(primary, resolution.gameMasterResponse, resolution, LlamaCppSlot(2))
+
+            assertEquals(
+                listOf("/apply-template", "/tokenize", "/slots", "/completion", "/apply-template", "/tokenize", "/slots", "/completion"),
+                server.paths,
+            )
+            server.completionBodies.forEach { bodyText ->
+                val body = bodyText.jsonObject
+                assertEquals(2, body.getValue("id_slot").jsonPrimitive.int)
+                assertTrue(body.getValue("cache_prompt").jsonPrimitive.boolean)
+                assertEquals(false, body.getValue("stream").jsonPrimitive.boolean)
+                assertTrue(body.containsKey("json_schema"))
+            }
+            assertEquals(64, server.completionBodies[0].jsonObject.getValue("n_predict").jsonPrimitive.int)
+            assertEquals(128, server.completionBodies[1].jsonObject.getValue("n_predict").jsonPrimitive.int)
+            assertEquals(
+                400,
+                server.completionBodies[1].jsonObject.getValue("json_schema").jsonObject
+                    .getValue("properties").jsonObject.getValue("narrativeFocus").jsonObject
+                    .getValue("anyOf").jsonArray[1].jsonObject.getValue("maxLength").jsonPrimitive.int,
+            )
+        }
+    }
+
+    @Test
+    fun `world state analysis rejects a structured prompt beyond the retained slot capacity`() = runBlocking {
+        nativeServer(contextCapacity = 150, tokenCount = 100).use { server ->
+            val primary = request(server.port)
+            val resolution = WorldStateResolutionRequest(
+                primary.sessionId,
+                primary.scenarioMarkdown,
+                WorldState(location = "Harbour"),
+                primary.playerAction,
+                "The bell rings at the harbour.",
+                locations = listOf("Harbour", "Bell Tower"),
+            )
+
+            assertFailsWith<de.aidadventure.server.game.ContextLimitException> {
+                LlamaCppGateway(promptFactory = PromptFactory()).resolveWorldState(
+                    primary, resolution.gameMasterResponse, resolution, LlamaCppSlot(2),
+                )
+            }
+            assertTrue(server.completionBodies.isEmpty())
         }
     }
 

@@ -14,7 +14,7 @@ import dev.langchain4j.data.message.UserMessage
 class PromptFactory {
     fun build(request: TurnRequest): List<ChatMessage> = buildList {
         add(SystemMessage.from(GAME_MASTER_INSTRUCTION))
-        add(SystemMessage.from(request.scenarioMarkdown))
+        add(SystemMessage.from(scenarioForPrompt(request.scenarioMarkdown)))
         ContextEpochs.history(request.sessionId, request.scenarioMarkdown, request.history, request.modelId, request.contextCompression).forEach { add(historyMessage(it)) }
         WorldStateSnapshot.render(request.worldState).takeIf { it.isNotBlank() }?.let { add(SystemMessage.from(it)) }
         add(UserMessage.from(request.playerAction))
@@ -22,14 +22,14 @@ class PromptFactory {
 
     fun buildWarmup(request: WarmupRequest): List<ChatMessage> = buildList {
         add(SystemMessage.from(GAME_MASTER_INSTRUCTION))
-        add(SystemMessage.from(request.scenarioMarkdown))
+        add(SystemMessage.from(scenarioForPrompt(request.scenarioMarkdown)))
         ContextEpochs.history(request.sessionId, request.scenarioMarkdown, request.history, request.modelId, request.contextCompression).forEach { add(historyMessage(it)) }
         WorldStateSnapshot.render(request.worldState).takeIf { it.isNotBlank() }?.let { add(SystemMessage.from(it)) }
     }
 
     fun buildRelevance(request: FragmentRelevanceRequest): List<ChatMessage> = buildList {
         add(SystemMessage.from(GAME_MASTER_INSTRUCTION))
-        add(SystemMessage.from(request.scenarioMarkdown))
+        add(SystemMessage.from(scenarioForPrompt(request.scenarioMarkdown)))
         ContextEpochs.history(request.sessionId, request.scenarioMarkdown, request.history, request.modelId, request.contextCompression).forEach { add(historyMessage(it)) }
         WorldStateSnapshot.render(request.worldState).takeIf { it.isNotBlank() }?.let { add(SystemMessage.from(it)) }
         add(SystemMessage.from(request.candidateKey))
@@ -41,6 +41,21 @@ class PromptFactory {
         "game-master", "assistant", "ai" -> AiMessage.from(entry.content)
         "runtime-fragment" -> SystemMessage.from(entry.content)
         else -> throw IllegalArgumentException("Unknown chat role: ${entry.role}")
+    }
+
+    private fun scenarioForPrompt(markdown: String): String {
+        if (!markdown.startsWith("---\n") && !markdown.startsWith("---\r\n")) return markdown
+
+        var lineStart = markdown.indexOf('\n') + 1
+        while (lineStart <= markdown.length) {
+            val lineEnd = markdown.indexOf('\n', lineStart).let { if (it == -1) markdown.length else it }
+            if (markdown.substring(lineStart, lineEnd).removeSuffix("\r") == "---") {
+                return markdown.substring(if (lineEnd == markdown.length) lineEnd else lineEnd + 1)
+            }
+            if (lineEnd == markdown.length) return markdown
+            lineStart = lineEnd + 1
+        }
+        return markdown
     }
 
     companion object {

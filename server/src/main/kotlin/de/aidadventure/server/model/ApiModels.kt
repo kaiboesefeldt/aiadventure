@@ -40,6 +40,7 @@ data class TurnRequest(
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
+    val locations: List<String> = emptyList(),
 )
 
 @Serializable
@@ -54,6 +55,7 @@ data class PrefillRequest(
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
+    val locations: List<String> = emptyList(),
 )
 
 @Serializable

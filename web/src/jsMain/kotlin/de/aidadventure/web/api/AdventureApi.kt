@@ -152,6 +152,7 @@ object TurnRequestMapper {
             runtimeFragments = parsed.runtimeFragments.map { RuntimeFragmentDefinition(it.matchText, it.fragment) },
             worldState = session.worldState,
             contextCompression = session.contextCompression,
+            locations = parsed.locations,
         )
     }
 }
@@ -168,6 +169,7 @@ object PrefillRequestMapper {
             runtimeFragments = parsed.runtimeFragments.map { RuntimeFragmentDefinition(it.matchText, it.fragment) },
             worldState = session.worldState,
             contextCompression = session.contextCompression,
+            locations = parsed.locations,
         )
     }
 }
@@ -201,6 +203,7 @@ data class TurnRequest(
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
+    val locations: List<String> = emptyList(),
 )
 
 @Serializable
@@ -213,6 +216,7 @@ data class PrefillRequest(
     val runtimeFragments: List<RuntimeFragmentDefinition> = emptyList(),
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
+    val locations: List<String> = emptyList(),
 )
 
 @Serializable

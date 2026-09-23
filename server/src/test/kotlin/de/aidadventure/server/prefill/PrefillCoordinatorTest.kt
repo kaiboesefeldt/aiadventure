@@ -9,8 +9,11 @@ import de.aidadventure.server.model.PrefillDisposition
 import de.aidadventure.server.model.PrefillRequest
 import de.aidadventure.server.model.RuntimeFragmentDefinition
 import de.aidadventure.server.model.TurnRequest
+import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.model.WarmupRequest
+import de.aidadventure.server.worldstate.WorldState
+import de.aidadventure.server.worldstate.WorldStateResolutionRequest
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -34,6 +37,19 @@ import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
     @Test
+    fun `prefill forwards the location catalog to the primary request`() = runBlocking {
+        val fake = ControllableGateway(prefill = { CacheMetrics(null, null) })
+        val coordinator = SessionPrefillCoordinator(fake)
+        val request = prefill(1, "open").copy(locations = listOf("Harbour", "Tower"))
+
+        coordinator.submit(request)
+        fake.awaitPrefill(1)
+
+        assertEquals(request.locations, fake.prefillRequests.single().locations)
+        coordinator.close()
+    }
+
+    @Test
     fun `accepted reranking scores then warms canonical history with fragment on retained slot`() = runBlocking {
         val fake = ControllableGateway(score = { "5" }, warmup = { CacheMetrics(null, null) })
         val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
@@ -47,6 +63,33 @@ class PrefillCoordinatorTest {
         assertEquals(listOf(ChatEntry("runtime-fragment", "fragment text")), warmup.history.takeLast(1))
         assertFalse(warmup.history.any { it.content == "candidate key" || it.content == PromptFactory.FRAGMENT_RELEVANCE_PROMPT })
         assertEquals(fake.scoreSlots.single(), fake.warmupSlots.single())
+        coordinator.close()
+    }
+
+    @Test
+    fun `world state resolution uses retained turn slot before canonical warmup`() = runBlocking {
+        val fake = ControllableGateway(
+            stream = { flowOf(TurnStreamEvent.Token("The bell rings."), TurnStreamEvent.Done(TurnMetrics(null, 4, 3))) },
+            worldState = { WorldState("Bell Tower", "Find the bell keeper") },
+            warmup = { CacheMetrics(8, 1) },
+        )
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        val turn = turn("look")
+        val stateRequest = WorldStateResolutionRequest("session-1", "# Harbor", WorldState(), "look", "The bell rings.")
+
+        coordinator.beginTurn(turn).toList()
+        val accepted = coordinator.resolveWorldStateAndWarmup(
+            turn,
+            "The bell rings.",
+            WarmupRequest("session-1", "test-model", 8081, "# Harbor", listOf(ChatEntry("game-master", "The bell rings."))),
+            stateRequest,
+            "request-1",
+        )
+
+        assertEquals(WorldState("Bell Tower", "Find the bell keeper"), accepted)
+        assertEquals(listOf("acquire", "turn", "world_state", "warmup"), fake.slotLifecycle.map(SlotLifecycleEvent::operation))
+        assertEquals(fake.turnSlots.single(), fake.worldStateSlots.single())
+        assertEquals(fake.worldStateSlots.single(), fake.warmupSlots.single())
         coordinator.close()
     }
 
@@ -637,6 +680,7 @@ class PrefillCoordinatorTest {
         private val stream: (TurnRequest) -> Flow<TurnStreamEvent> = { flowOf() },
         private val prefill: (suspend (TurnRequest) -> CacheMetrics)? = null,
         private val warmup: (suspend (WarmupRequest) -> CacheMetrics)? = null,
+        private val worldState: (suspend (WorldStateResolutionRequest) -> WorldState?)? = null,
         private val score: (suspend () -> String)? = null,
         private val onRelease: () -> Unit = {},
         private var releaseFailures: Int = 0,
@@ -652,6 +696,7 @@ class PrefillCoordinatorTest {
         val warmupSlots = mutableListOf<LlamaCppSlot>()
         val warmupRequests = mutableListOf<WarmupRequest>()
         val scoreSlots = mutableListOf<LlamaCppSlot>()
+        val worldStateSlots = mutableListOf<LlamaCppSlot>()
         val turnSlots = mutableListOf<LlamaCppSlot>()
         val acquiredSlots = mutableListOf<LlamaCppSlot>()
         val releasedSlots = mutableListOf<LlamaCppSlot>()
@@ -707,6 +752,17 @@ class PrefillCoordinatorTest {
             } finally {
                 warmupFinished.complete(Unit)
             }
+        }
+
+        override suspend fun resolveWorldState(
+            primaryRequest: TurnRequest,
+            gameMasterResponse: String,
+            request: WorldStateResolutionRequest,
+            slot: LlamaCppSlot,
+        ): WorldState? {
+            worldStateSlots += slot
+            slotLifecycle += SlotLifecycleEvent("world_state", slot)
+            return worldState?.invoke(request)
         }
 
         override suspend fun scoreFragment(request: de.aidadventure.server.model.FragmentRelevanceRequest, slot: LlamaCppSlot): String {

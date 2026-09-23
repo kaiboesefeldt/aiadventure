@@ -14,7 +14,7 @@ import de.aidadventure.server.prefill.PrefillCoordinator
 import de.aidadventure.server.prefill.PrefillRegistry
 import de.aidadventure.server.runtimefragments.RuntimeFragmentResolver
 import de.aidadventure.server.worldstate.WorldState
-import de.aidadventure.server.worldstate.WorldStateResolver
+import de.aidadventure.server.worldstate.WorldStateResolutionRequest
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -97,6 +97,32 @@ class ApplicationTest {
         assertEquals(1, Regex("event: input_ready").findAll(body).count())
         assertEquals(compression, registry.coordinator.rerankRequests.single().contextCompression)
         assertEquals(completedHistory, registry.coordinator.rerankRequests.single().history)
+    }
+
+    @Test
+    fun `world state resolution uses the completed prompt epoch`() = testApplication {
+        val registry = FakeRegistry()
+        val history = visiblePair()
+        val checkpoint = de.aidadventure.server.game.ContextEpochs.checkpoint(
+            WarmupRequest("live-1", "configured-llama-cpp", 8081, "# Scenario", history),
+            "The player reached the harbour.",
+        )
+        val compression = de.aidadventure.server.model.ContextCompression(epoch = 1, active = checkpoint)
+        registry.coordinator.turnEvents = flowOf(
+            TurnStreamEvent.Token("The door opens."),
+            TurnStreamEvent.Done(TurnMetrics(null, 2, 1), compression),
+        )
+        application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolving(null)) }
+        configureJsonClient()
+
+        client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest(history = history))
+        }
+
+        val primary = registry.coordinator.worldStatePrimaryRequests.single()
+        assertEquals(compression, primary.contextCompression)
+        assertEquals(history, primary.history)
     }
 
     @Test
@@ -235,7 +261,6 @@ class ApplicationTest {
             adventureModule(
                 prefillRegistry = registry,
                 runtimeFragmentResolver = resolver,
-                worldStateResolver = WorldStateResolver { null },
             )
         }
         configureJsonClient()
@@ -467,13 +492,11 @@ class ApplicationTest {
         llamaCppServer().use { llama ->
             val registry = FakeRegistry()
             val acceptedWorldState = WorldState("Leuchtturm", "Finde den Saboteur")
+            registry.coordinator.acceptedWorldState = acceptedWorldState
             application {
                 adventureModule(
                     llamaCppGateway = LlamaCppGateway(),
                     prefillRegistry = registry,
-                    worldStateResolver = WorldStateResolver {
-                        acceptedWorldState
-                    },
                 )
             }
             configureJsonClient()
@@ -646,7 +669,9 @@ class ApplicationTest {
         val rerankCandidates = mutableListOf<de.aidadventure.server.model.RuntimeFragmentDefinition?>()
         val rerankCompleted = CompletableDeferred<Unit>()
         val turnRequests = mutableListOf<TurnRequest>()
+        val worldStatePrimaryRequests = mutableListOf<TurnRequest>()
         var turnEvents: Flow<TurnStreamEvent>? = null
+        var acceptedWorldState: WorldState? = null
         var submitFailure: Throwable? = null
         var beginTurnFailure: Throwable? = null
 
@@ -695,6 +720,17 @@ class ApplicationTest {
                 TurnStreamEvent.Token("The door opens."),
                 TurnStreamEvent.Done(TurnMetrics(null, 2, 1)),
             )
+        }
+
+        override suspend fun resolveWorldStateAndWarmup(
+            primaryRequest: TurnRequest,
+            gameMasterResponse: String,
+            request: WarmupRequest,
+            resolution: WorldStateResolutionRequest,
+            requestId: String,
+        ): WorldState {
+            worldStatePrimaryRequests += primaryRequest
+            return acceptedWorldState ?: request.worldState
         }
 
         override fun tryBeginIdleClose(): Boolean = false

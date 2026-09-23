@@ -88,6 +88,15 @@ class ServerRuntimeConfigTest {
     }
 
     @Test
+    fun `rejects nonnumeric context compaction threshold`() {
+        for (value in listOf("abc", "")) {
+            assertFailsWith<IllegalArgumentException> {
+                ServerRuntimeConfig.from(mapOf("CONTEXT_COMPACTION_THRESHOLD" to value))
+            }
+        }
+    }
+
+    @Test
     fun `binds all interfaces only with explicit LAN opt in`() {
         assertEquals("0.0.0.0", ServerRuntimeConfig.from(mapOf("ADVENTURE_EXPOSE_LAN" to "true")).host)
     }

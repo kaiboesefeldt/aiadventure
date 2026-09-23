@@ -13,7 +13,7 @@ set -a
 source .env
 set +a
 
-for variable_name in PRIMARY_PORT SECONDARY_PORT LOG_LEVEL; do
+for variable_name in PRIMARY_PORT LOG_LEVEL; do
     if [[ -z "${!variable_name:-}" ]]; then
         echo "Missing required configuration: $variable_name" >&2
         exit 1
@@ -52,13 +52,10 @@ validate_model() {
 }
 
 validate_model PRIMARY
-validate_model SECONDARY
-
 if [[ ! "$PRIMARY_PORT" =~ ^[1-9][0-9]*$ ]] || (( ${#PRIMARY_PORT} > 5 )) || (( PRIMARY_PORT > 65535 )); then
     echo "PRIMARY_PORT must be an integer between 1 and 65535." >&2
     exit 1
 fi
-if [[ ! "$SECONDARY_PORT" =~ ^[1-9][0-9]*$ ]] || (( ${#SECONDARY_PORT} > 5 )) || (( SECONDARY_PORT > 65535 )); then echo "SECONDARY_PORT must be an integer between 1 and 65535." >&2; exit 1; fi
 
 case "${LOG_LEVEL^^}" in
     TRACE|DEBUG|INFO|WARN|ERROR) ;;
@@ -69,7 +66,6 @@ case "${LOG_LEVEL^^}" in
 esac
 
 llama_pid=""
-secondary_llama_pid=""
 gradle_pid=""
 slot_directory=""
 cleaned_up=false
@@ -97,13 +93,13 @@ cleanup() {
     cleaned_up=true
     trap '' INT TERM
 
-    for pid in "$llama_pid" "$secondary_llama_pid" "$gradle_pid"; do
+    for pid in "$llama_pid" "$gradle_pid"; do
         signal_process_group TERM "$pid"
     done
 
     for ((second = 0; second < shutdown_grace_seconds; second++)); do
         all_groups_stopped=true
-        for pid in "$llama_pid" "$secondary_llama_pid" "$gradle_pid"; do
+        for pid in "$llama_pid" "$gradle_pid"; do
             if process_group_alive "$pid"; then
                 all_groups_stopped=false
                 break
@@ -115,11 +111,11 @@ cleanup() {
         sleep 1
     done
 
-    for pid in "$llama_pid" "$secondary_llama_pid" "$gradle_pid"; do
+    for pid in "$llama_pid" "$gradle_pid"; do
         signal_process_group KILL "$pid"
     done
 
-    for pid in "$llama_pid" "$secondary_llama_pid" "$gradle_pid"; do
+    for pid in "$llama_pid" "$gradle_pid"; do
         if [[ -n "$pid" ]]; then
             wait "$pid" 2>/dev/null || true
         fi
@@ -158,15 +154,12 @@ model_command() {
 model_command PRIMARY -rea off --port "$PRIMARY_PORT" --slot-save-path "$slot_directory"
 setsid "${command[@]}" &
 llama_pid=$!
-model_command SECONDARY -rea off --port "$SECONDARY_PORT"
-setsid "${command[@]}" &
-secondary_llama_pid=$!
 
-setsid ./gradlew --console=plain :server:run --args="--llama-port=$PRIMARY_PORT --secondary-llama-port=$SECONDARY_PORT --log-level=$LOG_LEVEL" &
+setsid ./gradlew --console=plain :server:run --args="--llama-port=$PRIMARY_PORT --log-level=$LOG_LEVEL" &
 gradle_pid=$!
 
 # Retain every group ID: an exited wrapper can still have live children.
-if wait -n "$llama_pid" "$secondary_llama_pid" "$gradle_pid"; then
+if wait -n "$llama_pid" "$gradle_pid"; then
     exit 0
 else
     exit "$?"
