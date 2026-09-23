@@ -160,9 +160,9 @@ across a reload of the same browser profile; the server has no session storage.
 
 For a request-level check, use the browser's Network panel: both `POST
 /api/turn` requests contain the same `scenarioMarkdown`; the second request's
-`history` contains the first completed turn. The server builds
-each game-master prompt in a fixed order: instruction, original scenario,
-history, then the new player action.
+`history` contains the first completed turn. The server uses the scenario
+Markdown directly as the system message, followed by history and the new player
+action. A location catalog, when present, is appended to the scenario text.
 
 ### Cache metrics
 

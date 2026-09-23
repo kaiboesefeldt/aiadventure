@@ -81,7 +81,7 @@ class LlamaCppGatewayTest {
 
             assertEquals(
                 listOf(
-                    LlmTraceMessage("system", "GAME-MASTER INSTRUCTION:\n${PromptFactory.GAME_MASTER_INSTRUCTION}\n\nSCENARIO:\n# Forest"),
+                    LlmTraceMessage("system", "# Forest"),
                     LlmTraceMessage("user", "Look around"),
                     LlmTraceMessage("assistant", "Misty trees surround you."),
                     LlmTraceMessage("user", "Follow the path"),
@@ -128,7 +128,7 @@ class LlamaCppGatewayTest {
 
             assertEquals(
                 listOf(
-                    LlmTraceMessage("system", "GAME-MASTER INSTRUCTION:\n${PromptFactory.GAME_MASTER_INSTRUCTION}\n\nSCENARIO:\n# Forest"),
+                    LlmTraceMessage("system", "# Forest"),
                     LlmTraceMessage("user", "Look around"),
                     LlmTraceMessage("assistant", "Misty trees surround you."),
                     LlmTraceMessage("user", "Follow the path"),
@@ -180,7 +180,7 @@ class LlamaCppGatewayTest {
 
             assertEquals(
                 listOf(
-                    LlmTraceMessage("system", "GAME-MASTER INSTRUCTION:\n${PromptFactory.GAME_MASTER_INSTRUCTION}\n\nSCENARIO:\n# Forest"),
+                    LlmTraceMessage("system", "# Forest"),
                     LlmTraceMessage("user", "Look around"),
                     LlmTraceMessage("assistant", "Hello"),
                     LlmTraceMessage("user", "Continue"),
@@ -362,7 +362,7 @@ class LlamaCppGatewayTest {
             assertEquals(1, server.completionBodies.size)
             assertEquals(
                 listOf(
-                    "system" to "GAME-MASTER INSTRUCTION:\n${PromptFactory.GAME_MASTER_INSTRUCTION}\n\nSCENARIO:\n# Forest\n\nCANONICAL LOCATION CATALOG (use each key as the location name; descriptions give spatial context):\n- Bell Tower\n- Harbour — A quay",
+                    "system" to "# Forest\n\nCANONICAL LOCATION CATALOG (use each key as the location name; descriptions give spatial context):\n- Bell Tower\n- Harbour — A quay",
                     "user" to "Look around",
                     "assistant" to "Misty trees surround you.",
                     "user" to "Follow the path",
