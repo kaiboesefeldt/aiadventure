@@ -64,17 +64,31 @@ object ScenarioFrontmatter {
 
     private fun readRuntimeFragments(rootEntries: Array<Array<dynamic>>): List<RuntimeFragmentDefinition> {
         val fragmentsEntry = rootEntries.firstOrNull { it[0] == "runtime-fragments" } ?: return emptyList()
-        val fragments = fragmentsEntry[1]
-        val fragmentEntries = mappingEntries(fragments) ?: invalidFrontmatter()
+        val definitions = mutableListOf<RuntimeFragmentDefinition>()
 
-        return fragmentEntries.map { entry ->
-            val matchText = entry[0] as? String
-            val fragmentValue = entry[1]
-            val fragment = (fragmentValue as? String)
-                ?: mappingEntries(fragmentValue)?.firstOrNull { it[0] == "fragment" }?.get(1) as? String
-            if (matchText.isNullOrBlank() || fragment.isNullOrBlank()) invalidFrontmatter()
-            RuntimeFragmentDefinition(matchText, fragment)
+        fun visit(value: dynamic, keyPath: List<String>) {
+            when {
+                value is String -> {
+                    if (keyPath.isEmpty() || keyPath.any { it.isBlank() } || value.isBlank()) invalidFrontmatter()
+                    definitions += RuntimeFragmentDefinition(keyPath.joinToString("\n"), value)
+                }
+                else -> {
+                    val entries = mappingEntries(value) ?: invalidFrontmatter()
+                    if (entries.isEmpty()) {
+                        if (keyPath.isEmpty()) return
+                        invalidFrontmatter()
+                    }
+                    entries.forEach { entry ->
+                        val key = entry[0] as? String ?: invalidFrontmatter()
+                        if (key.isBlank()) invalidFrontmatter()
+                        visit(entry[1], keyPath + key)
+                    }
+                }
+            }
         }
+
+        visit(fragmentsEntry[1], emptyList())
+        return definitions
     }
 
     private fun readInitialWorldState(rootEntries: Array<Array<dynamic>>, frontmatter: String): WorldState {

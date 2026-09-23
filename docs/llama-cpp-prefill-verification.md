@@ -27,8 +27,7 @@ without placing real scenario material in the evidence record:
 ```markdown
 ---
 runtime-fragments:
-  "The brass compass points toward the old observatory":
-    fragment: "A sealed maintenance passage is relevant to the next decision."
+  "The brass compass points toward the old observatory": "A sealed maintenance passage is relevant to the next decision."
 ---
 # Verification Harbor
 

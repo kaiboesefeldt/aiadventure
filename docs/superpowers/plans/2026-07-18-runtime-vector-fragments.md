@@ -42,7 +42,7 @@
 
 ~~~
 @Test fun parsesFragmentsAndStripsFrontmatter() {
-    val parsed = ScenarioFrontmatter.parse("---\nruntime-fragments:\n  lighthouse:\n    fragment: Mira remembers it\n---\n# Harbor")
+    val parsed = ScenarioFrontmatter.parse("---\nruntime-fragments:\n  lighthouse: Mira remembers it\n---\n# Harbor")
     assertEquals("# Harbor", parsed.promptMarkdown)
     assertEquals(listOf(RuntimeFragmentDefinition("lighthouse", "Mira remembers it")), parsed.runtimeFragments)
 }
