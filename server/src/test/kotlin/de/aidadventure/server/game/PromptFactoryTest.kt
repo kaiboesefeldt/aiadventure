@@ -23,7 +23,7 @@ class PromptFactoryTest {
         )
 
         assertEquals(listOf("system", "user", "user"), prompt.map { it.type().name.lowercase() })
-        assertTrue((prompt[0] as SystemMessage).text().contains("SCENARIO:\n# Harbor"))
+        assertEquals("# Harbor", (prompt[0] as SystemMessage).text())
         assertEquals("look", (prompt[1] as UserMessage).singleText())
         assertEquals("open door", (prompt[2] as UserMessage).singleText())
     }
@@ -83,7 +83,7 @@ class PromptFactoryTest {
         )
 
         assertEquals(listOf("system", "user"), prompt.map { it.type().name.lowercase() })
-        assertTrue((prompt[0] as SystemMessage).text().contains("SCENARIO:\n# Harbor"))
+        assertEquals("# Harbor", (prompt[0] as SystemMessage).text())
         assertEquals("look", (prompt[1] as UserMessage).singleText())
     }
 
@@ -123,15 +123,15 @@ class PromptFactoryTest {
         val factory = PromptFactory()
 
         assertEquals(
-            "GAME-MASTER INSTRUCTION:\n${PromptFactory.GAME_MASTER_INSTRUCTION}\n\nSCENARIO:\n# Der Leuchtturm von Nebelhafen",
+            "# Der Leuchtturm von Nebelhafen",
             (factory.build(TurnRequest("live-1", "test-model", 8081, scenario, emptyList(), "look"))[0] as SystemMessage).text(),
         )
         assertEquals(
-            "GAME-MASTER INSTRUCTION:\n${PromptFactory.GAME_MASTER_INSTRUCTION}\n\nSCENARIO:\n# Der Leuchtturm von Nebelhafen",
+            "# Der Leuchtturm von Nebelhafen",
             (factory.buildWarmup(WarmupRequest("live-1", "test-model", 8081, scenario, emptyList()))[0] as SystemMessage).text(),
         )
         assertEquals(
-            "GAME-MASTER INSTRUCTION:\n${PromptFactory.GAME_MASTER_INSTRUCTION}\n\nSCENARIO:\n# Der Leuchtturm von Nebelhafen",
+            "# Der Leuchtturm von Nebelhafen",
             (factory.buildRelevance(FragmentRelevanceRequest("live-1", "test-model", 8081, scenario, emptyList(), "lighthouse"))[0] as SystemMessage).text(),
         )
     }

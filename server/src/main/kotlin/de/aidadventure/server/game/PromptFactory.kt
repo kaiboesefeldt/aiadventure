@@ -42,10 +42,7 @@ class PromptFactory {
     }
 
     private fun stableSystemContext(scenarioMarkdown: String, locations: Map<String, String>): SystemMessage {
-        val sections = mutableListOf(
-            "GAME-MASTER INSTRUCTION:\n$GAME_MASTER_INSTRUCTION",
-            "SCENARIO:\n${scenarioForPrompt(scenarioMarkdown)}",
-        )
+        val sections = mutableListOf(scenarioForPrompt(scenarioMarkdown))
         if (locations.isNotEmpty()) sections += locationCatalog(locations)
         return SystemMessage.from(sections.joinToString("\n\n"))
     }
@@ -82,8 +79,6 @@ class PromptFactory {
     }
 
     companion object {
-        const val GAME_MASTER_INSTRUCTION =
-            "You are a concise, responsive game master. Continue the adventure from the scenario and conversation."
         const val FRAGMENT_RELEVANCE_PROMPT =
             "Rate how well the preceding text fits the current game situation. Return a single ASCII digit between 0 (=no fit) and 9 (=perfect fit)."
     }
