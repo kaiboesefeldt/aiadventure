@@ -103,7 +103,7 @@ class PromptFactoryTest {
         assertEquals(listOf("system", "user", "user", "user"), prompt.map { it.type().name.lowercase() })
         assertEquals("ANALYSIS CONTEXT (candidate key; not a player statement):\nlighthouse", (prompt[2] as UserMessage).singleText())
         assertEquals(
-            "Rate how well the preceding text fits the current game situation. Return a single ASCII digit between 0 (=no fit) and 9 (=perfect fit).",
+            "Does the candidate fit the current game situation and help the game master respond? Return only Y for yes or N for no.",
             (prompt[3] as UserMessage).singleText(),
         )
     }

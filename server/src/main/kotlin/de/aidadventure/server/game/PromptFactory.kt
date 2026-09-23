@@ -80,6 +80,6 @@ class PromptFactory {
 
     companion object {
         const val FRAGMENT_RELEVANCE_PROMPT =
-            "Rate how well the preceding text fits the current game situation. Return a single ASCII digit between 0 (=no fit) and 9 (=perfect fit)."
+            "Does the candidate fit the current game situation and help the game master respond? Return only Y for yes or N for no."
     }
 }

@@ -50,8 +50,8 @@ class PrefillCoordinatorTest {
     }
 
     @Test
-    fun `accepted reranking scores then warms canonical history with fragment on retained slot`() = runBlocking {
-        val fake = ControllableGateway(score = { "5" }, warmup = { CacheMetrics(null, null) })
+    fun `accepted reranking yes then warms canonical history with fragment on retained slot`() = runBlocking {
+        val fake = ControllableGateway(classify = { "Y" }, warmup = { CacheMetrics(null, null) })
         val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
         val request = warmup(listOf(ChatEntry("player", "look"), ChatEntry("game-master", "The bell rings.")))
 
@@ -59,10 +59,10 @@ class PrefillCoordinatorTest {
         fake.awaitWarmupCompletion()
 
         val warmup = fake.warmupRequests.single()
-        assertEquals(listOf("score", "warmup"), fake.slotLifecycle.map(SlotLifecycleEvent::operation).drop(1))
+        assertEquals(listOf("classify", "warmup"), fake.slotLifecycle.map(SlotLifecycleEvent::operation).drop(1))
         assertEquals(listOf(ChatEntry("runtime-fragment", "fragment text")), warmup.history.takeLast(1))
         assertFalse(warmup.history.any { it.content == "candidate key" || it.content == PromptFactory.FRAGMENT_RELEVANCE_PROMPT })
-        assertEquals(fake.scoreSlots.single(), fake.warmupSlots.single())
+        assertEquals(fake.classifySlots.single(), fake.warmupSlots.single())
         coordinator.close()
     }
 
@@ -95,8 +95,8 @@ class PrefillCoordinatorTest {
 
     @Test
     fun `rejected or malformed reranking warms canonical history without fragment`() = runBlocking {
-        listOf("4", "not a digit").forEach { score ->
-            val fake = ControllableGateway(score = { score }, warmup = { CacheMetrics(null, null) })
+        listOf("N", "not Y or N").forEach { decision ->
+            val fake = ControllableGateway(classify = { decision }, warmup = { CacheMetrics(null, null) })
             val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
             val request = warmup(listOf(ChatEntry("player", "look")))
 
@@ -104,15 +104,15 @@ class PrefillCoordinatorTest {
             fake.awaitWarmupCompletion()
 
             assertEquals(request.history, fake.warmupRequests.single().history)
-            assertEquals(listOf("acquire", "score", "warmup"), fake.slotLifecycle.map(SlotLifecycleEvent::operation))
+            assertEquals(listOf("acquire", "classify", "warmup"), fake.slotLifecycle.map(SlotLifecycleEvent::operation))
             coordinator.close()
         }
     }
 
     @Test
-    fun `reranking records the raw score and rejection decision`() = runBlocking {
+    fun `reranking records the raw response and parsed no decision`() = runBlocking {
         val diagnostics = mutableListOf<RerankDiagnostic>()
-        val fake = ControllableGateway(score = { "**" }, warmup = { CacheMetrics(null, null) })
+        val fake = ControllableGateway(classify = { "N" }, warmup = { CacheMetrics(null, null) })
         val coordinator = SessionPrefillCoordinator(
             fake,
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
@@ -122,13 +122,13 @@ class PrefillCoordinatorTest {
         assertEquals(PrefillDisposition.STARTED, coordinator.rerankAndWarmup(warmup(), candidate(), "request-42"))
         fake.awaitWarmupCompletion()
 
-        assertEquals(listOf(RerankDiagnostic("**", null, false)), diagnostics)
+        assertEquals(listOf(RerankDiagnostic("N", false, false)), diagnostics)
         coordinator.close()
     }
 
     @Test
     fun `later prefill queues while reranking retains its slot`() = runBlocking {
-        val fake = ControllableGateway(score = { "5" })
+        val fake = ControllableGateway(classify = { "Y" })
         val coordinator = SessionPrefillCoordinator(fake)
 
         assertEquals(PrefillDisposition.STARTED, coordinator.rerankAndWarmup(warmup(), candidate(), "request-42"))
@@ -137,7 +137,7 @@ class PrefillCoordinatorTest {
         fake.completeWarmup()
         fake.awaitPrefill(1)
 
-        assertEquals(fake.scoreSlots.single(), fake.warmupSlots.single())
+        assertEquals(fake.classifySlots.single(), fake.warmupSlots.single())
         assertEquals(fake.warmupSlots.single(), fake.prefillSlots.single())
         assertEquals(ChatEntry("runtime-fragment", "fragment text"), fake.prefillRequests.single().history.last())
         coordinator.close()
@@ -145,7 +145,7 @@ class PrefillCoordinatorTest {
 
     @Test
     fun `reserved reranking queues a later prefill until canonical warmup completes`() = runBlocking {
-        val fake = ControllableGateway(score = { "5" })
+        val fake = ControllableGateway(classify = { "Y" })
         val coordinator = SessionPrefillCoordinator(fake)
         val reservation = requireNotNull(coordinator.reserveRerank(warmup(), "request-42"))
 
@@ -155,14 +155,14 @@ class PrefillCoordinatorTest {
         fake.completeWarmup()
         fake.awaitPrefill(1)
 
-        assertEquals(fake.scoreSlots.single(), fake.warmupSlots.single())
+        assertEquals(fake.classifySlots.single(), fake.warmupSlots.single())
         assertEquals(fake.warmupSlots.single(), fake.prefillSlots.single())
         coordinator.close()
     }
 
     @Test
     fun `turn submitted during reranking waits for the accepted fragment`() = runBlocking {
-        val fake = ControllableGateway(score = { "5" })
+        val fake = ControllableGateway(classify = { "Y" })
         val coordinator = SessionPrefillCoordinator(fake)
         val reservation = requireNotNull(coordinator.reserveRerank(warmup(), "request-42"))
         val turn = async(start = CoroutineStart.UNDISPATCHED) { coordinator.beginTurn(turn("follow the bell")).toList() }
@@ -190,7 +190,7 @@ class PrefillCoordinatorTest {
         fake.awaitWarmup()
 
         assertEquals(request.history, fake.warmupRequests.single().history)
-        assertTrue(fake.scoreSlots.isEmpty())
+        assertTrue(fake.classifySlots.isEmpty())
         fake.completeWarmup()
         coordinator.close()
     }
@@ -198,7 +198,7 @@ class PrefillCoordinatorTest {
     @Test
     fun `failed reranking releases slot and reports only safe failure fields`() = runBlocking {
         val failures = mutableListOf<WarmupFailure>()
-        val fake = ControllableGateway(score = { error("secret scenario and game history") })
+        val fake = ControllableGateway(classify = { error("secret scenario and game history") })
         val coordinator = SessionPrefillCoordinator(
             fake,
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
@@ -206,7 +206,7 @@ class PrefillCoordinatorTest {
         )
 
         assertEquals(PrefillDisposition.STARTED, coordinator.rerankAndWarmup(warmup(), candidate(), "request-42"))
-        fake.awaitScoreCompletion()
+        fake.awaitClassifyCompletion()
 
         assertEquals(listOf(LlamaCppSlot(1)), fake.releasedSlots)
         assertEquals(listOf(WarmupFailure("request-42", "rerank", "IllegalStateException")), failures)
@@ -522,7 +522,7 @@ class PrefillCoordinatorTest {
             ChatEntry("game-master", "The bell rings."),
         )
         val fake = ControllableGateway(
-            score = { "5" },
+            classify = { "Y" },
             warmup = { CacheMetrics(null, null) },
         )
         val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
@@ -536,7 +536,7 @@ class PrefillCoordinatorTest {
         fake.awaitPrefillCompletion(1)
         coordinator.beginTurn(turn("follow the bell", history + ChatEntry("runtime-fragment", "fragment text"))).toList()
 
-        assertWarmSlotLifecycle(fake, listOf("acquire", "turn", "score", "warmup", "prefill", "turn"))
+        assertWarmSlotLifecycle(fake, listOf("acquire", "turn", "classify", "warmup", "prefill", "turn"))
         coordinator.close()
     }
 
@@ -681,7 +681,7 @@ class PrefillCoordinatorTest {
         private val prefill: (suspend (TurnRequest) -> CacheMetrics)? = null,
         private val warmup: (suspend (WarmupRequest) -> CacheMetrics)? = null,
         private val worldState: (suspend (WorldStateResolutionRequest) -> WorldState?)? = null,
-        private val score: (suspend () -> String)? = null,
+        private val classify: (suspend () -> String)? = null,
         private val onRelease: () -> Unit = {},
         private var releaseFailures: Int = 0,
     ) : PrefillGateway {
@@ -695,7 +695,7 @@ class PrefillCoordinatorTest {
         val prefillSlots = mutableListOf<LlamaCppSlot>()
         val warmupSlots = mutableListOf<LlamaCppSlot>()
         val warmupRequests = mutableListOf<WarmupRequest>()
-        val scoreSlots = mutableListOf<LlamaCppSlot>()
+        val classifySlots = mutableListOf<LlamaCppSlot>()
         val worldStateSlots = mutableListOf<LlamaCppSlot>()
         val turnSlots = mutableListOf<LlamaCppSlot>()
         val acquiredSlots = mutableListOf<LlamaCppSlot>()
@@ -765,14 +765,14 @@ class PrefillCoordinatorTest {
             return worldState?.invoke(request)
         }
 
-        override suspend fun scoreFragment(request: de.aidadventure.server.model.FragmentRelevanceRequest, slot: LlamaCppSlot): String {
-            scoreSlots += slot
-            slotLifecycle += SlotLifecycleEvent("score", slot)
-            scoreStarted.complete(Unit)
+        override suspend fun classifyFragment(request: de.aidadventure.server.model.FragmentRelevanceRequest, slot: LlamaCppSlot): String {
+            classifySlots += slot
+            slotLifecycle += SlotLifecycleEvent("classify", slot)
+            classifyStarted.complete(Unit)
             return try {
-                score?.invoke() ?: "0"
+                classify?.invoke() ?: "N"
             } finally {
-                scoreFinished.complete(Unit)
+                classifyFinished.complete(Unit)
             }
         }
 
@@ -799,8 +799,8 @@ class PrefillCoordinatorTest {
         private val warmupStarted = CompletableDeferred<Unit>()
         private val warmupCompletion = CompletableDeferred<Unit>()
         private val warmupFinished = CompletableDeferred<Unit>()
-        private val scoreStarted = CompletableDeferred<Unit>()
-        private val scoreFinished = CompletableDeferred<Unit>()
+        private val classifyStarted = CompletableDeferred<Unit>()
+        private val classifyFinished = CompletableDeferred<Unit>()
 
         suspend fun awaitWarmup() = warmupStarted.await()
 
@@ -810,7 +810,7 @@ class PrefillCoordinatorTest {
 
         suspend fun awaitWarmupCompletion() = warmupFinished.await()
 
-        suspend fun awaitScoreCompletion() = scoreFinished.await()
+        suspend fun awaitClassifyCompletion() = classifyFinished.await()
 
         private fun requestRevision(request: TurnRequest): Long = when (request.playerAction) {
             "open" -> 1

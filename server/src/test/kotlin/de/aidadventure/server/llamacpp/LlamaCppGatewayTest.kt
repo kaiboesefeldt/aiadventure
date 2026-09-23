@@ -228,18 +228,18 @@ class LlamaCppGatewayTest {
     }
 
     @Test
-    fun `fragment scoring generates exactly one token on the retained slot`() = runBlocking {
-        nativeServer(completionContent = "7").use { server ->
+    fun `fragment classification generates exactly one token on the retained slot`() = runBlocking {
+        nativeServer(completionContent = "Y").use { server ->
             val gateway = LlamaCppGateway(promptFactory = PromptFactory())
 
-            assertEquals("7", gateway.scoreFragment(relevanceRequest(server.port), LlamaCppSlot(2)))
+            assertEquals("Y", gateway.classifyFragment(relevanceRequest(server.port), LlamaCppSlot(2)))
 
             assertEquals(listOf("/apply-template", "/tokenize", "/slots", "/completion"), server.paths)
             val completionBody = server.completionBodies.single().jsonObject
             assertEquals(2, completionBody.getValue("id_slot").jsonPrimitive.int)
             assertEquals(1, completionBody.getValue("n_predict").jsonPrimitive.int)
             assertEquals(false, completionBody.getValue("stream").jsonPrimitive.boolean)
-            assertEquals("root ::= [0-9]", completionBody.getValue("grammar").jsonPrimitive.content)
+            assertEquals("root ::= \"Y\" | \"N\"", completionBody.getValue("grammar").jsonPrimitive.content)
         }
     }
 

@@ -492,6 +492,7 @@ class ApplicationTest {
         llamaCppServer().use { llama ->
             val registry = FakeRegistry()
             val acceptedWorldState = WorldState("Leuchtturm", "Finde den Saboteur")
+            val locations = mapOf("Leuchtturm" to "Alter Turm auf der Mole")
             val resolver = RecordingResolver(null)
             registry.coordinator.acceptedWorldState = acceptedWorldState
             application {
@@ -505,7 +506,7 @@ class ApplicationTest {
 
             val response = client.post("/api/turn") {
                 contentType(ContentType.Application.Json)
-                setBody(turnRequest(port = llama.port))
+                setBody(turnRequest(port = llama.port).copy(locations = locations))
             }
 
             val donePayload = response.bodyAsText()
@@ -518,11 +519,13 @@ class ApplicationTest {
             runBlocking { withTimeout(1_000) { registry.coordinator.rerankCompleted.await() } }
             assertEquals(acceptedWorldState, registry.coordinator.rerankRequests.single().worldState)
             assertEquals(listOf<String?>(acceptedWorldState.narrativeFocus), resolver.narrativeFoci)
+            assertEquals(listOf<String?>("Leuchtturm"), resolver.locations)
+            assertEquals(listOf<String?>("Alter Turm auf der Mole"), resolver.locationDescriptions)
         }
     }
 
     @Test
-    fun `production runtime fragment resolver delegates narrative focus`() = runBlocking {
+    fun `production runtime fragment resolver delegates narrative focus and location context`() = runBlocking {
         val delegate = RecordingResolver(null)
         val resolver = ProductionRuntimeFragmentResolver { delegate }
 
@@ -530,9 +533,13 @@ class ApplicationTest {
             visiblePair(),
             listOf(de.aidadventure.server.model.RuntimeFragmentDefinition("lighthouse", "memory")),
             "Find the saboteur",
+            "Lighthouse",
+            "A beacon above the harbor",
         )
 
         assertEquals(listOf<String?>("Find the saboteur"), delegate.narrativeFoci)
+        assertEquals(listOf<String?>("Lighthouse"), delegate.locations)
+        assertEquals(listOf<String?>("A beacon above the harbor"), delegate.locationDescriptions)
     }
 
     @Test
@@ -688,6 +695,8 @@ class ApplicationTest {
     private class RecordingResolver(private val fragment: String?) : RuntimeFragmentResolver {
         val histories = mutableListOf<List<ChatEntry>>()
         val narrativeFoci = mutableListOf<String?>()
+        val locations = mutableListOf<String?>()
+        val locationDescriptions = mutableListOf<String?>()
 
         override suspend fun prepare(definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>) = Unit
 
@@ -705,6 +714,19 @@ class ApplicationTest {
             narrativeFocus: String?,
         ): de.aidadventure.server.model.RuntimeFragmentDefinition? {
             narrativeFoci += narrativeFocus
+            return resolve(history, definitions)
+        }
+
+        override suspend fun resolve(
+            history: List<ChatEntry>,
+            definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
+            narrativeFocus: String?,
+            location: String?,
+            locationDescription: String?,
+        ): de.aidadventure.server.model.RuntimeFragmentDefinition? {
+            narrativeFoci += narrativeFocus
+            locations += location
+            locationDescriptions += locationDescription
             return resolve(history, definitions)
         }
     }

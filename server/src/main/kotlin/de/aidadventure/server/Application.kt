@@ -313,6 +313,8 @@ fun Application.adventureModule(
                                                 completedHistory,
                                                 request.runtimeFragments,
                                                 acceptedWorldState.narrativeFocus,
+                                                acceptedWorldState.location,
+                                                request.locations[acceptedWorldState.location],
                                             )
                                         }
                                     } catch (failure: Exception) {
@@ -397,7 +399,16 @@ internal class ProductionRuntimeFragmentResolver(
         definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
         narrativeFocus: String?,
     ): de.aidadventure.server.model.RuntimeFragmentDefinition? =
-        if (definitions.isEmpty()) null else delegate.resolve(history, definitions, narrativeFocus)
+        resolve(history, definitions, narrativeFocus, null, null)
+
+    override suspend fun resolve(
+        history: List<ChatEntry>,
+        definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
+        narrativeFocus: String?,
+        location: String?,
+        locationDescription: String?,
+    ): de.aidadventure.server.model.RuntimeFragmentDefinition? =
+        if (definitions.isEmpty()) null else delegate.resolve(history, definitions, narrativeFocus, location, locationDescription)
 }
 
 private suspend fun io.ktor.server.application.ApplicationCall.respondLlamaUnavailable(

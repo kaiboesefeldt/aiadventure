@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class RuntimeFragmentResolverTest {
     @Test
@@ -33,6 +34,79 @@ class RuntimeFragmentResolverTest {
 
         assertEquals(listOf("match", focus), embedding.inputs)
         assertContentEquals(floatArrayOf(0f, 1f), index.queryVectors.single())
+    }
+
+    @Test
+    fun resolverWeightsNarrativeFocusTwiceAndAddsNormalizedLocationContext() = runTest {
+        val focus = "The saboteur is hiding at the lighthouse."
+        val locationContext = "CURRENT LOCATION: Leuchtturm\nLOCATION DESCRIPTION: Alter Turm auf der Mole"
+        val embedding = RecordingEmbeddingService(
+            mapOf(
+                "match" to floatArrayOf(1f, 1f),
+                focus to floatArrayOf(0f, 2f),
+                locationContext to floatArrayOf(3f, 0f),
+            ),
+        )
+        val definition = RuntimeFragmentDefinition("match", "fragment")
+        val index = RecordingIndex(definition)
+
+        DefaultRuntimeFragmentResolver(embedding, index).resolve(
+            history = emptyList(),
+            definitions = listOf(definition),
+            narrativeFocus = focus,
+            location = "  Leuchtturm\n",
+            locationDescription = "  Alter   Turm\nauf der Mole  ",
+        )
+
+        assertEquals(listOf("match", focus, locationContext), embedding.inputs)
+        assertVectorApproximately(floatArrayOf(0.6f, 0.8f), index.queryVectors.single())
+    }
+
+    @Test
+    fun resolverAddsLocationToHistoryFallbackWithMissingOrBlankDescription() = runTest {
+        val locationContext = "CURRENT LOCATION: Leuchtturm"
+        listOf(null, " \n ").forEach { description ->
+            val embedding = RecordingEmbeddingService(
+                mapOf(
+                    "match" to floatArrayOf(1f, 1f),
+                    "player input" to floatArrayOf(2f, 0f),
+                    "answer reply" to floatArrayOf(0f, 2f),
+                    locationContext to floatArrayOf(0f, 4f),
+                ),
+            )
+            val definition = RuntimeFragmentDefinition("match", "fragment")
+            val index = RecordingIndex(definition)
+
+            DefaultRuntimeFragmentResolver(embedding, index).resolve(
+                history = listOf(ChatEntry("player", "player input"), ChatEntry("game-master", "answer reply")),
+                definitions = listOf(definition),
+                narrativeFocus = "  ",
+                location = " Leuchtturm ",
+                locationDescription = description,
+            )
+
+            assertEquals(listOf("match", "player input", "answer reply", locationContext), embedding.inputs)
+            assertVectorApproximately(floatArrayOf(1f / kotlin.math.sqrt(10f), 3f / kotlin.math.sqrt(10f)), index.queryVectors.single())
+        }
+    }
+
+    @Test
+    fun resolverCapsNormalizedLocationDescription() = runTest {
+        val description = "x".repeat(400)
+        val expectedContext = "CURRENT LOCATION: Kai\nLOCATION DESCRIPTION: ${description.take(300)}"
+        val embedding = RecordingEmbeddingService(mapOf("match" to floatArrayOf(1f, 1f), expectedContext to floatArrayOf(1f, 0f)))
+        val definition = RuntimeFragmentDefinition("match", "fragment")
+        val index = RecordingIndex(definition)
+
+        DefaultRuntimeFragmentResolver(embedding, index).resolve(
+            history = emptyList(),
+            definitions = listOf(definition),
+            narrativeFocus = null,
+            location = "Kai",
+            locationDescription = description,
+        )
+
+        assertEquals(listOf("match", expectedContext), embedding.inputs)
     }
 
     @Test
@@ -193,6 +267,13 @@ class RuntimeFragmentResolverTest {
     }
 
     private fun definitions() = listOf(RuntimeFragmentDefinition("match", "fragment"))
+
+    private fun assertVectorApproximately(expected: FloatArray, actual: FloatArray) {
+        assertEquals(expected.size, actual.size)
+        expected.indices.forEach { index ->
+            assertTrue(kotlin.math.abs(expected[index] - actual[index]) < 0.000001f)
+        }
+    }
 
     private class RecordingEmbeddingService(
         private val vectors: Map<String, FloatArray> = emptyMap(),
