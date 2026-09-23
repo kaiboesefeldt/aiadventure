@@ -176,7 +176,7 @@ private val DetailView = FC<DetailViewProps> { props ->
 
 private external interface PlayViewProps : Props { var scenario: Scenario; var session: GameSession; var api: AdventureApi; var sessions: SessionRepository; var onBack: () -> Unit; var onSessionChanged: (GameSession) -> Unit }
 private val PlayView = FC<PlayViewProps> { props ->
-    var action by useState(""); var pending by useState(props.session.introductionPending); var inputReady by useState(false); var turnPhase by useState(TurnPhase.IDLE); var turnAction by useState<String?>(null); var queuedAction by useState<String?>(null); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null); var openFragmentIndex by useState<Int?>(null); var worldStateOpen by useState(false)
+    var action by useState(""); var pending by useState(props.session.introductionPending); var inputReady by useState(false); var turnPhase by useState(TurnPhase.IDLE); var turnAction by useState<String?>(null); var queuedAction by useState<String?>(null); var promptBase by useState(props.session); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null); var openFragmentIndex by useState<Int?>(null); var worldStateOpen by useState(false)
     val liveId = props.session.id
     val (prefill) = useState(PrefillSubmission(props.api))
     val displayed = sessionForDisplay(props.session, streamed)
@@ -233,12 +233,13 @@ private val PlayView = FC<PlayViewProps> { props ->
             TurnPhase.READY -> {
                 turnAction = listOfNotNull(turnAction, text).joinToString("\n")
                 props.api.stopActiveTurn()
-                prefill.supersede(props.session, props.scenario, liveId, turnAction.orEmpty())
+                prefill.supersede(promptBase, props.scenario, liveId, turnAction.orEmpty())
             }
             TurnPhase.PREPARING -> turnAction = listOfNotNull(turnAction, text).joinToString("\n")
             TurnPhase.IDLE -> {
                 turnAction = text
                 queuedAction = null
+                promptBase = props.session
                 pending = true
                 inputReady = false
                 turnPhase = TurnPhase.PREPARING
@@ -259,7 +260,7 @@ private val PlayView = FC<PlayViewProps> { props ->
                                     onGenerationReady = {
                                         turnPhase = TurnPhase.READY
                                         if (turnAction != submittedAction) {
-                                            prefill.supersede(props.session, props.scenario, liveId, turnAction.orEmpty())
+                                            prefill.supersede(base, props.scenario, liveId, turnAction.orEmpty())
                                             props.api.stopActiveTurn()
                                         }
                                     },
@@ -268,9 +269,11 @@ private val PlayView = FC<PlayViewProps> { props ->
                                 turnPhase = TurnPhase.PREPARING
                                 streamed = base
                                 delay(175)
+                                prefill.turnStarted()
                                 continue
                             }
                             base = completed.session
+                            promptBase = base
                             metrics = completed.metrics
                             streamed = completed.session
                             props.onSessionChanged(completed.session)

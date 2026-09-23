@@ -33,6 +33,7 @@ The local gateway fixture checks that the combined analysis is one non-streaming
 
 - The textarea and send button are disabled only while the introduction is pending; blank input still disables Send.
 - Background preparation completes without cancellation while submitted text is accumulated. The server emits `generation_ready` after `prepareTurn()` and before `gateway.stream()`; if the pending action changed by then, the active request is canceled, combined prefill restarts with the same session ID, and the abandoned action is retried without persistence.
+- Prefill for superseded later turns is mapped from that turn's current base session, preserving the correct history prefix. The prefill scheduler is marked active again immediately before a retry.
 - The API parser checks cancellation immediately after `generation_ready`, before processing later frames from the same SSE chunk. This keeps frame order atomic when a token follows the event in that chunk.
 - After the first token, submitted text is queued for the next turn. Explicit stream cancellation commits the accumulated game-master text with the player action that elicited it before the next queued action runs.
 - Cancellation touches only the active turn request/reader; warmup and prefill requests use their existing fetch path.
