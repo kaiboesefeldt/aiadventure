@@ -54,4 +54,33 @@ initial-situation:
         assertFailsWith<IllegalArgumentException> { ScenarioFrontmatter.parse("---\nworld-state:\n  location: ''\n---\n# Haus") }
         assertFailsWith<IllegalArgumentException> { ScenarioFrontmatter.parse("---\nworld-state:\n  location: Küche\n  facts: {}\n---\n# Haus") }
     }
+    @Test fun `parses runtime fragment strings and mappings`() {
+        val parsed = ScenarioFrontmatter.parse("""---
+runtime-fragments:
+  lighthouse: Mira remembers the storm.
+  harbor:
+    fragment: The harbor is quiet.
+---
+# Hafen
+""")
+
+        assertEquals(
+            listOf(
+                RuntimeFragmentDefinition("lighthouse", "Mira remembers the storm."),
+                RuntimeFragmentDefinition("harbor", "The harbor is quiet."),
+            ),
+            parsed.runtimeFragments,
+        )
+    }
+
+    @Test fun `rejects blank strings and unsupported runtime fragment values`() {
+        listOf(
+            "runtime-fragments:\n  lighthouse: ''",
+            "runtime-fragments:\n  lighthouse: 42",
+        ).forEach { frontmatter ->
+            assertFailsWith<IllegalArgumentException> {
+                ScenarioFrontmatter.parse("---\n$frontmatter\n---\n# Hafen")
+            }
+        }
+    }
 }
