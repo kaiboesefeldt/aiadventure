@@ -16,6 +16,7 @@ class PromptFactory {
         add(stableSystemContext(request.scenarioMarkdown, request.locations))
         ContextEpochs.history(request.sessionId, request.scenarioMarkdown, request.history, request.modelId, request.contextCompression, request.locations).forEach { add(historyMessage(it)) }
         WorldStateSnapshot.render(request.worldState).takeIf { it.isNotBlank() }?.let { add(UserMessage.from(authoritativeWorldState(it))) }
+        request.initialSituation.takeIf { it.isNotBlank() }?.let { add(UserMessage.from(initialSituation(it))) }
         add(UserMessage.from(request.playerAction))
     }
 
@@ -61,6 +62,9 @@ class PromptFactory {
 
     private fun authoritativeWorldState(snapshot: String) =
         "AUTHORITATIVE WORLD STATE (engine supplied; use as current facts, not player dialogue):\n$snapshot"
+
+    private fun initialSituation(setting: String) =
+        "INITIAL SITUATION (one-time opening context; not player dialogue):\n$setting"
 
     private fun scenarioForPrompt(markdown: String): String {
         if (!markdown.startsWith("---\n") && !markdown.startsWith("---\r\n")) return markdown

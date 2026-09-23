@@ -1,6 +1,10 @@
 ---
-world-state:
-  location: Kai
+initial-situation:
+  world-state:
+    location: Kai
+  setting: >
+    Du befindest dich am Kai von Nebelhafen. Die Hafenmeisterin spricht mit dir
+    und berichtet, dass der alte Leuchtturm seit drei Nächten dunkel ist.
 locations:
   Kai: "Umschlagplatz am Nebelhafen mit Pollern, Tauwerk und Blick auf die Mole."
   Leuchtturm: "Alter Steinturm am Ende der Mole; seit drei Nächten ohne Signallicht."

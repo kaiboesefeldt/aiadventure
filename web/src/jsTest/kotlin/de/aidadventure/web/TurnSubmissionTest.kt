@@ -57,19 +57,22 @@ class TurnSubmissionTest {
     @Test
     fun `introduction keeps hidden start instruction in every subsequent request history`() = GlobalScope.promise<Unit> {
         val sessions = RecordingSessions()
-        val initial = newGameSession(scenario(), "session-1", 1)
-        val completed = TurnSubmission(sessions, FragmentEmittingAdventureApi(), clock = { 3 })
-            .submitIntroduction(initial, scenario(), {}, {}).session
+        val scenario = Scenario("scenario-1", "harbor.md", "---\ninitial-situation:\n  setting: The harbor-master greets you.\n---\n# Harbor", 1)
+        val initial = newGameSession(scenario, "session-1", 1)
+        val api = FragmentEmittingAdventureApi()
+        val completed = TurnSubmission(sessions, api, clock = { 3 })
+            .submitIntroduction(initial, scenario, {}, {}).session
 
+        assertEquals("The harbor-master greets you.", api.requests.single().initialSituation)
         assertEquals(false, completed.introductionPending)
         assertEquals(listOf("runtime-fragment", "player", "game-master"), completed.messages.map { it.role })
         assertEquals(true, completed.messages[1].hidden)
         assertEquals(false, isVisibleTranscriptMessage(completed.messages[1]))
         assertEquals(listOf("The keeper points east."), completed.messages.filter(::isVisibleTranscriptMessage).map { it.content })
         val expected = completed.messages.map { de.aidadventure.web.api.ChatEntry(it.role, it.content) }
-        assertEquals(expected, de.aidadventure.web.api.TurnRequestMapper.map(completed, scenario(), "look", completed.id).history)
-        assertEquals(expected, de.aidadventure.web.api.PrefillRequestMapper.map(completed, scenario(), completed.id, 1, "look").history)
-        assertEquals(expected, de.aidadventure.web.api.WarmupRequestMapper.map(completed, scenario()).history)
+        assertEquals(expected, de.aidadventure.web.api.TurnRequestMapper.map(completed, scenario, "look", completed.id).history)
+        assertEquals(expected, de.aidadventure.web.api.PrefillRequestMapper.map(completed, scenario, completed.id, 1, "look").history)
+        assertEquals(expected, de.aidadventure.web.api.WarmupRequestMapper.map(completed, scenario).history)
         assertEquals(completed, de.aidadventure.web.persistence.decodePersistedGameSession(
             kotlinx.serialization.json.Json.encodeToString(GameSession.serializer(), completed),
         ))
@@ -157,9 +160,11 @@ class TurnSubmissionTest {
 }
 
 private class FragmentEmittingAdventureApi : AdventureApi {
+    val requests = mutableListOf<TurnRequest>()
     override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
     override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
     override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
+        requests += request
         onFragment("Mira warns the player")
         onToken("The keeper points east.")
         return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
