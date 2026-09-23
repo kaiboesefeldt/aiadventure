@@ -15,7 +15,7 @@ The local gateway fixture checks that the combined analysis is one non-streaming
 
 ## Queued Turn Input
 
-**Status:** Implemented on `feat/queued-turn-input`; pending commit.
+**Status:** Implemented and committed on `feat/queued-turn-input` (`83376f3`).
 
 **Changed files:**
 
