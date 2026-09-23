@@ -80,8 +80,7 @@ class LlamaCppGatewayTest {
 
             assertEquals(
                 listOf(
-                    LlmTraceMessage("system", PromptFactory.GAME_MASTER_INSTRUCTION),
-                    LlmTraceMessage("system", "# Forest"),
+                    LlmTraceMessage("system", "GAME-MASTER INSTRUCTION:\n${PromptFactory.GAME_MASTER_INSTRUCTION}\n\nSCENARIO:\n# Forest"),
                     LlmTraceMessage("user", "Look around"),
                     LlmTraceMessage("assistant", "Misty trees surround you."),
                     LlmTraceMessage("user", "Follow the path"),
@@ -128,8 +127,7 @@ class LlamaCppGatewayTest {
 
             assertEquals(
                 listOf(
-                    LlmTraceMessage("system", PromptFactory.GAME_MASTER_INSTRUCTION),
-                    LlmTraceMessage("system", "# Forest"),
+                    LlmTraceMessage("system", "GAME-MASTER INSTRUCTION:\n${PromptFactory.GAME_MASTER_INSTRUCTION}\n\nSCENARIO:\n# Forest"),
                     LlmTraceMessage("user", "Look around"),
                     LlmTraceMessage("assistant", "Misty trees surround you."),
                     LlmTraceMessage("user", "Follow the path"),
@@ -181,8 +179,7 @@ class LlamaCppGatewayTest {
 
             assertEquals(
                 listOf(
-                    LlmTraceMessage("system", PromptFactory.GAME_MASTER_INSTRUCTION),
-                    LlmTraceMessage("system", "# Forest"),
+                    LlmTraceMessage("system", "GAME-MASTER INSTRUCTION:\n${PromptFactory.GAME_MASTER_INSTRUCTION}\n\nSCENARIO:\n# Forest"),
                     LlmTraceMessage("user", "Look around"),
                     LlmTraceMessage("assistant", "Hello"),
                     LlmTraceMessage("user", "Continue"),
