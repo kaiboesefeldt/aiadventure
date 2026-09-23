@@ -225,28 +225,16 @@ class LlamaCppGateway private constructor(
         slot: LlamaCppSlot,
     ): WorldState? = runInterruptible {
         val completedTurn = promptFactory.build(primaryRequest) + AiMessage.from(gameMasterResponse)
-        val location = if (request.locations.isNotEmpty()) {
-            completeStructured(
-                completedTurn + UserMessage.from(WorldStateAnalysis.LOCATION_PROMPT),
-                WorldStateAnalysis.locationSchema(request.locations),
-                request,
-                slot,
-                primaryRequest.llamaCppPort,
-                "location",
-            )
-        } else {
-            null
-        }
-        val narrativeFocus = completeStructured(
-            completedTurn + UserMessage.from(WorldStateAnalysis.FOCUS_PROMPT),
-            WorldStateAnalysis.narrativeFocusSchema,
+        val result = completeStructured(
+            completedTurn + UserMessage.from(WorldStateAnalysis.PROMPT),
+            WorldStateAnalysis.combinedSchema(request.locations),
             request,
             slot,
             primaryRequest.llamaCppPort,
-            "narrative_focus",
-            predictedTokens = 128,
+            "combined",
+            predictedTokens = 256,
         )
-        WorldStateAnalysis.apply(request, location, narrativeFocus)
+        WorldStateAnalysis.apply(request, result)
     }
 
     private fun completeStructured(

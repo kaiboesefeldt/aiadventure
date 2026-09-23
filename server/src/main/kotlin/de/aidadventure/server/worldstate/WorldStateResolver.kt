@@ -1,13 +1,12 @@
 package de.aidadventure.server.worldstate
 
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 data class WorldStateResolutionRequest(
     val sessionId: String,
@@ -21,52 +20,65 @@ data class WorldStateResolutionRequest(
 internal object WorldStateAnalysis {
     private val resultJson = Json
 
-    const val LOCATION_PROMPT = "Return exactly one key from the canonical location catalog for where the player character actually is after the preceding player action and game-master response. Use descriptions to distinguish places, but return the key rather than its description. Do not select a place that is only planned, mentioned, inaccessible, or refused."
-    const val FOCUS_PROMPT = "Reply with a short sentence describing the current narative focus after the player and game-master actions. Ignore future actions or options."
-
-    val narrativeFocusSchema = schema("""{"type":"object","additionalProperties":false,"required":["narrativeFocus"],"properties":{"narrativeFocus":{"anyOf":[{"const":""},{"type":"string","minLength":3,"maxLength":400}]}}}""")
+    const val PROMPT = "Update the current world state from the preceding player action and game-master response. Return the current narrative focus as a short sentence; ignore future actions or options. When a location catalog is provided, return exactly one key for where the player character actually is. Use descriptions to distinguish places, but do not select a place that is only planned, mentioned, inaccessible, or refused."
 
     fun apply(
         request: WorldStateResolutionRequest,
-        locationContent: String?,
-        narrativeFocusContent: String?,
+        content: String?,
     ): WorldState? {
-        val location = locationContent?.let(::location)
+        val fields = content?.let(::fields)
+        val location = fields?.get("location")?.let(::location)
             ?.takeIf { it in request.locations.keys }
-        val narrativeFocus = narrativeFocusContent?.let(::narrativeFocus) ?: request.previousState.narrativeFocus
+        val narrativeFocus = fields?.get("narrativeFocus")?.let(::narrativeFocus) ?: request.previousState.narrativeFocus
         return request.previousState.copy(
             location = location ?: request.previousState.location,
             narrativeFocus = narrativeFocus,
         ).takeIf { it != request.previousState }
     }
 
-    fun locationSchema(locations: Map<String, String>): JsonObject = buildJsonObject {
+    fun combinedSchema(locations: Map<String, String>): JsonObject = buildJsonObject {
         put("type", JsonPrimitive("object"))
         put("additionalProperties", JsonPrimitive(false))
-        put("required", buildJsonArray { add(JsonPrimitive("location")) })
+        put("required", buildJsonArray {
+            if (locations.isNotEmpty()) add(JsonPrimitive("location"))
+            add(JsonPrimitive("narrativeFocus"))
+        })
         put("properties", buildJsonObject {
-            put("location", buildJsonObject {
+            if (locations.isNotEmpty()) put("location", buildJsonObject {
                 put("enum", buildJsonArray {
                     locations.keys.sortedWith(compareBy<String> { it.lowercase() }.thenBy { it }).forEach { add(JsonPrimitive(it)) }
+                })
+            })
+            put("narrativeFocus", buildJsonObject {
+                put("anyOf", buildJsonArray {
+                    add(buildJsonObject { put("const", JsonPrimitive("")) })
+                    add(buildJsonObject {
+                        put("type", JsonPrimitive("string"))
+                        put("minLength", JsonPrimitive(3))
+                        put("maxLength", JsonPrimitive(400))
+                    })
                 })
             })
         })
     }
 
-    private fun location(content: String): String? = runCatching { resultJson.decodeFromString<LocationResult>(content).location }
-        .getOrNull()
-        ?.trim()
-        ?.trimEnd(',', ';', ':', '.', '!', '?')
-        ?.trim()
-        ?.takeIf(String::isNotBlank)
+    private fun location(content: String): String? = content
+        .trim()
+        .trimEnd(',', ';', ':', '.', '!', '?')
+        .trim()
+        .takeIf(String::isNotBlank)
 
-    private fun narrativeFocus(content: String): String? = runCatching { resultJson.decodeFromString<NarrativeFocusResult>(content).narrativeFocus }
-        .getOrNull()
-        ?.trim()
-        ?.takeUnless { it.isNotEmpty() && it.all(Char::isDigit) }
+    private fun narrativeFocus(content: String): String? = content
+        .trim()
+        .takeUnless { it.isNotEmpty() && it.all(Char::isDigit) }
 
-    @Serializable private data class LocationResult(val location: String)
-    @Serializable private data class NarrativeFocusResult(val narrativeFocus: String)
-
-    private fun schema(source: String): JsonObject = resultJson.parseToJsonElement(source).jsonObject
+    private fun fields(content: String): Map<String, String> {
+        val jsonObject = runCatching { resultJson.parseToJsonElement(content).jsonObject }.getOrNull() ?: return emptyMap()
+        return buildMap {
+            jsonObject.forEach { (key, value) ->
+                val primitive = runCatching { value.jsonPrimitive }.getOrNull()
+                if (primitive?.isString == true) put(key, primitive.content)
+            }
+        }
+    }
 }

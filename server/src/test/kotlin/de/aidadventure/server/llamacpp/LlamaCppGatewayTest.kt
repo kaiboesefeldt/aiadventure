@@ -11,6 +11,7 @@ import de.aidadventure.server.model.TurnStreamEvent
 import de.aidadventure.server.model.WarmupRequest
 import de.aidadventure.server.worldstate.WorldState
 import de.aidadventure.server.worldstate.WorldStateResolutionRequest
+import de.aidadventure.server.worldstate.WorldStateAnalysis
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.time.Duration
@@ -338,8 +339,8 @@ class LlamaCppGatewayTest {
     }
 
     @Test
-    fun `world state analysis uses the primary slot and cache prompt`() = runBlocking {
-        nativeServer().use { server ->
+    fun `world state analysis uses one combined completion on the primary slot with cache prompt`() = runBlocking {
+        nativeServer(completionContent = """{"location":"Harbour","narrativeFocus":"Keep searching"}""").use { server ->
             val gateway = LlamaCppGateway(promptFactory = PromptFactory())
             val primary = request(server.port).copy(locations = mapOf("Harbour" to "A quay", "Bell Tower" to ""))
             val resolution = WorldStateResolutionRequest(
@@ -351,27 +352,39 @@ class LlamaCppGatewayTest {
                 locations = mapOf("Harbour" to "A quay", "Bell Tower" to ""),
             )
 
-            gateway.resolveWorldState(primary, resolution.gameMasterResponse, resolution, LlamaCppSlot(2))
+            val resolved = gateway.resolveWorldState(primary, resolution.gameMasterResponse, resolution, LlamaCppSlot(2))
+            assertEquals(WorldState("Harbour", "Keep searching"), resolved)
 
             assertEquals(
-                listOf("/apply-template", "/tokenize", "/slots", "/completion", "/apply-template", "/tokenize", "/slots", "/completion"),
+                listOf("/apply-template", "/tokenize", "/slots", "/completion"),
                 server.paths,
             )
-            server.completionBodies.forEach { bodyText ->
-                val body = bodyText.jsonObject
-                assertEquals(2, body.getValue("id_slot").jsonPrimitive.int)
-                assertTrue(body.getValue("cache_prompt").jsonPrimitive.boolean)
-                assertEquals(false, body.getValue("stream").jsonPrimitive.boolean)
-                assertTrue(body.containsKey("json_schema"))
-            }
-            assertEquals(64, server.completionBodies[0].jsonObject.getValue("n_predict").jsonPrimitive.int)
-            assertEquals(128, server.completionBodies[1].jsonObject.getValue("n_predict").jsonPrimitive.int)
+            assertEquals(1, server.completionBodies.size)
             assertEquals(
-                400,
-                server.completionBodies[1].jsonObject.getValue("json_schema").jsonObject
-                    .getValue("properties").jsonObject.getValue("narrativeFocus").jsonObject
-                    .getValue("anyOf").jsonArray[1].jsonObject.getValue("maxLength").jsonPrimitive.int,
+                listOf(
+                    "system" to "GAME-MASTER INSTRUCTION:\n${PromptFactory.GAME_MASTER_INSTRUCTION}\n\nSCENARIO:\n# Forest\n\nCANONICAL LOCATION CATALOG (use each key as the location name; descriptions give spatial context):\n- Bell Tower\n- Harbour — A quay",
+                    "user" to "Look around",
+                    "assistant" to "Misty trees surround you.",
+                    "user" to "Follow the path",
+                    "assistant" to "The bell rings at the harbour.",
+                    "user" to WorldStateAnalysis.PROMPT,
+                ),
+                server.templateBodies.single().jsonObject.getValue("messages").jsonArray.map {
+                    it.jsonObject.getValue("role").jsonPrimitive.content to it.jsonObject.getValue("content").jsonPrimitive.content
+                },
             )
+            val body = server.completionBodies.single().jsonObject
+            assertEquals(2, body.getValue("id_slot").jsonPrimitive.int)
+            assertTrue(body.getValue("cache_prompt").jsonPrimitive.boolean)
+            assertEquals(false, body.getValue("stream").jsonPrimitive.boolean)
+            assertEquals(256, body.getValue("n_predict").jsonPrimitive.int)
+            val schema = body.getValue("json_schema").jsonObject
+            assertEquals(setOf("location", "narrativeFocus"), schema.getValue("required").jsonArray.map { it.jsonPrimitive.content }.toSet())
+            assertEquals(setOf("location", "narrativeFocus"), schema.getValue("properties").jsonObject.keys)
+            assertEquals(listOf("Bell Tower", "Harbour"), schema.getValue("properties").jsonObject
+                .getValue("location").jsonObject.getValue("enum").jsonArray.map { it.jsonPrimitive.content })
+            assertEquals(400, schema.getValue("properties").jsonObject.getValue("narrativeFocus").jsonObject
+                .getValue("anyOf").jsonArray[1].jsonObject.getValue("maxLength").jsonPrimitive.int)
         }
     }
 
@@ -514,7 +527,7 @@ class LlamaCppGatewayTest {
                         writer.flush()
                     }
                 } else {
-                    val content = completionContent?.let { ",\"content\":\"$it\"" }.orEmpty()
+                    val content = completionContent?.let { ",\"content\":${Json.encodeToString(it)}" }.orEmpty()
                     exchange.respondJson("{\"tokens_cached\":17,\"tokens_evaluated\":3$content}")
                 }
             }
