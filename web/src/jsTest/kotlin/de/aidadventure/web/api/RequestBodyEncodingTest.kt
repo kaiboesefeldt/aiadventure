@@ -2,6 +2,7 @@ package de.aidadventure.web.api
 
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
+import de.aidadventure.web.model.WorldState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.serialization.json.jsonArray
@@ -56,20 +57,25 @@ class RequestBodyEncodingTest {
         val scenario = Scenario(
             "scenario-1",
             "Harbor",
-            "---\nruntime-fragments:\n  lighthouse:\n    fragment: Mira remembers it\n---\n# Harbor",
+            "---\nruntime-fragments:\n  lighthouse:\n    fragment: Mira remembers it\ninitial-situation:\n  world-state:\n    location: Bar\n  setting: The keeper greets the player.\n---\n# Harbor",
             1,
         )
-        val session = GameSession("session-1", scenario.id, "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+        val session = GameSession("session-1", scenario.id, "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1, worldState = WorldState("Bar"))
 
         val turn = TurnRequestMapper.map(session, scenario, "look", "live-1")
+        val introduction = TurnRequestMapper.map(session, scenario, "begin", "live-1", includeInitialSituation = true)
         val prefill = PrefillRequestMapper.map(session, scenario, "live-1", 1, "look")
         val warmup = WarmupRequestMapper.map(session, scenario)
 
         assertEquals("# Harbor", turn.scenarioMarkdown)
         assertEquals(listOf(RuntimeFragmentDefinition("lighthouse", "Mira remembers it")), turn.runtimeFragments)
+        assertEquals("", turn.initialSituation)
+        assertEquals("The keeper greets the player.", introduction.initialSituation)
+        assertEquals("Bar", introduction.worldState.location)
         assertEquals(turn.scenarioMarkdown, prefill.scenarioMarkdown)
         assertEquals(turn.runtimeFragments, prefill.runtimeFragments)
         assertEquals(turn.scenarioMarkdown, warmup.scenarioMarkdown)
         assertEquals(turn.runtimeFragments, warmup.runtimeFragments)
+        assertEquals(null, Json.parseToJsonElement(encodePrefillRequest(prefill)).jsonObject["initialSituation"])
     }
 }

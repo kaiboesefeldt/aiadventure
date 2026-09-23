@@ -42,6 +42,7 @@ data class TurnRequest(
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
     val locations: Map<String, String> = emptyMap(),
+    val initialSituation: String = "",
 )
 
 @Serializable

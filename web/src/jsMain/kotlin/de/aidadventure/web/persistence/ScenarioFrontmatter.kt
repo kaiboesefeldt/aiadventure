@@ -11,6 +11,7 @@ data class ParsedScenario(
     val runtimeFragments: List<RuntimeFragmentDefinition>,
     val initialWorldState: WorldState,
     val locations: Map<String, String>,
+    val initialSituationSetting: String = "",
 )
 
 object ScenarioFrontmatter {
@@ -19,7 +20,8 @@ object ScenarioFrontmatter {
             ?: return ParsedScenario(markdown, emptyList(), WorldState(), emptyMap())
         val frontmatter = markdown.substring(0, closingDelimiterStart)
         val rootEntries = readFrontmatter(frontmatter)
-        val initialWorldState = readInitialWorldState(rootEntries, frontmatter)
+        val initialSituation = readInitialSituation(rootEntries, frontmatter)
+        val initialWorldState = initialSituation.first ?: readInitialWorldState(rootEntries, frontmatter)
         val locations = readLocations(rootEntries)
         if (locations.isNotEmpty() && initialWorldState.location.isNotBlank() && initialWorldState.location !in locations.keys) {
             invalidFrontmatter()
@@ -29,7 +31,26 @@ object ScenarioFrontmatter {
             runtimeFragments = readRuntimeFragments(rootEntries),
             initialWorldState = initialWorldState,
             locations = locations,
+            initialSituationSetting = initialSituation.second,
         )
+    }
+
+    private fun readInitialSituation(rootEntries: Array<Array<dynamic>>, frontmatter: String): Pair<WorldState?, String> {
+        val entry = rootEntries.firstOrNull { it[0] == "initial-situation" } ?: return null to ""
+        val fields = mappingEntries(entry[1]) ?: invalidFrontmatter()
+        if (fields.any { it[0] !in setOf("world-state", "setting") }) invalidFrontmatter()
+        val worldStateField = fields.firstOrNull { it[0] == "world-state" }
+        val worldState = worldStateField?.let {
+            val stateFields = mappingEntries(it[1]) ?: invalidFrontmatter()
+            if (stateFields.size != 1 || stateFields.single()[0] != "location") invalidFrontmatter()
+            val location = stateFields.single()[1] as? String ?: invalidFrontmatter()
+            if (location.isBlank()) invalidFrontmatter()
+            WorldState(location)
+        }
+        val settingField = fields.firstOrNull { it[0] == "setting" }
+        val setting = settingField?.get(1) as? String ?: if (settingField == null) "" else invalidFrontmatter()
+        if (settingField != null && setting.isBlank()) invalidFrontmatter()
+        return worldState to setting
     }
 
     private fun readFrontmatter(frontmatter: String): Array<Array<dynamic>> {

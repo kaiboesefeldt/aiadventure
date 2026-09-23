@@ -30,12 +30,14 @@ import web.html.HTMLElement
 
 class AdventureAppNavigationTest {
     @Test
-    fun `new session persists the scenario initial world state`() {
+    fun `new session persists the initial situation location`() {
         val scenario = Scenario(
             "harbor", "harbor.md", """
             ---
-            world-state:
-              location: Harbor
+            initial-situation:
+              world-state:
+                location: Harbor
+              setting: The keeper greets the player.
             ---
             # Harbor
             """.trimIndent(), 1,

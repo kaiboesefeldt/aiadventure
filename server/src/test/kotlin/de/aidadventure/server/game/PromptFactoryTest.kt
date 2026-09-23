@@ -29,6 +29,33 @@ class PromptFactoryTest {
     }
 
     @Test
+    fun `initial situation is a one-time context immediately before introduction action`() {
+        val request = TurnRequest(
+            sessionId = "live-1", scenarioMarkdown = "# Harbor", history = emptyList(),
+            playerAction = "begin adventure", initialSituation = "The harbor-master greets the player.",
+        )
+        val prompt = PromptFactory().build(request)
+
+        assertEquals(listOf("system", "user", "user"), prompt.map { it.type().name.lowercase() })
+        assertEquals(
+            "INITIAL SITUATION (one-time opening context; not player dialogue):\nThe harbor-master greets the player.",
+            (prompt[1] as UserMessage).singleText(),
+        )
+        assertEquals("begin adventure", (prompt[2] as UserMessage).singleText())
+        assertFalse((prompt[0] as SystemMessage).text().contains("harbor-master"))
+    }
+
+    @Test
+    fun `ordinary turn and warmup omit initial situation context`() {
+        val factory = PromptFactory()
+        val ordinary = factory.build(TurnRequest("live-1", "test-model", 8081, "# Harbor", emptyList(), "look"))
+        val warmup = factory.buildWarmup(WarmupRequest("live-1", "test-model", 8081, "# Harbor", emptyList()))
+
+        assertEquals(listOf("system", "user"), ordinary.map { it.type().name.lowercase() })
+        assertEquals(listOf("system"), warmup.map { it.type().name.lowercase() })
+    }
+
+    @Test
     fun `build rejects unknown history roles`() {
         assertFailsWith<IllegalArgumentException> {
             PromptFactory().build(

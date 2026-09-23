@@ -142,7 +142,13 @@ class SseFrameDecoder {
 }
 
 object TurnRequestMapper {
-    fun map(session: GameSession, scenario: Scenario, playerAction: String, sessionId: String = ""): TurnRequest {
+    fun map(
+        session: GameSession,
+        scenario: Scenario,
+        playerAction: String,
+        sessionId: String = "",
+        includeInitialSituation: Boolean = false,
+    ): TurnRequest {
         val parsed = ScenarioFrontmatter.parse(scenario.markdown)
         return TurnRequest(
             scenarioMarkdown = parsed.promptMarkdown,
@@ -153,6 +159,7 @@ object TurnRequestMapper {
             worldState = session.worldState,
             contextCompression = session.contextCompression,
             locations = parsed.locations,
+            initialSituation = if (includeInitialSituation) parsed.initialSituationSetting else "",
         )
     }
 }
@@ -205,6 +212,7 @@ data class TurnRequest(
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
     val locations: Map<String, String> = emptyMap(),
+    val initialSituation: String = "",
 )
 
 @Serializable
