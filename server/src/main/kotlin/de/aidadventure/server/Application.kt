@@ -308,7 +308,13 @@ fun Application.adventureModule(
                                 postTurnScope.launch {
                                     var candidate: de.aidadventure.server.model.RuntimeFragmentDefinition? = null
                                     try {
-                                        candidate = runtimeFragmentResolver.resolve(completedHistory, request.runtimeFragments)
+                                        if (acceptedWorldState.location.isNotBlank() || acceptedWorldState.narrativeFocus.isNotBlank()) {
+                                            candidate = runtimeFragmentResolver.resolve(
+                                                completedHistory,
+                                                request.runtimeFragments,
+                                                acceptedWorldState.narrativeFocus,
+                                            )
+                                        }
                                     } catch (failure: Exception) {
                                         if (failure is CancellationException) throw failure
                                         logger.warn(
@@ -369,8 +375,12 @@ private fun TurnRequest.configuredFor(port: Int) = copy(modelId = CONFIGURED_MOD
 private fun PrefillRequest.configuredFor(port: Int) = copy(modelId = CONFIGURED_MODEL_ID, llamaCppPort = port)
 private fun WarmupRequest.configuredFor(port: Int) = copy(modelId = CONFIGURED_MODEL_ID, llamaCppPort = port)
 
-private class ProductionRuntimeFragmentResolver : RuntimeFragmentResolver {
-    private val delegate by lazy { DefaultRuntimeFragmentResolver(OnnxLocalEmbeddingService.create()) }
+internal class ProductionRuntimeFragmentResolver(
+    private val delegateFactory: () -> RuntimeFragmentResolver = {
+        DefaultRuntimeFragmentResolver(OnnxLocalEmbeddingService.create())
+    },
+) : RuntimeFragmentResolver {
+    private val delegate by lazy(delegateFactory)
 
     override suspend fun prepare(definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>) {
         if (definitions.isNotEmpty()) delegate.prepare(definitions)
@@ -380,7 +390,14 @@ private class ProductionRuntimeFragmentResolver : RuntimeFragmentResolver {
         history: List<ChatEntry>,
         definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
     ): de.aidadventure.server.model.RuntimeFragmentDefinition? =
-        if (definitions.isEmpty()) null else delegate.resolve(history, definitions)
+        resolve(history, definitions, null)
+
+    override suspend fun resolve(
+        history: List<ChatEntry>,
+        definitions: List<de.aidadventure.server.model.RuntimeFragmentDefinition>,
+        narrativeFocus: String?,
+    ): de.aidadventure.server.model.RuntimeFragmentDefinition? =
+        if (definitions.isEmpty()) null else delegate.resolve(history, definitions, narrativeFocus)
 }
 
 private suspend fun io.ktor.server.application.ApplicationCall.respondLlamaUnavailable(
