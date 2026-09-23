@@ -57,7 +57,7 @@ class RequestBodyEncodingTest {
         val scenario = Scenario(
             "scenario-1",
             "Harbor",
-            "---\nruntime-fragments:\n  lighthouse:\n    fragment: Mira remembers it\ninitial-situation:\n  world-state:\n    location: Bar\n  setting: The keeper greets the player.\n---\n# Harbor",
+            "---\nruntime-fragments:\n  lighthouse: Mira remembers it\ninitial-situation:\n  world-state:\n    location: Bar\n  setting: The keeper greets the player.\n---\n# Harbor",
             1,
         )
         val session = GameSession("session-1", scenario.id, "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1, worldState = WorldState("Bar"))

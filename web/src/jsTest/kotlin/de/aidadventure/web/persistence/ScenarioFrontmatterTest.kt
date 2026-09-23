@@ -59,7 +59,7 @@ initial-situation:
 runtime-fragments:
   lighthouse: Mira remembers the storm.
   harbor:
-    fragment: The harbor is quiet.
+    lighthouse: The harbor is quiet.
 ---
 # Hafen
 """)
@@ -67,7 +67,7 @@ runtime-fragments:
         assertEquals(
             listOf(
                 RuntimeFragmentDefinition("lighthouse", "Mira remembers the storm."),
-                RuntimeFragmentDefinition("harbor", "The harbor is quiet."),
+                RuntimeFragmentDefinition("harbor\nlighthouse", "The harbor is quiet."),
             ),
             parsed.runtimeFragments,
         )
