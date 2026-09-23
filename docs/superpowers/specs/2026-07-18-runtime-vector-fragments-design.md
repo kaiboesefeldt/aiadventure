@@ -12,16 +12,16 @@ previous game-master answer.
 ## Template and browser persistence
 
 A template may start with a YAML frontmatter document. The optional
-`runtime-fragments` mapping has a match text as its key and a non-empty
-`fragment` value:
+`runtime-fragments` mapping contains string leaves. Nested mappings group
+related leaves, and the keys from the root to each leaf are joined with
+newlines to form its match text:
 
 ```yaml
 ---
 runtime-fragments:
-  "Du Mistkerl, du alter Depp, du Arschloch!":
-    fragment: "Weise den User darauf hin, dass er seine Zunge zügeln soll"
-  "Der Leuchtturm ist so schön im Abendlicht":
-    fragment: "Mira erzählt eine alte Geschichte über den Leuchtturm"
+  "Beleidigungen":
+    "Du Mistkerl, du alter Depp, du Arschloch!": "Weise den User darauf hin, dass er seine Zunge zügeln soll"
+  "Der Leuchtturm ist so schön im Abendlicht": "Mira erzählt eine alte Geschichte über den Leuchtturm"
 ---
 ```
 
@@ -38,8 +38,8 @@ ephemeral parsed representation:
 - ordered runtime-fragment definitions containing match text and fragment
   text.
 
-Malformed YAML, a non-mapping `runtime-fragments` value, blank match text,
-missing `fragment`, non-string values, or blank fragment text rejects the
+Malformed YAML, a non-mapping `runtime-fragments` value, blank keys or leaf
+text, empty nested groups, arrays, and other unsupported leaf types reject the
 import with a clear local error. The stripped frontmatter is never part of a
 model prompt.
 
