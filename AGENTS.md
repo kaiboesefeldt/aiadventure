@@ -15,6 +15,12 @@
   checkout. After interrupting one, check for its child installer before retrying.
 - Final verification is `./gradlew check` without excluding dependency-install tasks.
 
+## Development workflow
+
+- Make code changes in a dedicated branch and Git worktree, separate from the primary checkout.
+- Implement code changes with subagents.
+- At the end of a code-change task, merge the task branch into `main`, then delete the task branch and remove its worktree.
+
 ## Invariants
 
 - Keep the game-master prompt prefix deterministic: instruction, original scenario, history, new action.
