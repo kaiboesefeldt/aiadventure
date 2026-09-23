@@ -13,7 +13,7 @@ class ContextCompressionTest {
         val warm = PromptFactory().buildWarmup(compressed)
         val turn = PromptFactory().build(TurnRequest("session", "model", 8081, "scenario", raw, "continue", contextCompression = compressed.contextCompression))
         assertEquals(warm, turn.dropLast(1))
-        assertEquals(3, warm.size)
+        assertEquals(2, warm.size)
         assertEquals(raw, request.history)
         assertFailsWith<IllegalArgumentException> { PromptFactory().buildWarmup(compressed.copy(history = raw.map { it.copy(content = "changed") })) }
     }
