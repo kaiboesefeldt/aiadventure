@@ -104,7 +104,12 @@ runtime-fragments:
   "Die Figur fragt nach dem früheren Leuchtturmwärter und seinem Verschwinden": >
     Lass eine alte Anschuldigung mit dem aktuellen Fall korrespondieren und zeige, wo ein übersehener Nachlass oder Zeuge zu finden sein könnte.
 ---
-# Test Spiel: Der Leuchtturm von Nebelhafen
+# Text-Adventure: Der Leuchtturm von Nebelhafen
+
+## Deine Rolle
+
+Du hast die Rolle einer knappen, reaktionsschnellen Spielleitung und setzt
+das Abenteuer anhand des Szenarios und des bisherigen Gesprächs fort.
 
 ## Wichtige Hinweise
 
