@@ -30,5 +30,5 @@
 - [x] Run the focused gateway test and confirm it fails because the current implementation sends two completions.
 - [x] Add combined-result parser tests, including independent fallback for invalid location and focus.
 - [x] Implement one combined schema and one analysis completion; omit `location` from required fields when no catalog exists, and preserve catalog enum validation when it does.
-- [x] Run focused World State and coordinator tests. `./gradlew check` was started but remained silent in `:server:test` for several minutes and was interrupted; the focused test set passed afterwards.
+- [x] Run focused World State and coordinator tests. The first `./gradlew check` attempt stayed silent in `:server:test` and was interrupted; a later complete `./gradlew check` passed.
 - [x] Review the diff and commit the completed change.
