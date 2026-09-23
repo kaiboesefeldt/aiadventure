@@ -89,6 +89,7 @@ data class TurnMetrics(
 sealed interface TurnStreamEvent {
     data class Token(val text: String) : TurnStreamEvent
     data class Fragment(val fragment: String) : TurnStreamEvent
+    data object GenerationReady : TurnStreamEvent
     data object InputReady : TurnStreamEvent
     data class Done(val metrics: TurnMetrics, val contextCompression: ContextCompression = ContextCompression()) : TurnStreamEvent
 }

@@ -45,6 +45,11 @@ internal class PrefillSubmission(
     fun turnFinished() {
         turnActive = false
     }
+
+    fun supersede(session: GameSession, scenario: Scenario, sessionId: String, action: String) {
+        turnActive = false
+        changed(session, scenario, sessionId, action)
+    }
 }
 
 internal class WarmupSubmission(private val api: AdventureApi) {

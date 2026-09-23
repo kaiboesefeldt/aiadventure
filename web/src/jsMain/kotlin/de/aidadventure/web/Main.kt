@@ -16,6 +16,7 @@ import de.aidadventure.web.persistence.SessionRepository
 import kotlinx.browser.window
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.await
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -175,7 +176,7 @@ private val DetailView = FC<DetailViewProps> { props ->
 
 private external interface PlayViewProps : Props { var scenario: Scenario; var session: GameSession; var api: AdventureApi; var sessions: SessionRepository; var onBack: () -> Unit; var onSessionChanged: (GameSession) -> Unit }
 private val PlayView = FC<PlayViewProps> { props ->
-    var action by useState(""); var pending by useState(props.session.introductionPending); var inputReady by useState(false); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null); var openFragmentIndex by useState<Int?>(null); var worldStateOpen by useState(false)
+    var action by useState(""); var pending by useState(props.session.introductionPending); var inputReady by useState(false); var turnPhase by useState(TurnPhase.IDLE); var turnAction by useState<String?>(null); var queuedAction by useState<String?>(null); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null); var openFragmentIndex by useState<Int?>(null); var worldStateOpen by useState(false)
     val liveId = props.session.id
     val (prefill) = useState(PrefillSubmission(props.api))
     val displayed = sessionForDisplay(props.session, streamed)
@@ -219,10 +220,82 @@ private val PlayView = FC<PlayViewProps> { props ->
             onCleanup { document.asDynamic().removeEventListener("click", outsideClick) }
         }
     }
-    fun submit() { val text = action.trim(); if (text.isBlank() || pending || props.session.introductionPending) return; prefill.turnStarted(); pending = true; inputReady = false; action = ""; error = null; scope.launch { try {
-        val completed = TurnSubmission(props.sessions, props.api).submit(props.session, props.scenario, text, { flushStreamUpdate { streamed = it } }, { flushStreamUpdate { streamed = it } }, { inputReady = true }, liveId)
-        metrics = completed.metrics; streamed = completed.session; props.onSessionChanged(completed.session); prefill.turnFinished(); prefill.changed(completed.session, props.scenario, liveId, action)
-    } catch (failure: Throwable) { error = clientMessage(failure) } finally { prefill.turnFinished(); pending = false; inputReady = false } } }
+    fun submit() {
+        val text = action.trim()
+        if (text.isBlank() || props.session.introductionPending) return
+        action = ""
+        error = null
+        when (turnPhase) {
+            TurnPhase.STREAMING -> {
+                queuedAction = listOfNotNull(queuedAction, text).joinToString("\n")
+                props.api.stopActiveTurn()
+            }
+            TurnPhase.READY -> {
+                turnAction = listOfNotNull(turnAction, text).joinToString("\n")
+                props.api.stopActiveTurn()
+                prefill.supersede(props.session, props.scenario, liveId, turnAction.orEmpty())
+            }
+            TurnPhase.PREPARING -> turnAction = listOfNotNull(turnAction, text).joinToString("\n")
+            TurnPhase.IDLE -> {
+                turnAction = text
+                queuedAction = null
+                pending = true
+                inputReady = false
+                turnPhase = TurnPhase.PREPARING
+                prefill.turnStarted()
+                scope.launch {
+                    var base = props.session
+                    try {
+                        while (true) {
+                            val submittedAction = turnAction ?: break
+                            val completed = try {
+                                TurnSubmission(props.sessions, props.api).submit(
+                                    base, props.scenario, submittedAction,
+                                    { flushStreamUpdate { streamed = it } },
+                                    { session -> flushStreamUpdate { streamed = session } },
+                                    { inputReady = true },
+                                    { turnPhase = TurnPhase.STREAMING },
+                                    liveId,
+                                    onGenerationReady = {
+                                        turnPhase = TurnPhase.READY
+                                        if (turnAction != submittedAction) {
+                                            prefill.supersede(props.session, props.scenario, liveId, turnAction.orEmpty())
+                                            props.api.stopActiveTurn()
+                                        }
+                                    },
+                                )
+                            } catch (stopped: de.aidadventure.web.api.TurnStreamStoppedException) {
+                                turnPhase = TurnPhase.PREPARING
+                                streamed = base
+                                delay(175)
+                                continue
+                            }
+                            base = completed.session
+                            metrics = completed.metrics
+                            streamed = completed.session
+                            props.onSessionChanged(completed.session)
+                            val next = queuedAction
+                            queuedAction = null
+                            if (next == null) break
+                            turnAction = next
+                            turnPhase = TurnPhase.PREPARING
+                            inputReady = false
+                            prefill.turnStarted()
+                        }
+                    } catch (failure: Throwable) {
+                        error = clientMessage(failure)
+                    } finally {
+                        turnAction = null
+                        queuedAction = null
+                        turnPhase = TurnPhase.IDLE
+                        prefill.turnFinished()
+                        pending = false
+                        inputReady = false
+                    }
+                }
+            }
+        }
+    }
     ReactHTML.section { className = ClassName("view-card")
         ReactHTML.button { className = ClassName("secondary-button"); disabled = pending; onClick = { props.onBack() }; +"Back to sessions" }
         ReactHTML.h2 { className = ClassName("view-title"); +displayed.title }
@@ -284,10 +357,12 @@ private val PlayView = FC<PlayViewProps> { props ->
             onClick = { introduce() }
             +"Retry introduction"
         }
-        ReactHTML.textarea { id = "player-action".unsafeCast<web.dom.ElementId>(); className = ClassName("action-input"); value = action; disabled = props.session.introductionPending || (pending && !inputReady); onChange = { action = it.target.unsafeCast<HTMLTextAreaElement>().value; if (!pending) prefill.changed(props.session, props.scenario, liveId, action) }; onKeyDown = { event -> if (shouldSubmitOnEnter(event.key, event.shiftKey, event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>(), pending, action)) { event.preventDefault(); submit() } } }
-        ReactHTML.button { className = ClassName("primary-button"); disabled = props.session.introductionPending || pending || action.isBlank(); onClick = { submit() }; +(if (pending && props.session.introductionPending) "Introducing adventure…" else if (pending && inputReady) "Updating world…" else if (pending) "Sending…" else "Send") }
+        ReactHTML.textarea { id = "player-action".unsafeCast<web.dom.ElementId>(); className = ClassName("action-input"); value = action; disabled = props.session.introductionPending; onChange = { action = it.target.unsafeCast<HTMLTextAreaElement>().value; if (turnPhase == TurnPhase.IDLE) prefill.changed(props.session, props.scenario, liveId, action) }; onKeyDown = { event -> if (shouldSubmitOnEnter(event.key, event.shiftKey, event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>(), false, action)) { event.preventDefault(); submit() } } }
+        ReactHTML.button { className = ClassName("primary-button"); disabled = props.session.introductionPending || action.isBlank(); onClick = { submit() }; +(if (pending && props.session.introductionPending) "Introducing adventure…" else if (pending && inputReady) "Updating world…" else if (pending) "Sending…" else "Send") }
     }
 }
+
+private enum class TurnPhase { IDLE, PREPARING, READY, STREAMING }
 
 private fun ChildrenBuilder.renderMetrics(metrics: TurnMetrics) { listOfNotNull(metrics.totalDurationMs?.let { "duration: ${it}ms" }, metrics.promptTokens?.let { "prompt tokens: $it" }, metrics.cacheTokens?.let { "cache tokens: $it" }).takeIf { it.isNotEmpty() }?.let { ReactHTML.p { className = ClassName("metadata"); +it.joinToString(" · ") } } }
 private fun clientMessage(cause: Throwable) = cause.message ?: "Something went wrong. Please try again."

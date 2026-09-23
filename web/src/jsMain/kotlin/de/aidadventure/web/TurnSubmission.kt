@@ -3,6 +3,7 @@ package de.aidadventure.web
 import de.aidadventure.web.api.AdventureApi
 import de.aidadventure.web.api.TurnMetrics
 import de.aidadventure.web.api.TurnRequestMapper
+import de.aidadventure.web.api.TurnStreamStoppedException
 import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
@@ -37,8 +38,10 @@ internal class TurnSubmission(
         onStarted: (GameSession) -> Unit,
         onStreamed: (GameSession) -> Unit,
         onInputReady: () -> Unit = {},
+        onTokenStarted: () -> Unit = {},
         liveSessionId: String = session.id,
         introduction: Boolean = false,
+        onGenerationReady: () -> Unit = {},
     ): CompletedTurn {
         val started = session.copy(
             messages = session.messages + GameMessage("player", playerAction, clock(), hidden = introduction),
@@ -49,10 +52,11 @@ internal class TurnSubmission(
         val streamedText = StringBuilder()
         var messages = started.messages
         val completion = try {
-            api.play(TurnRequestMapper.map(session, scenario, playerAction, liveSessionId, includeInitialSituation = introduction), onInputReady, { fragment ->
+            api.play(TurnRequestMapper.map(session, scenario, playerAction, liveSessionId, includeInitialSituation = introduction), onGenerationReady, onInputReady, { fragment ->
                 messages = messages.dropLast(1) + GameMessage("runtime-fragment", fragment, clock()) + messages.takeLast(1)
                 onStreamed(started.copy(messages = messages, updatedAt = clock()))
             }) { token ->
+                onTokenStarted()
                 streamedText.append(token)
                 onStreamed(
                     started.copy(
@@ -61,6 +65,14 @@ internal class TurnSubmission(
                     ),
                 )
             }
+        } catch (stopped: TurnStreamStoppedException) {
+            if (streamedText.isEmpty()) throw stopped
+            val partial = started.copy(
+                messages = messages + GameMessage("game-master", streamedText.toString(), clock()),
+                updatedAt = clock(),
+            )
+            sessions.save(partial)
+            return CompletedTurn(partial, TurnMetrics(null, null, null))
         } catch (cause: Throwable) {
             onStreamed(started)
             throw cause

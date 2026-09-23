@@ -249,6 +249,7 @@ fun Application.adventureModule(
                                 appliedFragment = event.fragment
                                 sse("fragment", eventJson.encodeToString(StreamFragment(event.fragment)))
                             }
+                            TurnStreamEvent.GenerationReady -> sse("generation_ready", "{}")
                             TurnStreamEvent.InputReady -> {
                                 sse("input_ready", "{}")
                                 inputReady = true
