@@ -23,6 +23,7 @@ data class GameSession(
     val worldState: WorldState = WorldState(),
     val introductionPending: Boolean = false,
     val contextCompression: ContextCompression = ContextCompression(),
+    val flags: Map<String, Boolean> = emptyMap(),
 )
 
 @Serializable data class WorldState(val location: String = "", val narrativeFocus: String = "")

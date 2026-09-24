@@ -51,6 +51,8 @@ private fun PrefillRequest.asTurnRequest() = TurnRequest(
     worldState = worldState,
     contextCompression = contextCompression,
     locations = locations,
+    flags = flags,
+    signals = signals,
 )
 
 data class CoordinatorKey(val sessionId: String, val modelId: String, val port: Int)
@@ -198,7 +200,7 @@ internal class SessionPrefillCoordinator(
     private var generation = 0L
     private var closed = false
     private var shutdownComplete = false
-    private var nextFragment: String? = null
+    private var nextFragment: RuntimeFragmentDefinition? = null
     private var latestContextCompression = ContextCompression()
     private var state: State = State.Idle
 
@@ -390,7 +392,7 @@ internal class SessionPrefillCoordinator(
         if (closed) return@withLock rejectedTurn("Prefill coordinator is closed.")
 
         when (val current = state) {
-            State.Idle -> startTurnLocked(request.withNextFragment().request, requestId = requestId)
+            State.Idle -> startTurnLocked(request.withNextFragment(), requestId = requestId)
             is State.Prefilling -> {
                 val execution = TurnExecution(requestId).also(TurnExecution::initialize)
                 state = State.TurnWaiting(current.lease, current.operation, current.resolvedTurn, request, execution)
@@ -400,12 +402,12 @@ internal class SessionPrefillCoordinator(
             is State.Ready -> {
                 val resolved = current.resolvedTurn?.takeIf { it.matches(request) }?.forRequest(request)
                     ?: request.withNextFragment()
-                startTurnLocked(resolved.request, current.lease, requestId)
+                startTurnLocked(resolved, current.lease, requestId)
             }
             is State.ReleasePending -> {
                 releaseLeaseLocked(current.lease)
                 state = State.Idle
-                startTurnLocked(request.withNextFragment().request, requestId = requestId)
+                startTurnLocked(request.withNextFragment(), requestId = requestId)
             }
 
             is State.TurnWaiting, is State.Turning -> rejectedTurn("A turn is already in progress for this coordinator.")
@@ -530,10 +532,10 @@ internal class SessionPrefillCoordinator(
                 }
                 val decision = response?.let(::parseFragmentDecision)
                 val accepted = candidate != null && decision == true
-                operation.resolvedFragment = candidate?.takeIf { accepted }?.fragment
+                operation.resolvedFragment = candidate?.takeIf { accepted }
                 rerankDiagnosticSink(RerankDiagnostic(response, decision, accepted))
                 val canonicalWarmup = prepared.copy(
-                    history = candidate?.takeIf { accepted }
+                    history = candidate?.takeIf { accepted && it.fragment.isNotBlank() }
                         ?.let { request.history + ChatEntry("runtime-fragment", it.fragment) }
                         ?: request.history,
                 )
@@ -551,12 +553,12 @@ internal class SessionPrefillCoordinator(
         return operation
     }
 
-    private fun startTurnLocked(request: TurnRequest, existingLease: Lease? = null, requestId: String = "unknown"): Flow<TurnStreamEvent> {
-        val lease = existingLease ?: acquireLease(request.llamaCppPort)
+    private fun startTurnLocked(resolvedTurn: ResolvedTurn, existingLease: Lease? = null, requestId: String = "unknown"): Flow<TurnStreamEvent> {
+        val lease = existingLease ?: acquireLease(resolvedTurn.request.llamaCppPort)
         val execution = TurnExecution(requestId).also(TurnExecution::initialize)
         state = State.Turning(lease, execution)
         recordLeaseTransition("turn_handoff", lease)
-        execution.handoff(lease, request)
+        execution.handoff(lease, resolvedTurn)
         return execution.flow()
     }
 
@@ -600,7 +602,7 @@ internal class SessionPrefillCoordinator(
                             ?: current.request.withNextFragment()
                         state = State.Turning(lease, current.execution)
                         recordLeaseTransition("turn_handoff", lease)
-                        current.execution.handoff(lease, resolved.request)
+                        current.execution.handoff(lease, resolved)
                     }
                 }
 
@@ -662,7 +664,7 @@ internal class SessionPrefillCoordinator(
     }
 
     private fun ResolvedTurn.matches(request: TurnRequest): Boolean {
-        val visibleHistory = if (fragment == null) this.request.history else this.request.history.dropLast(1)
+        val visibleHistory = if (fragment.isNullOrBlank()) this.request.history else this.request.history.dropLast(1)
         return this.request.sessionId == request.sessionId &&
             this.request.modelId == request.modelId &&
             this.request.llamaCppPort == request.llamaCppPort &&
@@ -670,6 +672,8 @@ internal class SessionPrefillCoordinator(
             visibleHistory == request.history &&
             this.request.playerAction == request.playerAction &&
             this.request.runtimeFragments == request.runtimeFragments &&
+            this.request.flags == request.flags &&
+            this.request.signals == request.signals &&
             this.request.worldState == request.worldState &&
             this.request.contextCompression == request.contextCompression
     }
@@ -678,8 +682,14 @@ internal class SessionPrefillCoordinator(
         request = request.copy(history = this.request.history),
     )
 
-    private fun TurnRequest.withNextFragment(): ResolvedTurn = nextFragment?.let { fragment ->
-        ResolvedTurn(copy(history = history + ChatEntry("runtime-fragment", fragment)), fragment)
+    private fun TurnRequest.withNextFragment(): ResolvedTurn = nextFragment?.takeIf { candidate ->
+        candidate.conditions.all { flags[it.flag] == it.value }
+    }?.let { candidate ->
+        ResolvedTurn(
+            if (candidate.fragment.isBlank()) this else copy(history = history + ChatEntry("runtime-fragment", candidate.fragment)),
+            candidate.fragment,
+            candidate.emittedSignals,
+        )
     } ?: ResolvedTurn(this, null)
 
     private suspend fun prepareTurn(request: TurnRequest, slot: LlamaCppSlot): TurnRequest {
@@ -705,6 +715,8 @@ internal class SessionPrefillCoordinator(
         private val output = Channel<TurnStreamEvent>(Channel.RENDEZVOUS)
         private val collected = AtomicBoolean()
         private lateinit var request: TurnRequest
+        private var selectedFragment: String? = null
+        private var emittedSignals: List<String> = emptyList()
         lateinit var job: Job
 
         fun initialize() {
@@ -713,9 +725,7 @@ internal class SessionPrefillCoordinator(
                 var streamFailure: Throwable? = null
                 try {
                     lease = ready.await()
-                    request.history.lastOrNull()
-                        ?.takeIf { it.role == "runtime-fragment" }
-                        ?.let { output.send(TurnStreamEvent.Fragment(it.content)) }
+                    if (selectedFragment != null) output.send(TurnStreamEvent.Fragment(selectedFragment.orEmpty(), emittedSignals))
                     request = prepareTurn(request, lease.slot)
                     output.send(TurnStreamEvent.GenerationReady)
                     val generated = StringBuilder()
@@ -731,7 +741,7 @@ internal class SessionPrefillCoordinator(
                         output.send(TurnStreamEvent.InputReady)
                         val warmup = WarmupRequest(request.sessionId, request.modelId, request.llamaCppPort,
                             request.scenarioMarkdown, request.history + listOf(ChatEntry("player", request.playerAction), ChatEntry("game-master", generated.toString())),
-                            request.runtimeFragments, request.worldState, request.contextCompression, request.locations)
+                            request.runtimeFragments, request.worldState, request.contextCompression, request.locations, request.flags, request.signals)
                         val artifact = try {
                             gateway.maintain(warmup, lease.slot)
                         } catch (cancelled: CancellationException) { throw cancelled }
@@ -765,8 +775,10 @@ internal class SessionPrefillCoordinator(
             }
         }
 
-        fun handoff(lease: Lease, request: TurnRequest) {
-            this.request = request
+        fun handoff(lease: Lease, resolvedTurn: ResolvedTurn) {
+            this.request = resolvedTurn.request
+            selectedFragment = resolvedTurn.fragment
+            emittedSignals = resolvedTurn.emittedSignals
             ready.complete(lease)
         }
 
@@ -854,7 +866,7 @@ internal class SessionPrefillCoordinator(
     private class RerankingOperation(val reservation: RerankReservation) : Operation {
         override val generation: Long get() = reservation.generation
         override lateinit var job: Job
-        var resolvedFragment: String? = null
+        var resolvedFragment: RuntimeFragmentDefinition? = null
     }
 
     private class WorldStateOperation(override val generation: Long) : Operation {

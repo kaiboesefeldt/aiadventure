@@ -82,6 +82,7 @@ internal class TurnSubmission(
             updatedAt = clock(),
             worldState = completion.worldState,
             contextCompression = completion.contextCompression,
+            flags = completion.flags,
             introductionPending = if (introduction) false else session.introductionPending,
         )
         if (introduction) check(streamedText.isNotBlank()) { "The introduction was empty. Please try again." }

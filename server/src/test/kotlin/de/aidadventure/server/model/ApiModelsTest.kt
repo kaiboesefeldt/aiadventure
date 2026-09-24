@@ -51,6 +51,33 @@ class ApiModelsTest {
     }
 
     @Test
+    fun `turn JSON carries signal-only fragment metadata and flag state`() {
+        val request = Json.decodeFromString<TurnRequest>("""
+            {"sessionId":"live-1","scenarioMarkdown":"# S","history":[],"playerAction":"look",
+             "flags":{"visited":false},"signals":{"enter":[{"flag":"visited","value":true}]},
+             "runtimeFragments":[{"matchText":"lighthouse","fragment":"","conditions":[{"flag":"visited","value":false}],"emittedSignals":["enter"]}]}
+        """.trimIndent())
+
+        assertNull(RequestValidator.validate(request.copy(modelId = "configured-llama-cpp")))
+        assertEquals(mapOf("visited" to false), request.flags)
+        assertEquals(listOf("enter"), request.runtimeFragments.single().emittedSignals)
+    }
+
+    @Test
+    fun `request validation rejects undeclared flag and signal references`() {
+        val request = TurnRequest(
+            sessionId = "live-1",
+            modelId = "configured-llama-cpp",
+            scenarioMarkdown = "# S",
+            history = emptyList(),
+            playerAction = "look",
+            runtimeFragments = listOf(RuntimeFragmentDefinition("lighthouse", "", listOf(FlagCondition("unknown", true)), listOf("missing"))),
+        )
+
+        assertNotNull(RequestValidator.validate(request))
+    }
+
+    @Test
     fun `request validation rejects duplicate runtime fragment matches`() {
         val error = RequestValidator.validate(
             TurnRequest(

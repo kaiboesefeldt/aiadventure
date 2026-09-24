@@ -143,7 +143,7 @@ internal fun processTurnStreamChunk(
             "input_ready" -> onInputReady()
             "fragment" -> onFragment(streamJson.decodeFromString<StreamFragment>(frame.data).fragment)
             "token" -> onToken(streamJson.decodeFromString<StreamToken>(frame.data).text)
-            "done" -> streamJson.decodeFromString<StreamDone>(frame.data).let { return TurnCompletion(it.metrics, it.worldState, it.contextCompression) }
+            "done" -> streamJson.decodeFromString<StreamDone>(frame.data).let { return TurnCompletion(it.metrics, it.worldState, it.contextCompression, it.flags) }
             "error" -> throw AdventureApiException(streamJson.decodeFromString<StreamError>(frame.data).message)
         }
     }
@@ -201,11 +201,20 @@ object TurnRequestMapper {
             history = session.messages.map { ChatEntry(it.role, it.content) },
             playerAction = playerAction,
             sessionId = sessionId,
-            runtimeFragments = parsed.runtimeFragments.map { RuntimeFragmentDefinition(it.matchText, it.fragment) },
+            runtimeFragments = parsed.runtimeFragments.map { fragment ->
+                RuntimeFragmentDefinition(
+                    fragment.matchText,
+                    fragment.fragment,
+                    fragment.conditions.map { FlagCondition(it.flag, it.value) },
+                    fragment.emittedSignals,
+                )
+            },
             worldState = session.worldState,
             contextCompression = session.contextCompression,
             locations = parsed.locations,
             initialSituation = if (includeInitialSituation) parsed.initialSituationSetting else "",
+            flags = parsed.initialFlags + session.flags,
+            signals = parsed.signals.mapValues { (_, assignments) -> assignments.map { FlagAssignment(it.flag, it.value) } },
         )
     }
 }
@@ -219,10 +228,14 @@ object PrefillRequestMapper {
             scenarioMarkdown = parsed.promptMarkdown,
             history = session.messages.map { ChatEntry(it.role, it.content) },
             playerAction = action,
-            runtimeFragments = parsed.runtimeFragments.map { RuntimeFragmentDefinition(it.matchText, it.fragment) },
+            runtimeFragments = parsed.runtimeFragments.map { fragment ->
+                RuntimeFragmentDefinition(fragment.matchText, fragment.fragment, fragment.conditions.map { FlagCondition(it.flag, it.value) }, fragment.emittedSignals)
+            },
             worldState = session.worldState,
             contextCompression = session.contextCompression,
             locations = parsed.locations,
+            flags = parsed.initialFlags + session.flags,
+            signals = parsed.signals.mapValues { (_, assignments) -> assignments.map { FlagAssignment(it.flag, it.value) } },
         )
     }
 }
@@ -234,10 +247,14 @@ object WarmupRequestMapper {
             sessionId = session.id,
             scenarioMarkdown = parsed.promptMarkdown,
             history = session.messages.map { ChatEntry(it.role, it.content) },
-            runtimeFragments = parsed.runtimeFragments.map { RuntimeFragmentDefinition(it.matchText, it.fragment) },
+            runtimeFragments = parsed.runtimeFragments.map { fragment ->
+                RuntimeFragmentDefinition(fragment.matchText, fragment.fragment, fragment.conditions.map { FlagCondition(it.flag, it.value) }, fragment.emittedSignals)
+            },
             worldState = session.worldState,
             contextCompression = session.contextCompression,
             locations = parsed.locations,
+            flags = parsed.initialFlags + session.flags,
+            signals = parsed.signals.mapValues { (_, assignments) -> assignments.map { FlagAssignment(it.flag, it.value) } },
         )
     }
 }
@@ -246,7 +263,18 @@ object WarmupRequestMapper {
 data class ChatEntry(val role: String, val content: String)
 
 @Serializable
-data class RuntimeFragmentDefinition(val matchText: String, val fragment: String)
+data class RuntimeFragmentDefinition(
+    val matchText: String,
+    val fragment: String,
+    val conditions: List<FlagCondition> = emptyList(),
+    val emittedSignals: List<String> = emptyList(),
+)
+
+@Serializable
+data class FlagCondition(val flag: String, val value: Boolean)
+
+@Serializable
+data class FlagAssignment(val flag: String, val value: Boolean)
 
 @Serializable
 data class TurnRequest(
@@ -259,6 +287,8 @@ data class TurnRequest(
     val contextCompression: ContextCompression = ContextCompression(),
     val locations: Map<String, String> = emptyMap(),
     val initialSituation: String = "",
+    val flags: Map<String, Boolean> = emptyMap(),
+    val signals: Map<String, List<FlagAssignment>> = emptyMap(),
 )
 
 @Serializable
@@ -272,6 +302,8 @@ data class PrefillRequest(
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
     val locations: Map<String, String> = emptyMap(),
+    val flags: Map<String, Boolean> = emptyMap(),
+    val signals: Map<String, List<FlagAssignment>> = emptyMap(),
 )
 
 @Serializable
@@ -283,6 +315,8 @@ data class WarmupRequest(
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
     val locations: Map<String, String> = emptyMap(),
+    val flags: Map<String, Boolean> = emptyMap(),
+    val signals: Map<String, List<FlagAssignment>> = emptyMap(),
 )
 
 @Serializable
@@ -309,11 +343,13 @@ private data class StreamDone(
     val metrics: TurnMetrics,
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
+    val flags: Map<String, Boolean> = emptyMap(),
 )
 data class TurnCompletion(
     val metrics: TurnMetrics,
     val worldState: WorldState,
     val contextCompression: ContextCompression = ContextCompression(),
+    val flags: Map<String, Boolean> = emptyMap(),
 )
 
 @Serializable

@@ -2,6 +2,7 @@ package de.aidadventure.server.runtimefragments
 
 import de.aidadventure.server.EmbeddingService
 import de.aidadventure.server.model.RuntimeFragmentDefinition
+import de.aidadventure.server.model.FlagCondition
 import de.aidadventure.server.testutils.TestClock
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -10,6 +11,20 @@ import kotlin.test.assertEquals
 import kotlin.time.Duration.Companion.minutes
 
 class RuntimeFragmentIndexRegistryTest {
+    @Test
+    fun `query preserves conditions and signals from selected definition`() = runTest {
+        val registry = RuntimeFragmentIndexRegistry()
+        val embedding = CountingEmbeddingService()
+        val definition = RuntimeFragmentDefinition(
+            "match", "fragment", listOf(FlagCondition("has-key", true)), listOf("finds-key"),
+        )
+
+        val selected = registry.query(listOf(definition), embedding, floatArrayOf(1f, 0f))
+
+        assertEquals(definition, selected)
+        registry.close()
+    }
+
     @Test
     fun sameOrderedDefinitionsReuseOnePreparedIndex() = runTest {
         val registry = RuntimeFragmentIndexRegistry()

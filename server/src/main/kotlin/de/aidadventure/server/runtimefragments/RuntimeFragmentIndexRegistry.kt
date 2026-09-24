@@ -75,10 +75,9 @@ class RuntimeFragmentIndexRegistry private constructor(
                 traceSink.selected(requireNotNull(result.fields[FRAGMENT_FIELD]), result.similarity)
             }
             result?.fields?.let { fields ->
-                RuntimeFragmentDefinition(
-                    matchText = requireNotNull(fields[MATCH_TEXT_FIELD]),
-                    fragment = requireNotNull(fields[FRAGMENT_FIELD]),
-                )
+                val matchText = requireNotNull(fields[MATCH_TEXT_FIELD])
+                val fragment = requireNotNull(fields[FRAGMENT_FIELD])
+                definitions.firstOrNull { it.matchText == matchText && it.fragment == fragment }
             }
         }
 
