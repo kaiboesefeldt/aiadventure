@@ -19,6 +19,32 @@ import web.dom.document
 
 class DebugPanelTest {
     @Test
+    fun `repository order survives a reset turn counter after reload`() {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        try {
+            flushSync { root.render(DebugPanel.create {
+                scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+                session = GameSession("session", "scenario", "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+                events = listOf(
+                    DebugEvent("old", "session", "before-reload", 0, 10, "turn_status", "old turn", turnOrder = 12),
+                    DebugEvent("new", "session", "after-reload", 0, 20, "turn_status", "new turn", turnOrder = 0),
+                )
+                onClose = {}
+                onClear = {}
+            }) }
+            val cards = container.querySelectorAll(".debug-event")
+            assertEquals(2, cards.length)
+            assertEquals(true, cards.item(0)?.textContent?.contains("Old turn"))
+            assertEquals(true, cards.item(1)?.textContent?.contains("New turn"))
+        } finally {
+            flushSync { root.unmount() }
+            container.remove()
+        }
+    }
+
+    @Test
     fun `frontmatter tree handles a cyclic YAML alias`() {
         val container = document.createElement("div")
         document.body.appendChild(container)

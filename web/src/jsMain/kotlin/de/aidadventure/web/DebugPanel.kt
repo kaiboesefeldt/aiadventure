@@ -27,7 +27,7 @@ internal external interface DebugPanelProps : Props {
 
 internal val DebugPanel = FC<DebugPanelProps> { props ->
     var readerAtBottom by useState(true)
-    val ordered = props.events.sortedWith(compareBy<DebugEvent> { it.turnOrder }.thenBy { it.sequence })
+    val ordered = props.events
     useEffect(dependencies = arrayOf(ordered.size)) {
         if (ordered.isEmpty()) readerAtBottom = true
         if (readerAtBottom) {

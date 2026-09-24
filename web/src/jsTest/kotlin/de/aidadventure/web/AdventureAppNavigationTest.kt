@@ -299,13 +299,23 @@ class AdventureAppNavigationTest {
             assertNull(container.querySelector("button[aria-label='World state information']"))
             assertNull(container.querySelector(".metadata"))
             assertEquals(false, container.textContent?.contains("secret fragment"))
-            assertNotNull(container.querySelector("button[aria-label='Open debug panel']"))
+            val opener = assertNotNull(container.querySelector("button[aria-label='Open debug panel']"))
             container.click("button[aria-label='Open debug panel']")
             nextBrowserTick()
             assertNotNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
+            assertEquals(container.querySelector("button[aria-label='Close debug panel']"), document.activeElement)
             container.click("button[aria-label='Close debug panel']")
             nextBrowserTick()
             assertNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
+            assertEquals(opener, document.activeElement)
+
+            container.click("button[aria-label='Open debug panel']")
+            nextBrowserTick()
+            assertNotNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
+            document.asDynamic().dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })"))
+            nextBrowserTick()
+            assertNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
+            assertEquals(opener, document.activeElement)
         } finally {
             container.remove()
         }
@@ -319,8 +329,8 @@ class AdventureAppNavigationTest {
         val scenario = Scenario("scenario", "scenario.md", "---\nflags:\n  doorOpen: false\nsignals:\n  unlock:\n    triggers:\n      - set-flag:\n          doorOpen: true\n---\n# Lighthouse\nPrompt body", 1)
         val session = GameSession("session", scenario.id, "Harbor", "local-model", emptyList(), 1, 1, flags = mapOf("doorOpen" to true))
         val events = recordingDebugEvents(
-            DebugEvent("later", "session", "turn", 2, 2, "turn_metrics", "completed", metrics = DiagnosticMetrics(promptTokens = 21, contextTokens = 4096, predictedTokens = 12, cacheTokens = 15, evaluatedTokens = 6, promptDurationMs = 100.0, predictedDurationMs = 200.0, promptTokensPerSecond = 210.0, predictedTokensPerSecond = 60.0, totalDurationMs = 300), turnOrder = 1),
             DebugEvent("earlier", "session", "turn", 1, 1, "background_rerank", "prior_completed", fields = mapOf("source" to "prior_turn", "result" to "accepted", "fragment" to "Hidden fragment", "matchText" to "lighthouse", "playerAction" to "player secret action", "gameMasterOutput" to "game master secret output"), turnOrder = 1),
+            DebugEvent("later", "session", "turn", 2, 2, "turn_metrics", "completed", metrics = DiagnosticMetrics(promptTokens = 21, contextTokens = 4096, predictedTokens = 12, cacheTokens = 15, evaluatedTokens = 6, promptDurationMs = 100.0, predictedDurationMs = 200.0, promptTokensPerSecond = 210.0, predictedTokensPerSecond = 60.0, totalDurationMs = 300), turnOrder = 1),
             DebugEvent("compression", "session", "turn", 3, 3, "context_compression", "completed", fields = mapOf("epoch" to "2", "activeCoversThroughTurn" to "4"), turnOrder = 1),
             DebugEvent("signal", "session", "turn", 4, 4, "flags", "applied", fields = mapOf("emittedSignals" to "unlock", "appliedAssignments" to "doorOpen=true"), turnOrder = 1),
         )

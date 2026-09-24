@@ -182,6 +182,10 @@ private val PlayView = FC<PlayViewProps> { props ->
     val liveId = props.session.id
     val (prefill) = useState(PrefillSubmission(props.api))
     val displayed = sessionForDisplay(props.session, streamed)
+    fun closeDebugPanel() {
+        debugOpen = false
+        window.setTimeout({ document.querySelector("button[aria-label='Open debug panel']")?.asDynamic()?.focus() }, 0)
+    }
     fun setTurnPhase(phase: TurnPhase) { turnInput.phase = phase }
     fun introduce() {
         prefill.turnStarted()
@@ -346,7 +350,7 @@ private val PlayView = FC<PlayViewProps> { props ->
         scenario = props.scenario
         session = displayed
         events = diagnosticEvents.filter { it.sessionId == liveId }
-        onClose = { debugOpen = false }
+        onClose = ::closeDebugPanel
         onClear = {
             scope.launch {
                 runCatching { props.debugEvents.clearSession(liveId) }

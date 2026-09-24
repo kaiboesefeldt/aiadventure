@@ -27,4 +27,11 @@ The two new component files and `StreamedSessionTest.kt` extend the brief's init
 
 ## Review
 
-The panel derives current flags from the displayed session and uses `ScenarioFrontmatter.parse(...).promptMarkdown` for the system-prompt body. Diagnostic fields are presented as labels and values, and player-action/model-output field names are excluded. Events are ordered by numeric `turnOrder` and `sequence`; `source=prior_turn` remains visible. Clearing calls `clearSession` with the active session ID. The panel is read-only apart from this action. Transcript navigation remains for Task 4.
+The panel derives current flags from the displayed session and uses `ScenarioFrontmatter.parse(...).promptMarkdown` for the system-prompt body. Diagnostic fields are presented as labels and values, and player-action/model-output field names are excluded. Events follow the diagnostic repository's persisted order; `source=prior_turn` remains visible. Clearing calls `clearSession` with the active session ID. The panel is read-only apart from this action. Transcript navigation remains for Task 4.
+
+## Review follow-up: ordering and focus
+
+- RED: a focused browser run of `DebugPanelTest.repository order survives a reset turn counter after reload` and `AdventureAppNavigationTest.play view puts diagnostics behind a closable panel without inline controls` failed both tests. The UI sort moved a new post-reload turn before older persisted turns; closing by X left focus on the removed close control.
+- GREEN: the panel now renders the repository's order without re-sorting. The close callback returns focus to the fixed opener after X and Escape. The navigation test asserts focus for both paths.
+- Focused `./gradlew :web:browserTest --tests 'de.aidadventure.web.DebugPanelTest' --tests 'de.aidadventure.web.AdventureAppNavigationTest'` passed.
+- Final serial `./gradlew :web:compileTestKotlinJs` and `./gradlew :web:browserTest` passed. The full browser suite ran 95 tests with zero failures or errors; `git diff --check` passed.
