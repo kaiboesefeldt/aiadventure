@@ -82,6 +82,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .empty-state { color: var(--muted-ink); }
 
 .debug-open-button { position: fixed; z-index: 20; top: 45%; right: 0; border-radius: 10px 0 0 10px; border-color: var(--accent); background: var(--accent); color: white; box-shadow: 0 0.3rem 1rem rgb(31 41 51 / 20%); }
+.debug-navigation-button { margin-top: 0.6rem; font-size: 0.8rem; }
 .debug-panel { position: fixed; z-index: 21; top: 0; right: 0; bottom: 0; width: min(32rem, 100vw); display: flex; flex-direction: column; border-left: 1px solid var(--rule); background: var(--surface); box-shadow: -0.5rem 0 2rem rgb(31 41 51 / 20%); }
 .debug-panel-header, .debug-log-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.75rem 1rem; border-bottom: 1px solid var(--rule); }
 .debug-panel-header h2, .debug-log-heading h3 { margin: 0; font-size: 1.1rem; }

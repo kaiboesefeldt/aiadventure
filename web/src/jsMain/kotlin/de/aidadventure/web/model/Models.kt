@@ -89,4 +89,5 @@ data class DebugEvent(
     val metrics: DiagnosticMetrics? = null,
     val transcriptRole: String? = null,
     val turnOrder: Long = 0,
+    val transcriptIndex: Int? = null,
 )

@@ -179,6 +179,7 @@ private val PlayView = FC<PlayViewProps> { props ->
     var debugOpen by useState(false)
     var diagnosticEvents by useState(emptyList<DebugEvent>())
     var diagnosticsRevision by useState(0)
+    var selectedDebugEventId by useState<String?>(null)
     val liveId = props.session.id
     val (prefill) = useState(PrefillSubmission(props.api))
     val displayed = sessionForDisplay(props.session, streamed)
@@ -240,6 +241,16 @@ private val PlayView = FC<PlayViewProps> { props ->
             }, 400)
             onCleanup { window.clearInterval(timer) }
         }
+    }
+    useEffect(dependencies = arrayOf(debugOpen, selectedDebugEventId, diagnosticEvents.size)) {
+        val eventId = selectedDebugEventId
+        if (debugOpen && eventId != null) window.setTimeout({
+            val target = document.getElementById("debug-event-$eventId".unsafeCast<web.dom.ElementId>())
+            if (target != null) {
+                target.asDynamic().scrollIntoView()
+                selectedDebugEventId = null
+            }
+        }, 0)
     }
     fun submit() {
         val text = action.trim()
@@ -324,10 +335,21 @@ private val PlayView = FC<PlayViewProps> { props ->
     ReactHTML.section { className = ClassName("view-card")
         ReactHTML.button { className = ClassName("secondary-button"); disabled = pending; onClick = { props.onBack() }; +"Back to sessions" }
         ReactHTML.h2 { className = ClassName("view-title"); +displayed.title }
-        ReactHTML.div { className = ClassName("transcript"); displayed.messages.forEachIndexed { index, message ->
-            if (isVisibleTranscriptMessage(message)) ReactHTML.article {
+        ReactHTML.div { className = ClassName("transcript"); displayed.messages.filter(::isVisibleTranscriptMessage).forEachIndexed { index, message ->
+            ReactHTML.article {
+                id = "transcript-message-$index".unsafeCast<web.dom.ElementId>()
                 className = ClassName("message")
+                asDynamic().tabIndex = -1
                 MarkdownMessage { content = message.content }
+                val matchingEvent = diagnosticEvents.firstOrNull {
+                    it.sessionId == liveId && it.transcriptIndex == index && it.transcriptRole == message.role
+                }
+                if (matchingEvent != null) ReactHTML.button {
+                    className = ClassName("secondary-button debug-navigation-button")
+                    ariaLabel = "Show diagnostics"
+                    onClick = { selectedDebugEventId = matchingEvent.id; debugOpen = true }
+                    +"Show diagnostics"
+                }
             }
         } }
         error?.let { ReactHTML.p { className = ClassName("status-error"); +it } }
@@ -351,6 +373,16 @@ private val PlayView = FC<PlayViewProps> { props ->
         session = displayed
         events = diagnosticEvents.filter { it.sessionId == liveId }
         onClose = ::closeDebugPanel
+        onShowTranscript = { index ->
+            debugOpen = false
+            window.setTimeout({
+                val target = document.getElementById("transcript-message-$index".unsafeCast<web.dom.ElementId>())
+                if (target != null) {
+                    target.scrollIntoView()
+                    target.focus()
+                }
+            }, 0)
+        }
         onClear = {
             scope.launch {
                 runCatching { props.debugEvents.clearSession(liveId) }

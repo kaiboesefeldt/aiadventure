@@ -209,7 +209,8 @@ class TurnSubmissionTest {
         assertEquals("session-1", events.saved.single { it.sequence == 0 }.sessionId)
         assertEquals("prior_turn", events.saved.last().fields["source"])
         assertEquals(7, events.saved.last().metrics?.cacheTokens)
-        assertEquals("game-master", events.saved.last().transcriptRole)
+        assertEquals("player", events.saved.last().transcriptRole)
+        assertEquals(listOf(2, 0), events.saved.map { it.transcriptIndex })
         assertFalse(events.saved.toString().contains("SECRET_PLAYER_ACTION"))
         assertFalse(events.saved.toString().contains("SECRET_GAME_MASTER_OUTPUT"))
         TurnSubmission(RecordingSessions(), api, clock = { 42 }, debugEvents = events)
@@ -233,6 +234,7 @@ class TurnSubmissionTest {
         }
         assertEquals(2, events.saved.size)
         assertEquals(emptyList(), sessions.saved)
+        assertEquals(listOf(2, 0), events.saved.map { it.transcriptIndex })
         assertFalse(events.saved.toString().contains("SECRET_PLAYER_ACTION"))
     }
 
@@ -244,9 +246,94 @@ class TurnSubmissionTest {
         val completed = TurnSubmission(sessions, DiagnosticAdventureApi(DiagnosticOutcome.STOPPED), debugEvents = events)
             .submit(sessionWithPreviousPair(), scenario(), "SECRET_PLAYER_ACTION", {}, {})
         assertEquals(2, events.saved.size)
+        assertEquals(listOf(2, 0), events.saved.map { it.transcriptIndex })
         assertEquals("SECRET_GAME_MASTER_OUTPUT", completed.session.messages.last().content)
         assertEquals(completed.session, sessions.saved.single())
         assertTrue(events.saved.none { it.toString().contains("SECRET_GAME_MASTER_OUTPUT") })
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `resumed history links prior turn diagnostics to the prior visible player`() = GlobalScope.promise<Unit> {
+        val events = RecordingDebugEvents()
+        val previous = sessionWithPreviousPair().copy(messages = listOf(
+            GameMessage("player", "hidden introduction", 1, hidden = true),
+            GameMessage("game-master", "Welcome", 2),
+            GameMessage("player", "visit pier", 3),
+            GameMessage("game-master", "At the pier", 4),
+        ))
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+            override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("Use diagnostic overload")
+            override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
+                onDiagnostic(StreamDiagnostic("background_rerank", "prior_completed", mapOf("source" to "prior_turn"), transcriptRole = "player"))
+                onDiagnostic(StreamDiagnostic("turn_state", "initial", transcriptRole = "player"))
+                onDiagnostic(StreamDiagnostic("turn_status", "started", transcriptRole = "game-master"))
+                onToken("New output")
+                onDiagnostic(StreamDiagnostic("turn_status", "completed", transcriptRole = "game-master"))
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+            }
+        }
+        TurnSubmission(RecordingSessions(), api, debugEvents = events).submit(previous, scenario(), "new action", {}, {})
+        assertEquals(listOf(1, 3, null, 4), events.saved.map { it.transcriptIndex })
+        assertFalse(events.saved.toString().contains("visit pier"))
+        assertFalse(events.saved.toString().contains("new action"))
+        assertFalse(events.saved.toString().contains("New output"))
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `introduction diagnostics never link hidden player input`() = GlobalScope.promise<Unit> {
+        val events = RecordingDebugEvents()
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+            override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("Use diagnostic overload")
+            override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
+                onDiagnostic(StreamDiagnostic("turn_state", "initial", transcriptRole = "player"))
+                onToken("Welcome")
+                onDiagnostic(StreamDiagnostic("flags", "applied", transcriptRole = "player"))
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+            }
+        }
+        TurnSubmission(RecordingSessions(), api, debugEvents = events).submitIntroduction(newGameSession(scenario(), "session-1", 1), scenario(), {}, {})
+        assertEquals(listOf(null, 0), events.saved.map { it.transcriptIndex })
+        assertEquals(null, events.saved.first().transcriptRole)
+        assertEquals("game-master", events.saved.last().transcriptRole)
+        assertFalse(events.saved.toString().contains(TurnSubmission.INTRODUCTION_INSTRUCTION))
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `runtime fragment inserted after an early diagnostic does not shift its visible transcript index`() = GlobalScope.promise<Unit> {
+        val events = RecordingDebugEvents()
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+            override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("Use diagnostic overload")
+            override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
+                onDiagnostic(StreamDiagnostic("turn_state", "initial", transcriptRole = "player"))
+                onFragment("Hidden retrieved context")
+                onToken("Visible answer")
+                onDiagnostic(StreamDiagnostic("turn_status", "completed", transcriptRole = "game-master"))
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+            }
+        }
+        val completed = TurnSubmission(RecordingSessions(), api, debugEvents = events)
+            .submit(sessionWithPreviousPair(), scenario(), "new action", {}, {}).session
+        assertEquals(listOf(2, 3), events.saved.map { it.transcriptIndex })
+        assertEquals(listOf("player", "game-master", "player", "game-master"), completed.messages.filter(::isVisibleTranscriptMessage).map { it.role })
+        assertFalse(events.saved.toString().contains("Hidden retrieved context"))
+    }
+
+    @Test
+    fun `legacy debug event decodes without a transcript index`() {
+        val event = kotlinx.serialization.json.Json.decodeFromString(
+            DebugEvent.serializer(),
+            """{"id":"old","sessionId":"session-1","turnId":"turn-1","sequence":0,"createdAt":1,"kind":"turn_status","stage":"completed"}""",
+        )
+        assertEquals(null, event.transcriptIndex)
     }
 
     @OptIn(DelicateCoroutinesApi::class)

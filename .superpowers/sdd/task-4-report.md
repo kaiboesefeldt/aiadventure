@@ -75,3 +75,31 @@
 ### Verification
 
 - `./gradlew :server:test --tests de.aidadventure.server.ApplicationTest --tests de.aidadventure.server.prefill.PrefillCoordinatorTest --tests de.aidadventure.server.prefill.PrefillRegistryTest` — passed.
+
+# Task 4: transcript and diagnostic navigation
+
+## Implementation
+
+- Added nullable `DebugEvent.transcriptIndex` with a default of `null`, so older persisted events decode unchanged. The index counts visible transcript articles; hidden introduction input and runtime fragments do not consume indexes.
+- `TurnSubmission` assigns references without storing transcript text in diagnostics. Current player diagnostics target the current visible action, `source=prior_turn` targets the last visible prior player, and game-master diagnostics target output only after output exists. Introduction diagnostics target visible output once it exists; before that, both reference and role are null.
+- Visible transcript articles and debug events have stable IDs. An accessible button on each linked event closes the panel and scrolls to the transcript article. An accessible button on a linked transcript article opens the panel and scrolls to its event. Links are hidden when the referenced message is absent or its role does not match.
+
+## TDD evidence
+
+- Added failing navigation and submission tests first. Initial focused browser run: 29 tests, 6 expected failures for missing references and controls.
+- Added the model field and implementation. Focused browser run then passed: 29 tests.
+- Added a stricter introduction test requiring a null role before output. Isolated run failed as expected, then passed after the role fix.
+- Tests cover both navigation directions, resumed sessions, prior-turn references, hidden introduction input, missing output, partial stopped turns, later runtime-fragment insertion, legacy event decoding, and absence of message text in diagnostics.
+
+## Verification
+
+- `./gradlew :web:compileTestKotlinJs`: passed.
+- `./gradlew :web:browserTest`: passed.
+- `./gradlew check`: passed on the first and final runs. An intervening run failed one untouched server test, `PrefillCoordinatorTest.waiting turn receives prior rerank failure before its terminal error`, at line 87; an isolated rerun failed too. The final full run passed. This server test is timing sensitive; Task 4 changed only web files.
+- `git diff --check`: passed separately after the full check.
+
+## Self-review
+
+- Scope is limited to navigation, the diagnostic reference field, submission mapping, styling for the new controls, and relevant tests.
+- References use only indexes and roles. No message body is copied into `DebugEvent`.
+- A diagnostic emitted before any game-master output has no output reference. A failed turn can retain diagnostics while its transient transcript is discarded; the UI shows no navigation control unless the referenced visible message exists.

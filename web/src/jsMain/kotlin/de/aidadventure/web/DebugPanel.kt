@@ -23,6 +23,7 @@ internal external interface DebugPanelProps : Props {
     var events: List<DebugEvent>
     var onClose: () -> Unit
     var onClear: () -> Unit
+    var onShowTranscript: (Int) -> Unit
 }
 
 internal val DebugPanel = FC<DebugPanelProps> { props ->
@@ -96,19 +97,30 @@ internal val DebugPanel = FC<DebugPanelProps> { props ->
                 readerAtBottom = target.scrollHeight - target.scrollTop - target.clientHeight <= 24
             }
             if (ordered.isEmpty()) ReactHTML.p { className = ClassName("empty-state"); +"No turn diagnostics yet." }
-            ordered.forEach { event -> renderDebugEvent(event) }
+            val visibleMessages = props.session.messages.filter(::isVisibleTranscriptMessage)
+            ordered.forEach { event ->
+                val index = event.transcriptIndex
+                renderDebugEvent(event, if (index != null && visibleMessages.getOrNull(index)?.role == event.transcriptRole) index else null, props.onShowTranscript)
+            }
         }
     }
 }
 
-private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent) {
+private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex: Int?, onShowTranscript: (Int) -> Unit) {
     ReactHTML.article {
         key = event.id
+        id = "debug-event-${event.id}".unsafeCast<web.dom.ElementId>()
         className = ClassName("debug-event")
         ReactHTML.div {
             className = ClassName("debug-event-topline")
             ReactHTML.h4 { +humanLabel(event.kind) }
             ReactHTML.span { className = ClassName("debug-stage"); +humanLabel(event.stage) }
+        }
+        if (transcriptIndex != null) ReactHTML.button {
+            className = ClassName("secondary-button debug-navigation-button")
+            ariaLabel = "Show transcript message"
+            onClick = { onShowTranscript(transcriptIndex) }
+            +"Show transcript message"
         }
         ReactHTML.details {
             ReactHTML.summary { +"Details" }

@@ -62,6 +62,10 @@ internal class TurnSubmission(
         val turnOrder = nextTurnId++
         val turnId = "turn-${clock()}-$turnOrder"
         var nextSequence = 0
+        val priorPlayerIndex = session.messages.indexOfLast { it.role == "player" && isVisibleTranscriptMessage(it) }
+            .takeIf { it >= 0 }
+            ?.let { rawIndex -> session.messages.take(rawIndex).count(::isVisibleTranscriptMessage) }
+        val currentPlayerIndex = session.messages.count(::isVisibleTranscriptMessage)
         val started = session.copy(
             messages = session.messages + GameMessage("player", playerAction, clock(), hidden = introduction),
             updatedAt = clock(),
@@ -87,12 +91,28 @@ internal class TurnSubmission(
                 val repository = debugEvents
                 if (repository != null) {
                     val sequence = nextSequence++
+                    val priorTurn = diagnostic.fields["source"] == "prior_turn"
+                    val outputExists = streamedText.isNotEmpty()
+                    val transcriptIndex = when {
+                        priorTurn -> priorPlayerIndex
+                        introduction -> if (outputExists) currentPlayerIndex else null
+                        diagnostic.transcriptRole == "player" -> currentPlayerIndex
+                        diagnostic.transcriptRole == "game-master" && outputExists -> currentPlayerIndex + 1
+                        else -> null
+                    }
+                    val transcriptRole = when {
+                        priorTurn && priorPlayerIndex != null -> "player"
+                        introduction && transcriptIndex != null -> "game-master"
+                        introduction -> null
+                        else -> diagnostic.transcriptRole
+                    }
                     val event = DebugEvent(
                         id = "$turnId-$sequence", sessionId = session.id, turnId = turnId,
                         sequence = sequence, createdAt = clock(), kind = diagnostic.kind,
                         stage = diagnostic.stage, fields = diagnostic.fields,
-                        metrics = diagnostic.metrics, transcriptRole = diagnostic.transcriptRole,
+                        metrics = diagnostic.metrics, transcriptRole = transcriptRole,
                         turnOrder = turnOrder,
+                        transcriptIndex = transcriptIndex,
                     )
                     diagnosticWriteScope.launch(start = CoroutineStart.UNDISPATCHED) {
                         try {

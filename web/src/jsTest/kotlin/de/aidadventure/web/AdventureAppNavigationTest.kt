@@ -8,6 +8,7 @@ import de.aidadventure.web.api.TurnCompletion
 import de.aidadventure.web.api.TurnRequest
 import de.aidadventure.web.api.WarmupRequest
 import de.aidadventure.web.model.GameSession
+import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.DebugEvent
 import de.aidadventure.web.model.DiagnosticMetrics
 import de.aidadventure.web.model.Scenario
@@ -32,6 +33,56 @@ import web.dom.document
 import web.html.HTMLElement
 
 class AdventureAppNavigationTest {
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `resumed transcript and diagnostic events navigate in both directions`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+        val session = GameSession("session", scenario.id, "Harbor", messages = listOf(
+            GameMessage("player", "hidden introduction", 1, hidden = true),
+            GameMessage("game-master", "Welcome", 2),
+            GameMessage("player", "Visit pier", 3),
+            GameMessage("game-master", "At the pier", 4),
+        ), createdAt = 1, updatedAt = 4)
+        val events = recordingDebugEvents(
+            DebugEvent("intro-event", "session", "intro", 0, 2, "turn_status", "completed", transcriptRole = "game-master", transcriptIndex = 0),
+            DebugEvent("player-event", "session", "turn", 0, 3, "turn_state", "initial", transcriptRole = "player", transcriptIndex = 1),
+        )
+        val elementPrototype = js("Element.prototype")
+        val oldScrollIntoView = elementPrototype.scrollIntoView
+        elementPrototype.scrollIntoView = js("function () { window.__lastScrolledId = this.id; }")
+        try {
+            flushSync { createRoot(container).render(AdventureApp.create {
+                scenarioRepository = scenarioRepository(scenario)
+                sessionRepository = fixedSessions(session)
+                debugEventRepository = events
+                api = unusedApi()
+                initialScenarios = listOf(scenario)
+            }) }
+            container.clickButtonNamed(scenario.name)
+            nextBrowserTick()
+            container.clickButtonNamed(session.title)
+            nextBrowserTick()
+            assertNull(container.querySelector("#transcript-message-3"))
+            assertNotNull(container.querySelector("#transcript-message-1"))
+            container.click("#transcript-message-1 button[aria-label='Show diagnostics']")
+            nextBrowserTick()
+            assertNotNull(container.querySelector("#debug-event-player-event"))
+            nextBrowserTick()
+            assertEquals("debug-event-player-event", window.asDynamic().__lastScrolledId)
+            assertNotNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
+            container.click("#debug-event-player-event button[aria-label='Show transcript message']")
+            nextBrowserTick()
+            assertEquals("transcript-message-1", window.asDynamic().__lastScrolledId)
+            assertNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
+            assertNotNull(container.querySelector("#transcript-message-0 button[aria-label='Show diagnostics']"))
+        } finally {
+            elementPrototype.scrollIntoView = oldScrollIntoView
+            container.remove()
+        }
+    }
+
     @Test
     fun `new session persists the initial situation location`() {
         val scenario = Scenario(
