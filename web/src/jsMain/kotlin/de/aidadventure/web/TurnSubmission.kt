@@ -6,8 +6,17 @@ import de.aidadventure.web.api.TurnRequestMapper
 import de.aidadventure.web.api.TurnStreamStoppedException
 import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
+import de.aidadventure.web.model.DebugEvent
 import de.aidadventure.web.model.Scenario
 import de.aidadventure.web.persistence.SessionRepository
+import de.aidadventure.web.persistence.DebugEventRepository
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 internal data class CompletedTurn(val session: GameSession, val metrics: TurnMetrics)
 
@@ -15,6 +24,7 @@ internal class TurnSubmission(
     private val sessions: SessionRepository,
     private val api: AdventureApi,
     private val clock: () -> Long = ::now,
+    private val debugEvents: DebugEventRepository? = null,
 ) {
     suspend fun submitIntroduction(
         session: GameSession,
@@ -43,6 +53,8 @@ internal class TurnSubmission(
         introduction: Boolean = false,
         onGenerationReady: () -> Unit = {},
     ): CompletedTurn {
+        val turnId = "turn-${clock()}-${nextTurnId++}"
+        var nextSequence = 0
         val started = session.copy(
             messages = session.messages + GameMessage("player", playerAction, clock(), hidden = introduction),
             updatedAt = clock(),
@@ -52,18 +64,37 @@ internal class TurnSubmission(
         val streamedText = StringBuilder()
         var messages = started.messages
         val completion = try {
-            api.play(TurnRequestMapper.map(session, scenario, playerAction, liveSessionId, includeInitialSituation = introduction), onGenerationReady, onInputReady, { fragment ->
-                messages = messages.dropLast(1) + GameMessage("runtime-fragment", fragment, clock()) + messages.takeLast(1)
-                onStreamed(started.copy(messages = messages, updatedAt = clock()))
-            }) { token ->
-                onTokenStarted()
-                streamedText.append(token)
-                onStreamed(
-                    started.copy(
-                        messages = messages + GameMessage("game-master", streamedText.toString(), clock()),
-                        updatedAt = clock(),
-                    ),
-                )
+            coroutineScope {
+                val pendingWrites = mutableListOf<Job>()
+                try {
+                    api.play(TurnRequestMapper.map(session, scenario, playerAction, liveSessionId, includeInitialSituation = introduction), onGenerationReady, onInputReady, { fragment ->
+                        messages = messages.dropLast(1) + GameMessage("runtime-fragment", fragment, clock()) + messages.takeLast(1)
+                        onStreamed(started.copy(messages = messages, updatedAt = clock()))
+                    }, { token ->
+                        onTokenStarted()
+                        streamedText.append(token)
+                        onStreamed(
+                            started.copy(
+                                messages = messages + GameMessage("game-master", streamedText.toString(), clock()),
+                                updatedAt = clock(),
+                            ),
+                        )
+                    }, { diagnostic ->
+                        val repository = debugEvents
+                        if (repository != null) {
+                            val sequence = nextSequence++
+                            val event = DebugEvent(
+                                id = "$turnId-$sequence", sessionId = session.id, turnId = turnId,
+                                sequence = sequence, createdAt = clock(), kind = diagnostic.kind,
+                                stage = diagnostic.stage, fields = diagnostic.fields,
+                                metrics = diagnostic.metrics, transcriptRole = diagnostic.transcriptRole,
+                            )
+                            pendingWrites += launch(start = CoroutineStart.UNDISPATCHED) { repository.append(event) }
+                        }
+                    })
+                } finally {
+                    withContext(NonCancellable) { pendingWrites.joinAll() }
+                }
             }
         } catch (stopped: TurnStreamStoppedException) {
             if (streamedText.isEmpty()) throw stopped
@@ -91,6 +122,7 @@ internal class TurnSubmission(
     }
 
     companion object {
+        private var nextTurnId = 0L
         const val INTRODUCTION_INSTRUCTION =
             "Begin this new adventure with a short, immersive introduction in the scenario's language. " +
                 "Establish the player's starting situation and surroundings using the scenario and initial world state. " +

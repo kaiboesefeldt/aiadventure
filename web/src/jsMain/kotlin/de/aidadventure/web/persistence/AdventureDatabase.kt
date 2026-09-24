@@ -1,6 +1,7 @@
 package de.aidadventure.web.persistence
 
 import de.aidadventure.web.model.GameSession
+import de.aidadventure.web.model.DebugEvent
 import de.aidadventure.web.model.Scenario
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
@@ -26,6 +27,13 @@ interface SessionRepository {
     suspend fun delete(id: String)
 }
 
+interface DebugEventRepository {
+    suspend fun listForSession(sessionId: String): List<DebugEvent>
+    suspend fun append(event: DebugEvent)
+    suspend fun clearSession(sessionId: String)
+    suspend fun deleteForSessions(sessionIds: Set<String>)
+}
+
 sealed class PersistenceError(message: String, cause: Throwable? = null) : Exception(message, cause) {
     class Unavailable(cause: Throwable? = null) : PersistenceError("Browser IndexedDB is unavailable.", cause)
     class DatabaseFailure(val operation: String, cause: Throwable? = null) :
@@ -35,6 +43,7 @@ sealed class PersistenceError(message: String, cause: Throwable? = null) : Excep
 class AdventureDatabase private constructor(private val database: dynamic) {
     private val scenarioStore = RepositoryStore<Scenario>(database, SCENARIOS, Scenario.serializer())
     private val sessionStore = RepositoryStore(database, SESSIONS, GameSession.serializer(), ::decodePersistedGameSession)
+    private val debugEventStore = RepositoryStore(database, DEBUG_EVENTS, DebugEvent.serializer())
 
     val scenarios: ScenarioRepository = object : ScenarioRepository {
         override suspend fun list(): List<Scenario> = scenarioStore.list()
@@ -47,12 +56,55 @@ class AdventureDatabase private constructor(private val database: dynamic) {
         override suspend fun list(): List<GameSession> = sessionStore.list()
         override suspend fun save(session: GameSession) = sessionStore.save(session)
         override suspend fun find(id: String): GameSession? = sessionStore.find(id)
-        override suspend fun delete(id: String) = sessionStore.delete(id)
+        override suspend fun delete(id: String) = deleteSessionAndEvents(id)
+    }
+
+    val debugEvents: DebugEventRepository = object : DebugEventRepository {
+        override suspend fun listForSession(sessionId: String): List<DebugEvent> {
+            val transaction = database.transaction(DEBUG_EVENTS, "readonly")
+            return awaitRequestAndTransaction(transaction, "listing debug events", {
+                transaction.objectStore(DEBUG_EVENTS).index("sessionId").getAll(sessionId)
+            }) { result ->
+                val events = result.unsafeCast<Array<dynamic>>().map { Json.decodeFromString(DebugEvent.serializer(), JSON.stringify(it)) }
+                val turnStart = events.groupBy { it.turnId }.mapValues { (_, turnEvents) -> turnEvents.minOf { it.createdAt } }
+                events.sortedWith(compareBy<DebugEvent> { turnStart.getValue(it.turnId) }.thenBy { it.turnId }.thenBy { it.sequence })
+            }
+        }
+
+        override suspend fun append(event: DebugEvent) = debugEventStore.save(event)
+
+        override suspend fun clearSession(sessionId: String) = deleteForSessions(setOf(sessionId))
+
+        override suspend fun deleteForSessions(sessionIds: Set<String>) {
+            if (sessionIds.isEmpty()) return
+            val transaction = database.transaction(DEBUG_EVENTS, "readwrite")
+            val observer = TransactionObserver(transaction, "deleting debug events")
+            deleteDebugEvents(transaction, sessionIds)
+            observer.awaitCompletion()
+        }
+    }
+
+    private suspend fun deleteSessionAndEvents(sessionId: String) {
+        val transaction = database.transaction(arrayOf(SESSIONS, DEBUG_EVENTS), "readwrite")
+        val observer = TransactionObserver(transaction, "deleting session")
+        transaction.objectStore(SESSIONS).delete(sessionId)
+        deleteDebugEvents(transaction, setOf(sessionId))
+        observer.awaitCompletion()
+    }
+
+    private suspend fun deleteDebugEvents(transaction: dynamic, sessionIds: Set<String>) {
+        val events = transaction.objectStore(DEBUG_EVENTS)
+        awaitRequest(events.getAll(), "finding debug events") { result ->
+            result.unsafeCast<Array<dynamic>>().forEach { event ->
+                if (event.sessionId.unsafeCast<String>() in sessionIds) events.delete(event.id)
+            }
+            Unit
+        }
     }
 
     private suspend fun deleteScenarioAndSessions(scenarioId: String) {
         val transaction = try {
-            database.transaction(arrayOf(SCENARIOS, SESSIONS), "readwrite")
+            database.transaction(arrayOf(SCENARIOS, SESSIONS, DEBUG_EVENTS), "readwrite")
         } catch (cause: Throwable) {
             throw PersistenceError.DatabaseFailure("opening scenario deletion transaction", cause)
         }
@@ -60,10 +112,13 @@ class AdventureDatabase private constructor(private val database: dynamic) {
         try {
             transaction.objectStore(SCENARIOS).delete(scenarioId)
             val sessions = transaction.objectStore(SESSIONS)
-            awaitRequest(sessions.index("scenarioId").getAll(scenarioId), "finding scenario sessions") { result ->
-                result.unsafeCast<Array<dynamic>>().forEach { session -> sessions.delete(session.id) }
-                Unit
+            val sessionIds = awaitRequest(sessions.index("scenarioId").getAll(scenarioId), "finding scenario sessions") { result ->
+                result.unsafeCast<Array<dynamic>>().map { session ->
+                    sessions.delete(session.id)
+                    session.id.unsafeCast<String>()
+                }.toSet()
             }
+            deleteDebugEvents(transaction, sessionIds)
             observer.awaitCompletion()
         } catch (cause: Throwable) {
             throw when (cause) {
@@ -79,9 +134,10 @@ class AdventureDatabase private constructor(private val database: dynamic) {
 
     companion object {
         private const val NAME = "ai-adventure"
-        private const val VERSION = 2
+        private const val VERSION = 3
         private const val SCENARIOS = "scenarios"
         private const val SESSIONS = "sessions"
+        private const val DEBUG_EVENTS = "debugEvents"
 
         suspend fun open(name: String = NAME): AdventureDatabase {
             val indexedDb = js("globalThis.indexedDB")
@@ -99,6 +155,10 @@ class AdventureDatabase private constructor(private val database: dynamic) {
                 if (!db.objectStoreNames.contains(SESSIONS)) {
                     val sessionStore = db.createObjectStore(SESSIONS, js("({ keyPath: 'id' })"))
                     sessionStore.createIndex("scenarioId", "scenarioId", js("({ unique: false })"))
+                }
+                if (!db.objectStoreNames.contains(DEBUG_EVENTS)) {
+                    val events = db.createObjectStore(DEBUG_EVENTS, js("({ keyPath: 'id' })"))
+                    events.createIndex("sessionId", "sessionId", js("({ unique: false })"))
                 }
                 null
             }

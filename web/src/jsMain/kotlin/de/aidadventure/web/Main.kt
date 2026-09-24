@@ -8,6 +8,7 @@ import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
 import de.aidadventure.web.model.WorldState
 import de.aidadventure.web.persistence.AdventureDatabase
+import de.aidadventure.web.persistence.DebugEventRepository
 import de.aidadventure.web.persistence.ImportResult
 import de.aidadventure.web.persistence.ScenarioImport
 import de.aidadventure.web.persistence.ScenarioFrontmatter
@@ -47,12 +48,13 @@ fun main() {
         val koin = startKoin { modules(module {
             single<ScenarioRepository> { database.scenarios }
             single<SessionRepository> { database.sessions }
+            single<DebugEventRepository> { database.debugEvents }
             single<AdventureApi> { AdventureApiClient() }
         }) }.koin
         val root = document.getElementById("root".unsafeCast<web.dom.ElementId>()) ?: error("Missing #root element")
         val initialScenarios = database.scenarios.list()
         createRoot(root).render(AdventureApp.create {
-            scenarioRepository = koin.get(); sessionRepository = koin.get(); api = koin.get()
+            scenarioRepository = koin.get(); sessionRepository = koin.get(); debugEventRepository = koin.get(); api = koin.get()
             this.initialScenarios = initialScenarios
         })
     }
@@ -61,6 +63,7 @@ fun main() {
 external interface AdventureAppProps : Props {
     var scenarioRepository: ScenarioRepository
     var sessionRepository: SessionRepository
+    var debugEventRepository: DebugEventRepository
     var api: AdventureApi
     var initialScenarios: List<Scenario>
 }
@@ -114,7 +117,7 @@ internal val AdventureApp = FC<AdventureAppProps> { props ->
                 onDeleteSession = { session -> props.sessionRepository.delete(session.id) }
             }
             is View.Play -> +PlayView.create {
-                scenario = current.scenario; session = current.session; api = props.api; sessions = props.sessionRepository
+                scenario = current.scenario; session = current.session; api = props.api; sessions = props.sessionRepository; debugEvents = props.debugEventRepository
                 onBack = { view = View.Detail(current.scenario) }
                 onSessionChanged = { view = View.Play(current.scenario, it) }
             }
@@ -174,7 +177,7 @@ private val DetailView = FC<DetailViewProps> { props ->
     }
 }
 
-private external interface PlayViewProps : Props { var scenario: Scenario; var session: GameSession; var api: AdventureApi; var sessions: SessionRepository; var onBack: () -> Unit; var onSessionChanged: (GameSession) -> Unit }
+private external interface PlayViewProps : Props { var scenario: Scenario; var session: GameSession; var api: AdventureApi; var sessions: SessionRepository; var debugEvents: DebugEventRepository; var onBack: () -> Unit; var onSessionChanged: (GameSession) -> Unit }
 private val PlayView = FC<PlayViewProps> { props ->
     var action by useState(""); var pending by useState(props.session.introductionPending); var inputReady by useState(false); val (turnInput) = useState(TurnInputState(props.session)); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null); var openFragmentIndex by useState<Int?>(null); var worldStateOpen by useState(false)
     val liveId = props.session.id
@@ -188,7 +191,7 @@ private val PlayView = FC<PlayViewProps> { props ->
         scope.launch {
             try {
                 runCatching { WarmupSubmission(props.api).submit(props.session, props.scenario) }
-                val completed = TurnSubmission(props.sessions, props.api).submitIntroduction(
+                val completed = TurnSubmission(props.sessions, props.api, debugEvents = props.debugEvents).submitIntroduction(
                     props.session, props.scenario,
                     { flushStreamUpdate { streamed = it } },
                     { flushStreamUpdate { streamed = it } },
@@ -251,7 +254,7 @@ private val PlayView = FC<PlayViewProps> { props ->
                         while (true) {
                             val submittedAction = turnInput.action ?: break
                             val completed = try {
-                                TurnSubmission(props.sessions, props.api).submit(
+                                TurnSubmission(props.sessions, props.api, debugEvents = props.debugEvents).submit(
                                     base, props.scenario, submittedAction,
                                     { flushStreamUpdate { streamed = it } },
                                     { session -> flushStreamUpdate { streamed = session } },

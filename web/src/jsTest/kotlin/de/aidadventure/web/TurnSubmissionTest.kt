@@ -8,12 +8,19 @@ import de.aidadventure.web.api.TurnCompletion
 import de.aidadventure.web.api.TurnRequest
 import de.aidadventure.web.api.WarmupRequest
 import de.aidadventure.web.api.TurnRequestMapper
+import de.aidadventure.web.api.TurnStreamStoppedException
+import de.aidadventure.web.model.DebugEvent
+import de.aidadventure.web.model.DiagnosticMetrics
 import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
+import de.aidadventure.web.model.StreamDiagnostic
+import de.aidadventure.web.persistence.DebugEventRepository
 import de.aidadventure.web.persistence.SessionRepository
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.promise
@@ -188,6 +195,76 @@ class TurnSubmissionTest {
         assertEquals(true, isVisibleTranscriptMessage(legacyMessage))
     }
 
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `completed turn persists diagnostics with one turn id and ordered sequences`() = GlobalScope.promise<Unit> {
+        val events = RecordingDebugEvents()
+        val api = DiagnosticAdventureApi(DiagnosticOutcome.COMPLETED)
+        TurnSubmission(RecordingSessions(), api, clock = { 42 }, debugEvents = events)
+            .submit(sessionWithPreviousPair(), scenario(), "SECRET_PLAYER_ACTION", {}, {})
+        assertEquals(listOf(0, 1), events.saved.map { it.sequence })
+        assertEquals(1, events.saved.map { it.turnId }.distinct().size)
+        assertEquals("session-1", events.saved.single { it.sequence == 0 }.sessionId)
+        assertEquals("prior_turn", events.saved.last().fields["source"])
+        assertEquals(7, events.saved.last().metrics?.cacheTokens)
+        assertEquals("game-master", events.saved.last().transcriptRole)
+        assertFalse(events.saved.toString().contains("SECRET_PLAYER_ACTION"))
+        assertFalse(events.saved.toString().contains("SECRET_GAME_MASTER_OUTPUT"))
+        TurnSubmission(RecordingSessions(), api, clock = { 42 }, debugEvents = events)
+            .submit(sessionWithPreviousPair(), scenario(), "another action", {}, {})
+        assertEquals(2, events.saved.map { it.turnId }.distinct().size)
+        assertEquals(listOf(0, 1, 0, 1), events.saved.map { it.sequence })
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `failed stream retains received diagnostics without saving transcript`() = GlobalScope.promise<Unit> {
+        val events = RecordingDebugEvents()
+        val sessions = RecordingSessions()
+        try {
+            TurnSubmission(sessions, DiagnosticAdventureApi(DiagnosticOutcome.FAILED), debugEvents = events)
+                .submit(sessionWithPreviousPair(), scenario(), "SECRET_PLAYER_ACTION", {}, {})
+            error("Expected failure")
+        } catch (failure: IllegalStateException) {
+            assertEquals("stream failed", failure.message)
+        }
+        assertEquals(2, events.saved.size)
+        assertEquals(emptyList(), sessions.saved)
+        assertFalse(events.saved.toString().contains("SECRET_PLAYER_ACTION"))
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `stopped stream retains received diagnostics and partial game master turn`() = GlobalScope.promise<Unit> {
+        val events = RecordingDebugEvents()
+        val sessions = RecordingSessions()
+        val completed = TurnSubmission(sessions, DiagnosticAdventureApi(DiagnosticOutcome.STOPPED), debugEvents = events)
+            .submit(sessionWithPreviousPair(), scenario(), "SECRET_PLAYER_ACTION", {}, {})
+        assertEquals(2, events.saved.size)
+        assertEquals("SECRET_GAME_MASTER_OUTPUT", completed.session.messages.last().content)
+        assertEquals(completed.session, sessions.saved.single())
+        assertTrue(events.saved.none { it.toString().contains("SECRET_GAME_MASTER_OUTPUT") })
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `diagnostic persistence starts before stream completion`() = GlobalScope.promise<Unit> {
+        val events = RecordingDebugEvents()
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+            override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("Use diagnostic overload")
+            override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
+                onDiagnostic(StreamDiagnostic("turn_status", "started"))
+                assertEquals(1, events.saved.size)
+                onToken("response")
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+            }
+        }
+        TurnSubmission(RecordingSessions(), api, debugEvents = events)
+            .submit(sessionWithPreviousPair(), scenario(), "look", {}, {})
+    }
+
     private fun sessionWithPreviousPair() = GameSession(
         id = "session-1", scenarioId = "scenario-1", title = "Harbor", modelId = "model",
         messages = listOf(GameMessage("player", "look", 1), GameMessage("game-master", "A bell rings", 2)),
@@ -195,6 +272,32 @@ class TurnSubmissionTest {
     )
 
     private fun scenario() = Scenario("scenario-1", "harbor.md", "# Harbor", 1)
+}
+
+private enum class DiagnosticOutcome { COMPLETED, FAILED, STOPPED }
+
+private class DiagnosticAdventureApi(private val outcome: DiagnosticOutcome) : AdventureApi {
+    override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+    override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+    override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("Use diagnostic overload")
+    override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
+        onDiagnostic(StreamDiagnostic("turn_status", "started", transcriptRole = "player"))
+        onToken("SECRET_GAME_MASTER_OUTPUT")
+        onDiagnostic(StreamDiagnostic("background_rerank", "prior_completed", mapOf("source" to "prior_turn"), "game-master", DiagnosticMetrics(cacheTokens = 7)))
+        return when (outcome) {
+            DiagnosticOutcome.COMPLETED -> TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+            DiagnosticOutcome.FAILED -> throw IllegalStateException("stream failed")
+            DiagnosticOutcome.STOPPED -> throw TurnStreamStoppedException()
+        }
+    }
+}
+
+private class RecordingDebugEvents : DebugEventRepository {
+    val saved = mutableListOf<DebugEvent>()
+    override suspend fun listForSession(sessionId: String): List<DebugEvent> = saved.filter { it.sessionId == sessionId }
+    override suspend fun append(event: DebugEvent) { saved += event }
+    override suspend fun clearSession(sessionId: String) { saved.removeAll { it.sessionId == sessionId } }
+    override suspend fun deleteForSessions(sessionIds: Set<String>) { saved.removeAll { it.sessionId in sessionIds } }
 }
 
 private class FragmentEmittingAdventureApi : AdventureApi {

@@ -4,6 +4,7 @@ import de.aidadventure.web.model.ContextCompression
 import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
+import de.aidadventure.web.model.StreamDiagnostic
 import de.aidadventure.web.model.WorldState
 import de.aidadventure.web.persistence.ScenarioFrontmatter
 import kotlinx.browser.window
@@ -18,6 +19,8 @@ interface AdventureApi {
     suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion
     suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion =
         play(request, onInputReady, onFragment, onToken)
+    suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion =
+        play(request, onGenerationReady, onInputReady, onFragment, onToken)
     fun stopActiveTurn() = Unit
 }
 
@@ -51,6 +54,10 @@ class AdventureApiClient(
     }
 
     override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
+        return play(request, onGenerationReady, onInputReady, onFragment, onToken, {})
+    }
+
+    override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
         activeTurnStopped = false
         val controller = js("new AbortController()")
         activeTurnController = controller
@@ -68,9 +75,9 @@ class AdventureApiClient(
             }
             if (activeTurnStopped) throw TurnStreamStoppedException()
             if (result.done.unsafeCast<Boolean>()) break
-            processTurnStreamChunk(decoder, decodeText(textDecoder, result.value, stream = true), onInputReady, onFragment, onToken, onGenerationReady) { activeTurnStopped }?.let { return it }
+            processTurnStreamChunk(decoder, decodeText(textDecoder, result.value, stream = true), onInputReady, onFragment, onToken, onGenerationReady, { activeTurnStopped }, onDiagnostic)?.let { return it }
         }
-        processTurnStreamChunk(decoder, decodeText(textDecoder, null, stream = false), onInputReady, onFragment, onToken, onGenerationReady) { activeTurnStopped }?.let { return it }
+        processTurnStreamChunk(decoder, decodeText(textDecoder, null, stream = false), onInputReady, onFragment, onToken, onGenerationReady, { activeTurnStopped }, onDiagnostic)?.let { return it }
         throw AdventureApiException("The model response ended unexpectedly.")
         } finally {
             activeTurnReader = null
@@ -133,6 +140,7 @@ internal fun processTurnStreamChunk(
     onToken: (String) -> Unit,
     onGenerationReady: () -> Unit = {},
     shouldStop: () -> Boolean = { false },
+    onDiagnostic: (StreamDiagnostic) -> Unit = {},
 ): TurnCompletion? {
     for (frame in decoder.push(chunk)) {
         when (frame.event) {
@@ -143,6 +151,7 @@ internal fun processTurnStreamChunk(
             "input_ready" -> onInputReady()
             "fragment" -> onFragment(streamJson.decodeFromString<StreamFragment>(frame.data).fragment)
             "token" -> onToken(streamJson.decodeFromString<StreamToken>(frame.data).text)
+            "diagnostic" -> onDiagnostic(streamJson.decodeFromString<StreamDiagnostic>(frame.data))
             "done" -> streamJson.decodeFromString<StreamDone>(frame.data).let { return TurnCompletion(it.metrics, it.worldState, it.contextCompression, it.flags) }
             "error" -> throw AdventureApiException(streamJson.decodeFromString<StreamError>(frame.data).message)
         }
