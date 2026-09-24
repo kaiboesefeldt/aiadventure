@@ -67,7 +67,7 @@ class AdventureDatabase private constructor(private val database: dynamic) {
             }) { result ->
                 val events = result.unsafeCast<Array<dynamic>>().map { Json.decodeFromString(DebugEvent.serializer(), JSON.stringify(it)) }
                 val turnStart = events.groupBy { it.turnId }.mapValues { (_, turnEvents) -> turnEvents.minOf { it.createdAt } }
-                events.sortedWith(compareBy<DebugEvent> { turnStart.getValue(it.turnId) }.thenBy { it.turnId }.thenBy { it.sequence })
+                events.sortedWith(compareBy<DebugEvent> { turnStart.getValue(it.turnId) }.thenBy { it.turnOrder }.thenBy { it.turnId }.thenBy { it.sequence })
             }
         }
 

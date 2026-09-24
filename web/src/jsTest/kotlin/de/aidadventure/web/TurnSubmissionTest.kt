@@ -23,7 +23,9 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.promise
+import kotlinx.coroutines.withTimeout
 
 class TurnSubmissionTest {
     @OptIn(DelicateCoroutinesApi::class)
@@ -214,6 +216,7 @@ class TurnSubmissionTest {
             .submit(sessionWithPreviousPair(), scenario(), "another action", {}, {})
         assertEquals(2, events.saved.map { it.turnId }.distinct().size)
         assertEquals(listOf(0, 1, 0, 1), events.saved.map { it.sequence })
+        assertEquals(events.saved[0].turnOrder + 1, events.saved[2].turnOrder)
     }
 
     @OptIn(DelicateCoroutinesApi::class)
@@ -263,6 +266,54 @@ class TurnSubmissionTest {
         }
         TurnSubmission(RecordingSessions(), api, debugEvents = events)
             .submit(sessionWithPreviousPair(), scenario(), "look", {}, {})
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `failed diagnostic write does not abort a successful turn`() = GlobalScope.promise<Unit> {
+        val sessions = RecordingSessions()
+        val writeFailures = mutableListOf<String?>()
+        val events = object : DebugEventRepository {
+            override suspend fun listForSession(sessionId: String): List<DebugEvent> = emptyList()
+            override suspend fun append(event: DebugEvent): Unit = error("IndexedDB write failed")
+            override suspend fun clearSession(sessionId: String) = Unit
+            override suspend fun deleteForSessions(sessionIds: Set<String>) = Unit
+        }
+
+        val completed = TurnSubmission(sessions, DiagnosticAdventureApi(DiagnosticOutcome.COMPLETED), debugEvents = events,
+            onDiagnosticPersistenceFailure = { writeFailures += it.message })
+            .submit(sessionWithPreviousPair(), scenario(), "look", {}, {})
+
+        assertEquals(completed.session, sessions.saved.single())
+        assertEquals("SECRET_GAME_MASTER_OUTPUT", completed.session.messages.last().content)
+        assertEquals(listOf<String?>("IndexedDB write failed", "IndexedDB write failed"), writeFailures)
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `slow diagnostic write does not delay canonical turn persistence`() = GlobalScope.promise<Unit> {
+        val releaseWrite = CompletableDeferred<Unit>()
+        val writeStarted = CompletableDeferred<Unit>()
+        val sessions = RecordingSessions()
+        val events = object : DebugEventRepository {
+            override suspend fun listForSession(sessionId: String): List<DebugEvent> = emptyList()
+            override suspend fun append(event: DebugEvent) {
+                writeStarted.complete(Unit)
+                releaseWrite.await()
+            }
+            override suspend fun clearSession(sessionId: String) = Unit
+            override suspend fun deleteForSessions(sessionIds: Set<String>) = Unit
+        }
+        try {
+            val completed = withTimeout(500) {
+                TurnSubmission(sessions, DiagnosticAdventureApi(DiagnosticOutcome.COMPLETED), debugEvents = events)
+                    .submit(sessionWithPreviousPair(), scenario(), "look", {}, {})
+            }
+            assertEquals(completed.session, sessions.saved.single())
+            assertTrue(writeStarted.isCompleted)
+        } finally {
+            releaseWrite.complete(Unit)
+        }
     }
 
     private fun sessionWithPreviousPair() = GameSession(

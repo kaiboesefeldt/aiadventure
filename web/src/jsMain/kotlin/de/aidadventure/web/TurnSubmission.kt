@@ -10,13 +10,14 @@ import de.aidadventure.web.model.DebugEvent
 import de.aidadventure.web.model.Scenario
 import de.aidadventure.web.persistence.SessionRepository
 import de.aidadventure.web.persistence.DebugEventRepository
+import kotlinx.browser.window
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 internal data class CompletedTurn(val session: GameSession, val metrics: TurnMetrics)
 
@@ -25,7 +26,12 @@ internal class TurnSubmission(
     private val api: AdventureApi,
     private val clock: () -> Long = ::now,
     private val debugEvents: DebugEventRepository? = null,
+    private val onDiagnosticPersistenceFailure: (Throwable) -> Unit = {
+        window.asDynamic().console.warn("Could not save diagnostic event")
+    },
 ) {
+    private val diagnosticWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     suspend fun submitIntroduction(
         session: GameSession,
         scenario: Scenario,
@@ -53,7 +59,8 @@ internal class TurnSubmission(
         introduction: Boolean = false,
         onGenerationReady: () -> Unit = {},
     ): CompletedTurn {
-        val turnId = "turn-${clock()}-${nextTurnId++}"
+        val turnOrder = nextTurnId++
+        val turnId = "turn-${clock()}-$turnOrder"
         var nextSequence = 0
         val started = session.copy(
             messages = session.messages + GameMessage("player", playerAction, clock(), hidden = introduction),
@@ -64,38 +71,39 @@ internal class TurnSubmission(
         val streamedText = StringBuilder()
         var messages = started.messages
         val completion = try {
-            coroutineScope {
-                val pendingWrites = mutableListOf<Job>()
-                try {
-                    api.play(TurnRequestMapper.map(session, scenario, playerAction, liveSessionId, includeInitialSituation = introduction), onGenerationReady, onInputReady, { fragment ->
-                        messages = messages.dropLast(1) + GameMessage("runtime-fragment", fragment, clock()) + messages.takeLast(1)
-                        onStreamed(started.copy(messages = messages, updatedAt = clock()))
-                    }, { token ->
-                        onTokenStarted()
-                        streamedText.append(token)
-                        onStreamed(
-                            started.copy(
-                                messages = messages + GameMessage("game-master", streamedText.toString(), clock()),
-                                updatedAt = clock(),
-                            ),
-                        )
-                    }, { diagnostic ->
-                        val repository = debugEvents
-                        if (repository != null) {
-                            val sequence = nextSequence++
-                            val event = DebugEvent(
-                                id = "$turnId-$sequence", sessionId = session.id, turnId = turnId,
-                                sequence = sequence, createdAt = clock(), kind = diagnostic.kind,
-                                stage = diagnostic.stage, fields = diagnostic.fields,
-                                metrics = diagnostic.metrics, transcriptRole = diagnostic.transcriptRole,
-                            )
-                            pendingWrites += launch(start = CoroutineStart.UNDISPATCHED) { repository.append(event) }
+            api.play(TurnRequestMapper.map(session, scenario, playerAction, liveSessionId, includeInitialSituation = introduction), onGenerationReady, onInputReady, { fragment ->
+                messages = messages.dropLast(1) + GameMessage("runtime-fragment", fragment, clock()) + messages.takeLast(1)
+                onStreamed(started.copy(messages = messages, updatedAt = clock()))
+            }, { token ->
+                onTokenStarted()
+                streamedText.append(token)
+                onStreamed(
+                    started.copy(
+                        messages = messages + GameMessage("game-master", streamedText.toString(), clock()),
+                        updatedAt = clock(),
+                    ),
+                )
+            }, { diagnostic ->
+                val repository = debugEvents
+                if (repository != null) {
+                    val sequence = nextSequence++
+                    val event = DebugEvent(
+                        id = "$turnId-$sequence", sessionId = session.id, turnId = turnId,
+                        sequence = sequence, createdAt = clock(), kind = diagnostic.kind,
+                        stage = diagnostic.stage, fields = diagnostic.fields,
+                        metrics = diagnostic.metrics, transcriptRole = diagnostic.transcriptRole,
+                        turnOrder = turnOrder,
+                    )
+                    diagnosticWriteScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                        try {
+                            repository.append(event)
+                        } catch (failure: Throwable) {
+                            if (!currentCoroutineContext().isActive) throw failure
+                            runCatching { onDiagnosticPersistenceFailure(failure) }
                         }
-                    })
-                } finally {
-                    withContext(NonCancellable) { pendingWrites.joinAll() }
+                    }
                 }
-            }
+            })
         } catch (stopped: TurnStreamStoppedException) {
             if (streamedText.isEmpty()) throw stopped
             val partial = started.copy(

@@ -88,4 +88,5 @@ data class DebugEvent(
     val fields: Map<String, String> = emptyMap(),
     val metrics: DiagnosticMetrics? = null,
     val transcriptRole: String? = null,
+    val turnOrder: Long = 0,
 )

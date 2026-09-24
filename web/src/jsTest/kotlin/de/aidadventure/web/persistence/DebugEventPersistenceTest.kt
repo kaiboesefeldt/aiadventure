@@ -13,6 +13,20 @@ import kotlin.test.assertEquals
 class DebugEventPersistenceTest {
     @OptIn(DelicateCoroutinesApi::class)
     @Test
+    fun `equal timestamp turns list turn 9 before turn 10`() = GlobalScope.promise<Unit> {
+        val name = "debug-turn-order-${kotlin.js.Date.now()}-${kotlin.random.Random.nextInt()}"
+        val database = AdventureDatabase.open(name)
+        val ninth = event("ninth", "session-a", "turn-9", 0, 10).copy(turnOrder = 9)
+        val tenth = event("tenth", "session-a", "turn-10", 0, 10).copy(turnOrder = 10)
+        try {
+            database.debugEvents.append(tenth)
+            database.debugEvents.append(ninth)
+            assertEquals(listOf(ninth, tenth), database.debugEvents.listForSession("session-a"))
+        } finally { database.close(); js("globalThis.indexedDB").deleteDatabase(name) }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
     fun `append lists events in turn sequence and isolates sessions after reopen`() = GlobalScope.promise<Unit> {
         val name = "debug-events-${kotlin.js.Date.now()}-${kotlin.random.Random.nextInt()}"
         val database = AdventureDatabase.open(name)
