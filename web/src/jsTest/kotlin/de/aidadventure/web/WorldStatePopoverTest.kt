@@ -6,12 +6,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class WorldStatePopoverTest {
-    @Test fun `renders the persisted location and narrative focus`() =
-        assertEquals("{\"location\":\"Küche\",\"narrativeFocus\":\"Der verrostete Mechanismus\"}", worldStateJson(WorldState("Küche", "Der verrostete Mechanismus")))
-
-    @Test fun `persists a narrative focus without a location`() =
-        assertEquals("{\"narrativeFocus\":\"Der verrostete Mechanismus\"}", worldStateJson(WorldState(narrativeFocus = "Der verrostete Mechanismus")))
-
     @Test fun `reads an unresolved situation as narrative focus`() =
         assertEquals(WorldState(narrativeFocus = "Der Leuchtturm"), decodePersistedGameSession("""{"id":"s","scenarioId":"x","title":"x","messages":[],"createdAt":1,"updatedAt":1,"worldState":{"unresolvedSituation":"Der Leuchtturm"}}""").worldState)
 

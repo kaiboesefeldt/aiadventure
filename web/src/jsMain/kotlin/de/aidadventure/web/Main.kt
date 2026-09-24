@@ -2,11 +2,10 @@ package de.aidadventure.web
 
 import de.aidadventure.web.api.AdventureApi
 import de.aidadventure.web.api.AdventureApiClient
-import de.aidadventure.web.api.TurnMetrics
+import de.aidadventure.web.model.DebugEvent
 import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
-import de.aidadventure.web.model.WorldState
 import de.aidadventure.web.persistence.AdventureDatabase
 import de.aidadventure.web.persistence.DebugEventRepository
 import de.aidadventure.web.persistence.ImportResult
@@ -19,8 +18,6 @@ import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.await
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
 import react.ChildrenBuilder
@@ -35,7 +32,6 @@ import react.useEffectWithCleanup
 import react.useState
 import web.cssom.ClassName
 import web.dom.document
-import web.events.Event
 import web.file.File
 import web.html.HTMLInputElement
 import web.html.HTMLTextAreaElement
@@ -179,7 +175,10 @@ private val DetailView = FC<DetailViewProps> { props ->
 
 private external interface PlayViewProps : Props { var scenario: Scenario; var session: GameSession; var api: AdventureApi; var sessions: SessionRepository; var debugEvents: DebugEventRepository; var onBack: () -> Unit; var onSessionChanged: (GameSession) -> Unit }
 private val PlayView = FC<PlayViewProps> { props ->
-    var action by useState(""); var pending by useState(props.session.introductionPending); var inputReady by useState(false); val (turnInput) = useState(TurnInputState(props.session)); var error by useState<String?>(null); var metrics by useState<TurnMetrics?>(null); var streamed by useState<GameSession?>(null); var openFragmentIndex by useState<Int?>(null); var worldStateOpen by useState(false)
+    var action by useState(""); var pending by useState(props.session.introductionPending); var inputReady by useState(false); val (turnInput) = useState(TurnInputState(props.session)); var error by useState<String?>(null); var streamed by useState<GameSession?>(null)
+    var debugOpen by useState(false)
+    var diagnosticEvents by useState(emptyList<DebugEvent>())
+    var diagnosticsRevision by useState(0)
     val liveId = props.session.id
     val (prefill) = useState(PrefillSubmission(props.api))
     val displayed = sessionForDisplay(props.session, streamed)
@@ -196,10 +195,11 @@ private val PlayView = FC<PlayViewProps> { props ->
                     { flushStreamUpdate { streamed = it } },
                     { flushStreamUpdate { streamed = it } },
                 )
-                metrics = completed.metrics
+                diagnosticsRevision++
                 streamed = completed.session
                 props.onSessionChanged(completed.session)
             } catch (failure: Throwable) {
+                diagnosticsRevision++
                 streamed = null
                 error = clientMessage(failure)
             } finally {
@@ -212,16 +212,29 @@ private val PlayView = FC<PlayViewProps> { props ->
         if (props.session.introductionPending) introduce()
         else scope.launch { runCatching { WarmupSubmission(props.api).submit(props.session, props.scenario) } }
     }
-    useEffectWithCleanup(dependencies = arrayOf(openFragmentIndex, worldStateOpen)) {
-        (if (worldStateOpen) worldStateTooltipContainerId() else openFragmentIndex?.let(::fragmentTooltipContainerId))?.let { containerId ->
-            val outsideClick: (Event) -> Unit = { event ->
-                val container = document.getElementById(containerId.unsafeCast<web.dom.ElementId>())
-                if (container == null || !container.asDynamic().contains(event.target)) {
-                    if (worldStateOpen) worldStateOpen = false else openFragmentIndex = null
+    useEffect(dependencies = arrayOf(liveId, diagnosticsRevision)) {
+        val repository = props.debugEvents
+        if (repository.asDynamic() != null) scope.launch {
+            runCatching { repository.listForSession(liveId) }
+                .onSuccess { diagnosticEvents = it }
+                .onFailure { error = clientMessage(it) }
+        }
+    }
+    useEffectWithCleanup(dependencies = arrayOf(debugOpen, liveId)) {
+        val repository = props.debugEvents
+        if (debugOpen && repository.asDynamic() != null) {
+            var lastSeen = diagnosticEvents
+            val timer = window.setInterval({
+                scope.launch {
+                    runCatching { repository.listForSession(liveId) }.onSuccess { current ->
+                        if (current != lastSeen) {
+                            lastSeen = current
+                            diagnosticEvents = current
+                        }
+                    }
                 }
-            }
-            document.asDynamic().addEventListener("click", outsideClick)
-            onCleanup { document.asDynamic().removeEventListener("click", outsideClick) }
+            }, 400)
+            onCleanup { window.clearInterval(timer) }
         }
     }
     fun submit() {
@@ -278,7 +291,7 @@ private val PlayView = FC<PlayViewProps> { props ->
                             }
                             base = completed.session
                             turnInput.promptBase = base
-                            metrics = completed.metrics
+                            diagnosticsRevision++
                             streamed = completed.session
                             props.onSessionChanged(completed.session)
                             val next = turnInput.queuedAction
@@ -290,6 +303,7 @@ private val PlayView = FC<PlayViewProps> { props ->
                             prefill.turnStarted()
                         }
                     } catch (failure: Throwable) {
+                        diagnosticsRevision++
                         error = clientMessage(failure)
                     } finally {
                         turnInput.action = null
@@ -309,56 +323,10 @@ private val PlayView = FC<PlayViewProps> { props ->
         ReactHTML.div { className = ClassName("transcript"); displayed.messages.forEachIndexed { index, message ->
             if (isVisibleTranscriptMessage(message)) ReactHTML.article {
                 className = ClassName("message")
-                val fragment = props.session.messages.getOrNull(index)
-                    ?.takeIf { it == message }
-                    ?.let { runtimeFragmentForGameMaster(props.session.messages, index) }
-                fragment?.let { content ->
-                    val tooltipId = fragmentTooltipId(index)
-                    val isTooltipOpen = openFragmentIndex == index
-                    ReactHTML.div {
-                        id = fragmentTooltipContainerId(index).unsafeCast<web.dom.ElementId>()
-                        className = ClassName("fragment-tooltip-container")
-                        ReactHTML.button {
-                            className = ClassName("fragment-info-button")
-                            ariaLabel = "Fragment information"
-                            asDynamic()["aria-expanded"] = isTooltipOpen.toString()
-                            if (isTooltipOpen) asDynamic()["aria-describedby"] = tooltipId
-                            onClick = { event ->
-                                event.stopPropagation()
-                                openFragmentIndex = if (openFragmentIndex == index) null else index
-                            }
-                            +"Info"
-                        }
-                        if (isTooltipOpen) ReactHTML.div {
-                            id = tooltipId.unsafeCast<web.dom.ElementId>()
-                            className = ClassName("fragment-tooltip")
-                            asDynamic().role = "tooltip"
-                            +content
-                        }
-                    }
-                }
                 MarkdownMessage { content = message.content }
             }
         } }
-        ReactHTML.div {
-            id = worldStateTooltipContainerId().unsafeCast<web.dom.ElementId>()
-            className = ClassName("fragment-tooltip-container")
-            ReactHTML.button {
-                className = ClassName("fragment-info-button")
-                ariaLabel = "World state information"
-                asDynamic()["aria-expanded"] = worldStateOpen.toString()
-                if (worldStateOpen) asDynamic()["aria-describedby"] = worldStateTooltipId()
-                onClick = { event -> event.stopPropagation(); worldStateOpen = !worldStateOpen }
-                +"World state"
-            }
-            if (worldStateOpen) ReactHTML.div {
-                id = worldStateTooltipId().unsafeCast<web.dom.ElementId>()
-                className = ClassName("fragment-tooltip")
-                asDynamic().role = "tooltip"
-                +worldStateJson(displayed.worldState)
-            }
-        }
-        metrics?.let { renderMetrics(it) }; error?.let { ReactHTML.p { className = ClassName("status-error"); +it } }
+        error?.let { ReactHTML.p { className = ClassName("status-error"); +it } }
         if (props.session.introductionPending && !pending && error != null) ReactHTML.button {
             className = ClassName("primary-button")
             onClick = { introduce() }
@@ -366,6 +334,26 @@ private val PlayView = FC<PlayViewProps> { props ->
         }
         ReactHTML.textarea { id = "player-action".unsafeCast<web.dom.ElementId>(); className = ClassName("action-input"); value = action; disabled = props.session.introductionPending; onChange = { action = it.target.unsafeCast<HTMLTextAreaElement>().value; if (turnInput.phase == TurnPhase.IDLE) prefill.changed(props.session, props.scenario, liveId, action) }; onKeyDown = { event -> if (shouldSubmitOnEnter(event.key, event.shiftKey, event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>(), false, action)) { event.preventDefault(); submit() } } }
         ReactHTML.button { className = ClassName("primary-button"); disabled = props.session.introductionPending || action.isBlank(); onClick = { submit() }; +(if (pending && props.session.introductionPending) "Introducing adventure…" else if (pending && inputReady) "Updating world…" else if (pending) "Sending…" else "Send") }
+    }
+    ReactHTML.button {
+        className = ClassName("debug-open-button")
+        ariaLabel = "Open debug panel"
+        asDynamic()["aria-expanded"] = debugOpen.toString()
+        onClick = { debugOpen = true; diagnosticsRevision++ }
+        +"Debug"
+    }
+    if (debugOpen) DebugPanel {
+        scenario = props.scenario
+        session = displayed
+        events = diagnosticEvents.filter { it.sessionId == liveId }
+        onClose = { debugOpen = false }
+        onClear = {
+            scope.launch {
+                runCatching { props.debugEvents.clearSession(liveId) }
+                    .onSuccess { diagnosticEvents = emptyList(); diagnosticsRevision++ }
+                    .onFailure { error = clientMessage(it) }
+            }
+        }
     }
 }
 
@@ -380,7 +368,6 @@ private class TurnInputState(
     var promptBase: GameSession = initialSession
 }
 
-private fun ChildrenBuilder.renderMetrics(metrics: TurnMetrics) { listOfNotNull(metrics.totalDurationMs?.let { "duration: ${it}ms" }, metrics.promptTokens?.let { "prompt tokens: $it" }, metrics.cacheTokens?.let { "cache tokens: $it" }).takeIf { it.isNotEmpty() }?.let { ReactHTML.p { className = ClassName("metadata"); +it.joinToString(" · ") } } }
 private fun clientMessage(cause: Throwable) = cause.message ?: "Something went wrong. Please try again."
 internal fun flushStreamUpdate(update: () -> Unit) = flushSync(update)
 internal fun sessionForDisplay(persisted: GameSession, streamed: GameSession?) = streamed ?: persisted
@@ -399,14 +386,5 @@ internal fun newGameSession(scenario: Scenario, id: String, time: Long): GameSes
     )
 }
 internal fun isVisibleTranscriptMessage(message: GameMessage) = !message.hidden && message.role != "runtime-fragment"
-internal fun runtimeFragmentForGameMaster(messages: List<GameMessage>, index: Int): String? =
-    messages.getOrNull(index)?.takeIf { it.role == "game-master" }
-        ?.let { messages.getOrNull(index - 2)?.takeIf { it.role == "runtime-fragment" }?.content
-            ?.takeIf { messages.getOrNull(index - 1)?.role == "player" } }
-private fun fragmentTooltipContainerId(index: Int) = "fragment-tooltip-container-$index"
-private fun fragmentTooltipId(index: Int) = "fragment-tooltip-$index"
-private fun worldStateTooltipContainerId() = "world-state-tooltip-container"
-private fun worldStateTooltipId() = "world-state-tooltip"
-internal fun worldStateJson(worldState: WorldState): String = Json.encodeToString(worldState)
 internal fun shouldSubmitOnEnter(key: String, shiftKey: Boolean, isComposing: Boolean, pending: Boolean, action: String) = key == "Enter" && !shiftKey && !isComposing && !pending && action.isNotBlank()
 internal fun now(): Long = (js("Date.now()") as Double).toLong()

@@ -8,9 +8,12 @@ import de.aidadventure.web.api.TurnCompletion
 import de.aidadventure.web.api.TurnRequest
 import de.aidadventure.web.api.WarmupRequest
 import de.aidadventure.web.model.GameSession
+import de.aidadventure.web.model.DebugEvent
+import de.aidadventure.web.model.DiagnosticMetrics
 import de.aidadventure.web.model.Scenario
 import de.aidadventure.web.model.WorldState
 import de.aidadventure.web.persistence.ScenarioRepository
+import de.aidadventure.web.persistence.DebugEventRepository
 import de.aidadventure.web.persistence.SessionRepository
 import kotlin.js.Promise
 import kotlin.test.Test
@@ -257,7 +260,7 @@ class AdventureAppNavigationTest {
 
     @OptIn(DelicateCoroutinesApi::class)
     @Test
-    fun `completed game master response reveals runtime fragment only from its info control`() = GlobalScope.promise<Unit> {
+    fun `play view puts diagnostics behind a closable panel without inline controls`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
         val scenario = Scenario("scenario", "scenario.md", "# Scenario", 1)
@@ -292,31 +295,134 @@ class AdventureAppNavigationTest {
             container.clickButtonNamed(session.title)
             nextBrowserTick()
 
-            val fragmentInformationButton = assertNotNull(container.querySelector("button[aria-label='Fragment information']"))
-            assertEquals(1, container.querySelectorAll("button[aria-label='Fragment information']").length)
-            assertEquals("false", fragmentInformationButton.getAttribute("aria-expanded"))
-            assertNull(fragmentInformationButton.getAttribute("aria-describedby"))
-            assertNull(container.querySelector("[role='tooltip']"))
+            assertNull(container.querySelector("button[aria-label='Fragment information']"))
+            assertNull(container.querySelector("button[aria-label='World state information']"))
+            assertNull(container.querySelector(".metadata"))
             assertEquals(false, container.textContent?.contains("secret fragment"))
-
-            container.click("button[aria-label='Fragment information']")
+            assertNotNull(container.querySelector("button[aria-label='Open debug panel']"))
+            container.click("button[aria-label='Open debug panel']")
             nextBrowserTick()
-
-            assertEquals(true, container.textContent?.contains("secret fragment"))
-            val tooltip = assertNotNull(container.querySelector("[role='tooltip']"))
-            assertEquals("true", fragmentInformationButton.getAttribute("aria-expanded"))
-            val tooltipId = assertNotNull(tooltip.getAttribute("id"))
-            assertEquals(tooltipId, fragmentInformationButton.getAttribute("aria-describedby"))
-
-            document.body.asDynamic().dispatchEvent(js("new MouseEvent('click', { bubbles: true })"))
+            assertNotNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
+            container.click("button[aria-label='Close debug panel']")
             nextBrowserTick()
-
-            assertNull(container.querySelector("[role='tooltip']"))
-            assertEquals("false", fragmentInformationButton.getAttribute("aria-expanded"))
-            assertNull(fragmentInformationButton.getAttribute("aria-describedby"))
+            assertNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
         } finally {
             container.remove()
         }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `debug panel renders global information and labeled turn diagnostics`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val scenario = Scenario("scenario", "scenario.md", "---\nflags:\n  doorOpen: false\nsignals:\n  unlock:\n    triggers:\n      - set-flag:\n          doorOpen: true\n---\n# Lighthouse\nPrompt body", 1)
+        val session = GameSession("session", scenario.id, "Harbor", "local-model", emptyList(), 1, 1, flags = mapOf("doorOpen" to true))
+        val events = recordingDebugEvents(
+            DebugEvent("later", "session", "turn", 2, 2, "turn_metrics", "completed", metrics = DiagnosticMetrics(promptTokens = 21, contextTokens = 4096, predictedTokens = 12, cacheTokens = 15, evaluatedTokens = 6, promptDurationMs = 100.0, predictedDurationMs = 200.0, promptTokensPerSecond = 210.0, predictedTokensPerSecond = 60.0, totalDurationMs = 300), turnOrder = 1),
+            DebugEvent("earlier", "session", "turn", 1, 1, "background_rerank", "prior_completed", fields = mapOf("source" to "prior_turn", "result" to "accepted", "fragment" to "Hidden fragment", "matchText" to "lighthouse", "playerAction" to "player secret action", "gameMasterOutput" to "game master secret output"), turnOrder = 1),
+            DebugEvent("compression", "session", "turn", 3, 3, "context_compression", "completed", fields = mapOf("epoch" to "2", "activeCoversThroughTurn" to "4"), turnOrder = 1),
+            DebugEvent("signal", "session", "turn", 4, 4, "flags", "applied", fields = mapOf("emittedSignals" to "unlock", "appliedAssignments" to "doorOpen=true"), turnOrder = 1),
+        )
+        try {
+            flushSync { createRoot(container).render(AdventureApp.create {
+                scenarioRepository = scenarioRepository(scenario)
+                sessionRepository = fixedSessions(session)
+                debugEventRepository = events
+                api = unusedApi()
+                initialScenarios = listOf(scenario)
+            }) }
+            container.clickButtonNamed(scenario.name)
+            nextBrowserTick()
+            container.clickButtonNamed(session.title)
+            nextBrowserTick()
+            container.click("button[aria-label='Open debug panel']")
+            nextBrowserTick()
+            val panel = assertNotNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
+            val text = panel.textContent.orEmpty()
+            assertEquals(true, text.contains("Current flags"), text)
+            assertEquals(true, text.contains("doorOpen"), text)
+            assertEquals(true, text.contains("true"), text)
+            assertEquals(true, text.contains("Frontmatter"), text)
+            assertEquals(true, text.contains("set-flag"), text)
+            assertEquals(true, text.contains("System prompt"), text)
+            assertEquals(true, text.contains("Prompt body"), text)
+            assertEquals(true, text.contains("Background rerank"), text)
+            assertEquals(true, text.contains("Prior turn"), text)
+            assertEquals(true, text.contains("Context compression"), text)
+            assertEquals(true, text.contains("Applied assignments"), text)
+            assertEquals(true, text.contains("Prompt tokens"), text)
+            assertEquals(true, text.contains("Context tokens"), text)
+            assertEquals(true, text.contains("Predicted tokens per second"), text)
+            assertEquals(true, text.contains("300 ms"), text)
+            assertEquals(false, text.contains("player secret action"))
+            assertEquals(false, text.contains("game master secret output"))
+            val cards = panel.querySelectorAll(".debug-event")
+            assertEquals(4, cards.length)
+            assertEquals(true, cards.item(0)?.textContent?.contains("Background rerank"))
+        } finally { container.remove() }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `clearing debug log removes only active session events`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+        val session = GameSession("session", scenario.id, "Harbor", "local-model", emptyList(), 1, 1)
+        val events = recordingDebugEvents(
+            DebugEvent("active", "session", "turn", 0, 1, "turn_status", "completed"),
+            DebugEvent("other", "other", "turn", 0, 1, "turn_status", "completed"),
+        )
+        try {
+            flushSync { createRoot(container).render(AdventureApp.create {
+                scenarioRepository = scenarioRepository(scenario)
+                sessionRepository = fixedSessions(session)
+                debugEventRepository = events
+                api = unusedApi()
+                initialScenarios = listOf(scenario)
+            }) }
+            container.clickButtonNamed(scenario.name)
+            nextBrowserTick()
+            container.clickButtonNamed(session.title)
+            nextBrowserTick()
+            container.click("button[aria-label='Open debug panel']")
+            nextBrowserTick()
+            assertEquals(1, container.querySelectorAll(".debug-event").length)
+            container.clickButtonNamed("Clear debug log")
+            nextBrowserTick()
+            assertEquals(0, container.querySelectorAll(".debug-event").length)
+            assertEquals(listOf("other"), events.saved.map { it.id })
+        } finally { container.remove() }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `open debug panel refreshes diagnostics added during a turn`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+        val session = GameSession("session", scenario.id, "Harbor", "local-model", emptyList(), 1, 1)
+        val events = recordingDebugEvents()
+        try {
+            flushSync { createRoot(container).render(AdventureApp.create {
+                scenarioRepository = scenarioRepository(scenario)
+                sessionRepository = fixedSessions(session)
+                debugEventRepository = events
+                api = unusedApi()
+                initialScenarios = listOf(scenario)
+            }) }
+            container.clickButtonNamed(scenario.name)
+            nextBrowserTick()
+            container.clickButtonNamed(session.title)
+            nextBrowserTick()
+            container.click("button[aria-label='Open debug panel']")
+            nextBrowserTick()
+            assertEquals(0, container.querySelectorAll(".debug-event").length)
+            events.append(DebugEvent("new", "session", "turn", 0, 1, "turn_status", "completed"))
+            Promise<Unit> { resolve, _ -> window.setTimeout({ resolve(Unit) }, 650) }.await()
+            assertEquals(1, container.querySelectorAll(".debug-event").length)
+        } finally { container.remove() }
     }
 
     @OptIn(DelicateCoroutinesApi::class)
@@ -459,6 +565,21 @@ class AdventureAppNavigationTest {
         override suspend fun save(session: GameSession) = Unit
         override suspend fun find(id: String) = null
         override suspend fun delete(id: String) = Unit
+    }
+
+    private fun fixedSessions(session: GameSession) = object : SessionRepository {
+        override suspend fun list() = listOf(session)
+        override suspend fun save(session: GameSession) = Unit
+        override suspend fun find(id: String) = session.takeIf { it.id == id }
+        override suspend fun delete(id: String) = Unit
+    }
+
+    private fun recordingDebugEvents(vararg events: DebugEvent) = object : DebugEventRepository {
+        val saved = events.toMutableList()
+        override suspend fun listForSession(sessionId: String) = saved.filter { it.sessionId == sessionId }
+        override suspend fun append(event: DebugEvent) { saved += event }
+        override suspend fun clearSession(sessionId: String) { saved.removeAll { it.sessionId == sessionId } }
+        override suspend fun deleteForSessions(sessionIds: Set<String>) { saved.removeAll { it.sessionId in sessionIds } }
     }
 
     private fun unusedApi() = object : AdventureApi {
