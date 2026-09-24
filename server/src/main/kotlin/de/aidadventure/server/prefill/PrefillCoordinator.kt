@@ -331,6 +331,9 @@ internal class SessionPrefillCoordinator(
                     onWarmupFailure(WarmupFailure(requestId, "world_state", failure.javaClass.simpleName))
                     onDiagnostic(StreamDiagnostic("world_state", "failed",
                         fields = mapOf("failureCategory" to failure.javaClass.simpleName), transcriptRole = "game-master"))
+                    onDiagnostic(StreamDiagnostic("world_state", "fallback_accepted", transcriptRole = "game-master",
+                        fields = mapOf("location" to request.worldState.location,
+                            "narrativeFocus" to request.worldState.narrativeFocus)))
                     request.worldState
                 }
                 val canonicalWarmup = request.copy(worldState = accepted)
@@ -649,7 +652,7 @@ internal class SessionPrefillCoordinator(
                     if (failure != null) {
                         generation++
                         val releaseFailure = releaseAfterFailureLocked(lease)
-                        current.execution.fail(releaseFailure ?: failure)
+                        current.execution.fail(releaseFailure ?: failure, drainTurnDiagnostics())
                     } else {
                         if (operation is RerankingOperation) nextFragment = operation.resolvedFragment
                         val resolved = current.resolvedTurn?.takeIf { it.matches(current.request) }?.forRequest(current.request)
@@ -780,9 +783,11 @@ internal class SessionPrefillCoordinator(
             job = scope.launch(start = CoroutineStart.LAZY) {
                 var lease: Lease? = null
                 var streamFailure: Throwable? = null
+                var priorDiagnosticsDelivered = false
                 try {
                     lease = ready.await()
                     priorDiagnostics.forEach { output.send(TurnStreamEvent.Diagnostic(it)) }
+                    priorDiagnosticsDelivered = true
                     if (selectedFragment != null) output.send(TurnStreamEvent.Fragment(selectedFragment.orEmpty(), emittedSignals))
                     request = prepareTurn(request, lease.slot)
                     output.send(TurnStreamEvent.GenerationReady)
@@ -811,6 +816,13 @@ internal class SessionPrefillCoordinator(
                     }
                 } catch (failure: Throwable) {
                     streamFailure = failure
+                    if (!priorDiagnosticsDelivered) {
+                        try {
+                            priorDiagnostics.forEach { output.send(TurnStreamEvent.Diagnostic(it)) }
+                        } catch (_: CancellationException) {
+                            // The collector may have disconnected while the prior result was sent.
+                        }
+                    }
                 }
 
                 val releaseFailure = withContext(NonCancellable) {
@@ -841,7 +853,8 @@ internal class SessionPrefillCoordinator(
             ready.complete(lease)
         }
 
-        fun fail(failure: Throwable) {
+        fun fail(failure: Throwable, diagnostics: List<StreamDiagnostic> = emptyList()) {
+            priorDiagnostics = diagnostics
             ready.completeExceptionally(failure)
         }
 

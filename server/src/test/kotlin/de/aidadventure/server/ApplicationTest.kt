@@ -11,6 +11,7 @@ import de.aidadventure.server.model.PrefillRequest
 import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
+import de.aidadventure.server.model.StreamDiagnostic
 import de.aidadventure.server.model.WarmupRequest
 import de.aidadventure.server.prefill.CoordinatorKey
 import de.aidadventure.server.prefill.PrefillCoordinator
@@ -23,21 +24,28 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.options
 import io.ktor.client.request.post
+import io.ktor.client.request.preparePost
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import io.ktor.utils.io.readUTF8Line
 import java.io.IOException
 import io.ktor.serialization.kotlinx.json.json
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -51,6 +59,46 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ApplicationTest {
+    @Test
+    fun `cancelled turn keeps serialized diagnostics free of transcript text`() = testApplication {
+        val captured = CompletableDeferred<String>()
+        val registry = FakeRegistry()
+        registry.coordinator.turnEvents = flow {
+            emit(TurnStreamEvent.Diagnostic(StreamDiagnostic("generation", "started", transcriptRole = "game-master")))
+            emit(TurnStreamEvent.Token("SECRET_GAME_MASTER_OUTPUT"))
+            awaitCancellation()
+        }
+        application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolving(null)) }
+        configureJsonClient()
+
+        runBlocking {
+            val reader = async {
+                client.preparePost("/api/turn") {
+                    contentType(ContentType.Application.Json)
+                    setBody(turnRequest().copy(playerAction = "SECRET_PLAYER_ACTION"))
+                }.execute { response ->
+                    val lines = mutableListOf<String>()
+                    val channel = response.bodyAsChannel()
+                    while (true) {
+                        val line = channel.readUTF8Line() ?: break
+                        lines += line
+                        if (lines.any { it == "event: token" } && line.startsWith("data: ")) {
+                            captured.complete(lines.joinToString("\n"))
+                            awaitCancellation()
+                        }
+                    }
+                }
+            }
+            val body = withTimeout(2_000) { captured.await() }
+            val diagnostics = body.split("event: diagnostic\n").drop(1).map { it.substringBefore("\n\n") }
+            assertTrue(diagnostics.isNotEmpty())
+            assertFalse(diagnostics.joinToString().contains("SECRET_PLAYER_ACTION"))
+            assertFalse(diagnostics.joinToString().contains("SECRET_GAME_MASTER_OUTPUT"))
+            withTimeout(2_000) { reader.cancelAndJoin() }
+            assertTrue(reader.isCancelled)
+        }
+    }
+
     @Test
     fun `failed turn emits a safe terminal diagnostic before error`() = testApplication {
         val registry = FakeRegistry()

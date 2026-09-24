@@ -23,6 +23,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
@@ -36,6 +37,61 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
+    @Test
+    fun `world state failure reports the accepted fallback after the failure`() = runBlocking {
+        val prior = WorldState("Harbour", "Find the keeper")
+        val fake = ControllableGateway(
+            stream = { flowOf(TurnStreamEvent.Token("SECRET_GAME_MASTER_OUTPUT"), TurnStreamEvent.Done(TurnMetrics(null, 4, 3))) },
+            worldState = { throw IllegalStateException("SECRET_PLAYER_ACTION") },
+            warmup = { CacheMetrics(2, 1) },
+        )
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        val request = turn("SECRET_PLAYER_ACTION")
+        coordinator.beginTurn(request).toList()
+        val diagnostics = mutableListOf<de.aidadventure.server.model.StreamDiagnostic>()
+        val accepted = coordinator.resolveWorldStateAndWarmup(
+            request, "SECRET_GAME_MASTER_OUTPUT", warmup().copy(worldState = prior),
+            WorldStateResolutionRequest("session-1", "# Harbor", prior, "SECRET_PLAYER_ACTION", "SECRET_GAME_MASTER_OUTPUT"),
+            "request-1", diagnostics::add,
+        )
+
+        assertEquals(prior, accepted)
+        assertEquals(listOf("failed", "fallback_accepted", "completed"), diagnostics.map { it.stage })
+        assertEquals("Harbour", diagnostics[1].fields["location"])
+        assertEquals("Find the keeper", diagnostics[1].fields["narrativeFocus"])
+        assertEquals("Harbour", fake.warmupRequests.single().worldState.location)
+        assertFalse(diagnostics.joinToString().contains("SECRET_PLAYER_ACTION"))
+        assertFalse(diagnostics.joinToString().contains("SECRET_GAME_MASTER_OUTPUT"))
+        coordinator.close()
+    }
+
+    @Test
+    fun `waiting turn receives prior rerank failure before its terminal error`() = runBlocking {
+        val allowFailure = CompletableDeferred<Unit>()
+        val classifyStarted = CompletableDeferred<Unit>()
+        val fake = ControllableGateway(classify = {
+            classifyStarted.complete(Unit)
+            allowFailure.await()
+            throw IllegalStateException("SECRET_PLAYER_ACTION")
+        })
+        val coordinator = SessionPrefillCoordinator(fake)
+        coordinator.rerankAndWarmup(warmup(), candidate(), "prior-request")
+        classifyStarted.await()
+        val events = mutableListOf<TurnStreamEvent>()
+        val waiting = async {
+            runCatching { coordinator.beginTurn(turn("SECRET_PLAYER_ACTION")).collect(events::add) }.exceptionOrNull()
+        }
+        allowFailure.complete(Unit)
+        val failure = waiting.await()
+
+        assertTrue(failure is IllegalStateException)
+        val diagnostic = events.filterIsInstance<TurnStreamEvent.Diagnostic>().single().value
+        assertEquals("background_rerank", diagnostic.kind)
+        assertEquals("prior_failed", diagnostic.stage)
+        assertFalse(diagnostic.toString().contains("SECRET_PLAYER_ACTION"))
+        coordinator.close()
+    }
+
     @Test
     fun `world state and warmup report accepted and failed outcomes without transcript text`() = runBlocking {
         val fake = ControllableGateway(
