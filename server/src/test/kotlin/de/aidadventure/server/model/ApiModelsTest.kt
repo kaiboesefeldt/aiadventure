@@ -12,6 +12,18 @@ import kotlin.test.assertNull
 
 class ApiModelsTest {
     @Test
+    fun `diagnostic metrics omit measurements that were not supplied`() {
+        val payload = Json { encodeDefaults = true }.encodeToString(
+            StreamDiagnostic("llama_completion", "completed", metrics = DiagnosticMetrics(cacheTokens = 17))
+        )
+
+        assertContains(payload, "\"cacheTokens\":17")
+        assertFalse(payload.contains("predictedTokens"))
+        assertFalse(payload.contains("promptDurationMs"))
+        assertFalse(payload.contains("totalDurationMs"))
+    }
+
+    @Test
     fun `stream done JSON exposes narrative focus without legacy names`() {
         val payload = Json.encodeToString(
             StreamDone(

@@ -41,6 +41,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -48,6 +51,63 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ApplicationTest {
+    @Test
+    fun `failed turn emits a safe terminal diagnostic before error`() = testApplication {
+        val registry = FakeRegistry()
+        registry.coordinator.beginTurnFailure = IOException("SECRET_PLAYER_ACTION")
+        application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolving(null)) }
+        configureJsonClient()
+
+        val body = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest().copy(playerAction = "SECRET_PLAYER_ACTION"))
+        }.bodyAsText()
+
+        val diagnosticFrames = body.split("\n\n").filter { it.startsWith("event: diagnostic\n") }
+        val terminal = Json.parseToJsonElement(diagnosticFrames.last().substringAfter("data: ")).jsonObject
+        assertEquals("turn_status", terminal.getValue("kind").jsonPrimitive.content)
+        assertEquals("failed", terminal.getValue("stage").jsonPrimitive.content)
+        assertFalse(diagnosticFrames.joinToString().contains("SECRET_PLAYER_ACTION"))
+        assertTrue(body.indexOf("\"kind\":\"turn_status\"") < body.indexOf("event: error"))
+    }
+
+    @Test
+    fun `turn diagnostics describe stages in order without copying transcript text`() = testApplication {
+        val registry = FakeRegistry()
+        registry.coordinator.turnEvents = flowOf(
+            TurnStreamEvent.Fragment("A hidden route opens.", listOf("found-map")),
+            TurnStreamEvent.Token("SECRET_GAME_MASTER_OUTPUT"),
+            TurnStreamEvent.Done(TurnMetrics(42, 24, 18)),
+        )
+        registry.coordinator.acceptedWorldState = WorldState("Harbour", "Find the keeper")
+        application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolving(null)) }
+        configureJsonClient()
+
+        val body = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest(worldState = WorldState("Quay", "Find a map")).copy(
+                playerAction = "SECRET_PLAYER_ACTION",
+                flags = mapOf("has-map" to false),
+                signals = mapOf("found-map" to listOf(FlagAssignment("has-map", true))),
+            ))
+        }.bodyAsText()
+
+        val diagnostics = body.split("\n\n").filter { it.startsWith("event: diagnostic\n") }
+            .map { Json.parseToJsonElement(it.substringAfter("data: ")).jsonObject }
+        assertEquals(
+            listOf("turn_state", "fragment", "turn_metrics", "flags", "world_state", "context_compression", "background_rerank", "turn_status"),
+            diagnostics.map { it.getValue("kind").jsonPrimitive.content },
+        )
+        assertEquals("Quay", diagnostics.first().getValue("fields").jsonObject.getValue("location").jsonPrimitive.content)
+        assertEquals("42", diagnostics[2].getValue("metrics").jsonObject.getValue("totalDurationMs").jsonPrimitive.content)
+        assertEquals("true", diagnostics[3].getValue("fields").jsonObject.getValue("has-map").jsonPrimitive.content)
+        assertEquals("Harbour", diagnostics[4].getValue("fields").jsonObject.getValue("location").jsonPrimitive.content)
+        assertFalse(diagnostics.joinToString().contains("SECRET_PLAYER_ACTION"))
+        assertFalse(diagnostics.joinToString().contains("SECRET_GAME_MASTER_OUTPUT"))
+        assertContains(body, "event: token\ndata: {\"text\":\"SECRET_GAME_MASTER_OUTPUT\"}")
+        assertContains(body, "event: done\n")
+    }
+
     @Test
     fun `prefill context limit returns actionable HTTP error`() = testApplication {
         val registry = FakeRegistry()
@@ -97,6 +157,7 @@ class ApplicationTest {
         }
         val body = response.bodyAsText()
         assertContains(body, "A keeper greeted the player and opened the door.")
+        assertContains(body, "\"pendingCoversThroughTurn\":\"2\"")
         assertEquals(1, Regex("event: input_ready").findAll(body).count())
         assertEquals(compression, registry.coordinator.rerankRequests.single().contextCompression)
         assertEquals(completedHistory, registry.coordinator.rerankRequests.single().history)
@@ -518,7 +579,7 @@ class ApplicationTest {
                     "event: token\ndata: {\"text\":\"The door opens.\"}\n\n" +
                     "event: input_ready\ndata: {}\n\n" +
                     "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"\",\"narrativeFocus\":\"\"},\"flags\":{}}\n\n",
-                response.bodyAsText(),
+                response.bodyAsText().withoutDiagnostics(),
             )
             assertEquals(listOf(turnRequest()), registry.coordinator.turnRequests)
         }
@@ -629,7 +690,7 @@ class ApplicationTest {
             assertEquals(
                 ": connected\n\n" +
                     "event: error\ndata: {\"code\":\"llama_cpp_unavailable\",\"message\":\"The model service is unavailable.\"}\n\n",
-                response.bodyAsText(),
+                response.bodyAsText().withoutDiagnostics(),
             )
         }
     }
@@ -892,4 +953,6 @@ class ApplicationTest {
             install(ContentNegotiation) { json() }
         }
     }
+
+    private fun String.withoutDiagnostics(): String = replace(Regex("event: diagnostic\\ndata: [^\\n]*\\n\\n"), "")
 }

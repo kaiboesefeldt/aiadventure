@@ -7,6 +7,8 @@ import de.aidadventure.server.model.ContextCompression
 import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
+import de.aidadventure.server.model.StreamDiagnostic
+import de.aidadventure.server.model.DiagnosticMetrics
 import de.aidadventure.server.model.WarmupRequest
 import de.aidadventure.server.model.FragmentRelevanceRequest
 import de.aidadventure.server.worldstate.WorldState
@@ -300,7 +302,7 @@ class LlamaCppGateway private constructor(
             try {
                 val port = requirePort(request.llamaCppPort)
                 val prompt = applyTemplate(request.sessionId, "turn", request.llamaCppPort, promptFactory.build(request))
-                runInterruptible { guard(port, slot, prompt, TURN_OUTPUT_TOKENS) }
+                val budget = runInterruptible { guard(port, slot, prompt, TURN_OUTPUT_TOKENS) }
                 logDiagnostic("prepared", port, slot, prompt)
                 val response = runInterruptible {
                     val received = httpClient.send(
@@ -349,6 +351,21 @@ class LlamaCppGateway private constructor(
                         logDiagnostic("completed", port, slot, prompt, metrics)
                         traceCompletion("turn", request.sessionId, metrics)
                         responseText?.toString()?.let { traceFinalResponse("turn", request.sessionId, it) }
+                        send(TurnStreamEvent.Diagnostic(StreamDiagnostic(
+                            kind = "llama_completion", stage = "completed", transcriptRole = "game-master",
+                            fields = mapOf("operation" to "turn"),
+                            metrics = DiagnosticMetrics(
+                                promptTokens = chunk.timings?.promptTokens ?: budget.promptTokens,
+                                contextTokens = budget.contextTokens,
+                                predictedTokens = chunk.predictedTokens ?: chunk.timings?.predictedTokens,
+                                cacheTokens = chunk.tokensCached,
+                                evaluatedTokens = chunk.tokensEvaluated,
+                                promptDurationMs = chunk.timings?.promptDurationMs,
+                                predictedDurationMs = chunk.timings?.predictedDurationMs,
+                                promptTokensPerSecond = chunk.timings?.promptTokensPerSecond,
+                                predictedTokensPerSecond = chunk.timings?.predictedTokensPerSecond,
+                            ),
+                        )))
                         send(TurnStreamEvent.Done(TurnMetrics(null, metrics.evaluatedTokens, metrics.cachedTokens)))
                         completed = true
                         close()
@@ -479,9 +496,13 @@ class LlamaCppGateway private constructor(
         return requireNotNull(capacity?.takeIf { it > 0 }) { "llama.cpp slot context capacity is unavailable." }
     }
 
-    private fun guard(port: Int, slot: LlamaCppSlot, prompt: String, outputTokens: Int) {
+    private data class PromptBudget(val promptTokens: Int, val contextTokens: Int)
+
+    private fun guard(port: Int, slot: LlamaCppSlot, prompt: String, outputTokens: Int): PromptBudget {
         val count = countTokens(port, prompt)
-        if (count.toLong() + outputTokens + CONTEXT_MARGIN > contextCapacity(port, slot)) throw ContextLimitException()
+        val capacity = contextCapacity(port, slot)
+        if (count.toLong() + outputTokens + CONTEXT_MARGIN > capacity) throw ContextLimitException()
+        return PromptBudget(count, capacity)
     }
 
     suspend fun prepare(request: TurnRequest, slot: LlamaCppSlot): TurnRequest = runInterruptible {
@@ -732,7 +753,19 @@ class LlamaCppGateway private constructor(
         val stop: Boolean = false,
         @SerialName("tokens_cached") val tokensCached: Int? = null,
         @SerialName("tokens_evaluated") val tokensEvaluated: Int? = null,
+        @SerialName("tokens_predicted") val predictedTokens: Int? = null,
+        val timings: NativeTimings? = null,
         val error: JsonElement? = null,
+    )
+
+    @Serializable
+    private data class NativeTimings(
+        @SerialName("prompt_n") val promptTokens: Int? = null,
+        @SerialName("prompt_ms") val promptDurationMs: Double? = null,
+        @SerialName("prompt_per_second") val promptTokensPerSecond: Double? = null,
+        @SerialName("predicted_n") val predictedTokens: Int? = null,
+        @SerialName("predicted_ms") val predictedDurationMs: Double? = null,
+        @SerialName("predicted_per_second") val predictedTokensPerSecond: Double? = null,
     )
 
     private class ResponseBodyOwner {

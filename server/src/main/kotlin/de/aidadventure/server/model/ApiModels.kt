@@ -105,8 +105,34 @@ sealed interface TurnStreamEvent {
     data class Fragment(val fragment: String, val emittedSignals: List<String> = emptyList()) : TurnStreamEvent
     data object GenerationReady : TurnStreamEvent
     data object InputReady : TurnStreamEvent
+    data class Diagnostic(val value: StreamDiagnostic) : TurnStreamEvent
     data class Done(val metrics: TurnMetrics, val contextCompression: ContextCompression = ContextCompression()) : TurnStreamEvent
 }
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class StreamDiagnostic(
+    val kind: String,
+    val stage: String,
+    val fields: Map<String, String> = emptyMap(),
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val transcriptRole: String? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val metrics: DiagnosticMetrics? = null,
+)
+
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class DiagnosticMetrics(
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val promptTokens: Int? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val contextTokens: Int? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val predictedTokens: Int? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val cacheTokens: Int? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val evaluatedTokens: Int? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val promptDurationMs: Double? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val predictedDurationMs: Double? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val promptTokensPerSecond: Double? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val predictedTokensPerSecond: Double? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val totalDurationMs: Long? = null,
+)
 
 @Serializable
 data class StreamToken(val text: String)

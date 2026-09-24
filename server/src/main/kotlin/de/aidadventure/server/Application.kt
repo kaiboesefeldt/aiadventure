@@ -12,6 +12,8 @@ import de.aidadventure.server.model.StreamDone
 import de.aidadventure.server.model.StreamError
 import de.aidadventure.server.model.StreamFragment
 import de.aidadventure.server.model.StreamToken
+import de.aidadventure.server.model.StreamDiagnostic
+import de.aidadventure.server.model.DiagnosticMetrics
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnStreamEvent
@@ -234,6 +236,16 @@ fun Application.adventureModule(
                     val coordinator = prefillRegistry
                         .coordinatorFor(CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort))
                     val resolved = coordinator.resolvedTurnFor(request) ?: ResolvedTurn(request, null)
+                    fun diagnostic(value: StreamDiagnostic) = sse("diagnostic", eventJson.encodeToString(value))
+                    diagnostic(StreamDiagnostic(
+                        kind = "turn_state", stage = "initial", transcriptRole = "player",
+                        fields = mapOf(
+                            "location" to resolved.request.worldState.location,
+                            "narrativeFocus" to resolved.request.worldState.narrativeFocus,
+                            "flags" to request.flags.entries.joinToString(", ") { "${it.key}=${it.value}" },
+                            "signals" to request.signals.keys.joinToString(", "),
+                        ) + resolved.request.contextCompression.diagnosticFields(),
+                    ))
                     val stream = coordinator
                         .beginTurn(resolved.request, call.callId ?: "unknown")
                     val generated = StringBuilder()
@@ -251,8 +263,16 @@ fun Application.adventureModule(
                             is TurnStreamEvent.Fragment -> {
                                 appliedFragment = event.fragment
                                 emittedSignals = event.emittedSignals
+                                diagnostic(StreamDiagnostic(
+                                    kind = "fragment", stage = "selected", transcriptRole = "player",
+                                    fields = mapOf(
+                                        "fragment" to event.fragment,
+                                        "emittedSignals" to event.emittedSignals.joinToString(", "),
+                                    ),
+                                ))
                                 if (event.fragment.isNotBlank()) sse("fragment", eventJson.encodeToString(StreamFragment(event.fragment)))
                             }
+                            is TurnStreamEvent.Diagnostic -> diagnostic(event.value)
                             TurnStreamEvent.GenerationReady -> sse("generation_ready", "{}")
                             TurnStreamEvent.InputReady -> {
                                 sse("input_ready", "{}")
@@ -268,7 +288,19 @@ fun Application.adventureModule(
                     if (generated.isNotEmpty() && metrics != null) {
                         if (!inputReady) sse("input_ready", "{}")
                         val requestId = call.callId ?: "unknown"
+                        diagnostic(StreamDiagnostic("turn_metrics", "completed", transcriptRole = "game-master",
+                            metrics = DiagnosticMetrics(totalDurationMs = metrics.totalDurationMs,
+                                evaluatedTokens = metrics.promptTokens, cacheTokens = metrics.cacheTokens)))
                         val completedFlags = applyRuntimeSignals(request.flags, request.signals, emittedSignals)
+                        diagnostic(StreamDiagnostic(
+                            kind = "flags", stage = "applied", transcriptRole = "player",
+                            fields = completedFlags.mapValues { it.value.toString() } +
+                                mapOf(
+                                    "emittedSignals" to emittedSignals.joinToString(", "),
+                                    "appliedAssignments" to emittedSignals.flatMap { request.signals[it].orEmpty() }
+                                        .joinToString(", ") { "${it.flag}=${it.value}" },
+                                ),
+                        ))
                         val completedHistory = (appliedFragment?.takeIf { it.isNotBlank() }?.let { request.history + ChatEntry("runtime-fragment", it) } ?: request.history) +
                             ChatEntry("player", request.playerAction) +
                             ChatEntry("game-master", generated.toString())
@@ -285,13 +317,28 @@ fun Application.adventureModule(
                             flags = completedFlags,
                             signals = request.signals,
                         )
+                        val operationDiagnostics = mutableListOf<StreamDiagnostic>()
                         val acceptedWorldState = coordinator.resolveWorldStateAndWarmup(
                             resolved.request.copy(contextCompression = completedCompression),
                             generated.toString(),
                             warmupRequest,
                             WorldStateResolutionRequest(request.sessionId, request.scenarioMarkdown, request.worldState, request.playerAction, generated.toString(), request.locations),
                             requestId,
+                            operationDiagnostics::add,
                         )
+                        if (operationDiagnostics.isEmpty()) {
+                            diagnostic(StreamDiagnostic(
+                                kind = "world_state", stage = "accepted", transcriptRole = "game-master",
+                                fields = mapOf(
+                                    "location" to acceptedWorldState.location,
+                                    "narrativeFocus" to acceptedWorldState.narrativeFocus,
+                                ),
+                            ))
+                        } else operationDiagnostics.forEach(::diagnostic)
+                        diagnostic(StreamDiagnostic(
+                            kind = "context_compression", stage = "completed", transcriptRole = "game-master",
+                            fields = completedCompression.diagnosticFields(),
+                        ))
                         if (logger.isTraceEnabled) {
                             logger.trace("operation=world_state phase=accepted sessionId={}", request.sessionId)
                         }
@@ -310,6 +357,11 @@ fun Application.adventureModule(
                                 )
                                 null
                             }
+                            if (reservation != null) diagnostic(StreamDiagnostic(
+                                kind = "background_rerank", stage = "scheduled", transcriptRole = "game-master",
+                                fields = mapOf("operation" to "fragment_relevance_and_warmup"),
+                            ))
+                            diagnostic(StreamDiagnostic("turn_status", "completed", transcriptRole = "game-master"))
                             sse("done", eventJson.encodeToString(StreamDone(metrics, acceptedWorldState, completedCompression, completedFlags)))
                             reservation?.let { rerankReservation ->
                                 postTurnScope.launch {
@@ -348,15 +400,21 @@ fun Application.adventureModule(
                             throw failure
                         }
                     } else if (metrics != null) {
+                        diagnostic(StreamDiagnostic("turn_status", "completed", transcriptRole = "game-master"))
                         sse("done", eventJson.encodeToString(StreamDone(metrics, request.worldState, completedCompression, request.flags)))
+                    } else {
+                        diagnostic(StreamDiagnostic("turn_status", "incomplete", transcriptRole = "game-master"))
                     }
                 } catch (_: ClosedWriteChannelException) {
                     logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)
                 } catch (failure: CancellationException) {
+                    try { sse("diagnostic", eventJson.encodeToString(StreamDiagnostic("turn_status", "cancelled"))) }
+                    catch (_: ClosedWriteChannelException) { }
                     throw failure
                 } catch (failure: ContextLimitException) {
                     logger.warn("requestId={} operation=turn result=context_limit", call.callId)
                     try {
+                        sse("diagnostic", eventJson.encodeToString(StreamDiagnostic("turn_status", "failed", fields = mapOf("code" to "context_limit"))))
                         sse("error", eventJson.encodeToString(StreamError("context_limit", failure.message ?: "The model context is full.")))
                     } catch (_: ClosedWriteChannelException) {
                         logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)
@@ -364,6 +422,7 @@ fun Application.adventureModule(
                 } catch (failure: Exception) {
                     logger.warn("requestId={} operation=turn result=llama_cpp_unavailable cause={}", call.callId, failure.javaClass.simpleName)
                     try {
+                        sse("diagnostic", eventJson.encodeToString(StreamDiagnostic("turn_status", "failed", fields = mapOf("code" to "llama_cpp_unavailable"))))
                         sse("error", eventJson.encodeToString(StreamError("llama_cpp_unavailable", "The model service is unavailable.")))
                     } catch (_: ClosedWriteChannelException) {
                         logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)
@@ -568,6 +627,22 @@ data class ModelsResponse(val models: List<String>)
 data class ApiError(val code: String, val message: String)
 
 private val eventJson = Json { encodeDefaults = true }
+
+private fun ContextCompression.diagnosticFields(): Map<String, String> = buildMap {
+    put("epoch", epoch.toString())
+    put("active", (active != null).toString())
+    put("pending", (pending != null).toString())
+    active?.let {
+        put("activeCoversThroughTurn", it.coversThroughTurn.toString())
+        put("activeCoversThroughEntry", it.coversThroughEntry.toString())
+        put("activeRecapChars", it.recap.length.toString())
+    }
+    pending?.let {
+        put("pendingCoversThroughTurn", it.coversThroughTurn.toString())
+        put("pendingCoversThroughEntry", it.coversThroughEntry.toString())
+        put("pendingRecapChars", it.recap.length.toString())
+    }
+}
 
 private fun Writer.sse(event: String, data: String) {
     write("event: $event\ndata: $data\n\n")

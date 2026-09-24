@@ -37,6 +37,54 @@ import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
     @Test
+    fun `world state and warmup report accepted and failed outcomes without transcript text`() = runBlocking {
+        val fake = ControllableGateway(
+            stream = { flowOf(TurnStreamEvent.Token("SECRET_GAME_MASTER_OUTPUT"), TurnStreamEvent.Done(TurnMetrics(null, 4, 3))) },
+            worldState = { WorldState("Bell Tower", "Find the bell keeper") },
+            warmup = { throw IllegalStateException("SECRET_GAME_MASTER_OUTPUT") },
+        )
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        val request = turn("SECRET_PLAYER_ACTION")
+        coordinator.beginTurn(request).toList()
+        val diagnostics = mutableListOf<de.aidadventure.server.model.StreamDiagnostic>()
+        val accepted = coordinator.resolveWorldStateAndWarmup(
+            request, "SECRET_GAME_MASTER_OUTPUT", warmup(),
+            WorldStateResolutionRequest("session-1", "# Harbor", WorldState(), "SECRET_PLAYER_ACTION", "SECRET_GAME_MASTER_OUTPUT"),
+            "request-1", diagnostics::add,
+        )
+
+        assertEquals("Bell Tower", accepted.location)
+        assertEquals(listOf("world_state", "warmup"), diagnostics.map { it.kind })
+        assertEquals(listOf("accepted", "failed"), diagnostics.map { it.stage })
+        assertFalse(diagnostics.joinToString().contains("SECRET_PLAYER_ACTION"))
+        assertFalse(diagnostics.joinToString().contains("SECRET_GAME_MASTER_OUTPUT"))
+        coordinator.close()
+    }
+
+    @Test
+    fun `next turn reports prior background relevance and warmup outcome before generation`() = runBlocking {
+        val fake = ControllableGateway(
+            classify = { "Y" },
+            warmup = { CacheMetrics(8, 2) },
+            stream = { flowOf(TurnStreamEvent.Token("Safe output"), TurnStreamEvent.Done(TurnMetrics(null, 4, 3))) },
+        )
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        coordinator.rerankAndWarmup(warmup(), candidate(), "prior-request")
+        fake.awaitWarmupCompletion()
+
+        val events = coordinator.beginTurn(turn("SECRET_PLAYER_ACTION")).toList()
+        val diagnostics = events.filterIsInstance<TurnStreamEvent.Diagnostic>().map { it.value }
+        assertEquals("background_rerank", diagnostics.first().kind)
+        assertEquals("prior_completed", diagnostics.first().stage)
+        assertEquals("accepted", diagnostics.first().fields["result"])
+        assertEquals("candidate key", diagnostics.first().fields["matchText"])
+        assertEquals("8", diagnostics.first().metrics?.cacheTokens?.toString())
+        assertTrue(events.indexOfFirst { it is TurnStreamEvent.Diagnostic } < events.indexOfFirst { it is TurnStreamEvent.GenerationReady })
+        assertFalse(diagnostics.joinToString().contains("SECRET_PLAYER_ACTION"))
+        coordinator.close()
+    }
+
+    @Test
     fun `prefill forwards the location catalog to the primary request`() = runBlocking {
         val fake = ControllableGateway(prefill = { CacheMetrics(null, null) })
         val coordinator = SessionPrefillCoordinator(fake)
