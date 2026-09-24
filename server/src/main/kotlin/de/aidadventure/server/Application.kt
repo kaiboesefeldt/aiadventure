@@ -23,6 +23,8 @@ import de.aidadventure.server.prefill.LlamaCppPrefillGateway
 import de.aidadventure.server.prefill.PrefillRegistry
 import de.aidadventure.server.runtimefragments.DefaultRuntimeFragmentResolver
 import de.aidadventure.server.runtimefragments.RuntimeFragmentResolver
+import de.aidadventure.server.runtimefragments.applyRuntimeSignals
+import de.aidadventure.server.runtimefragments.eligibleRuntimeFragments
 import de.aidadventure.server.embedding.OnnxLocalEmbeddingService
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -200,7 +202,7 @@ fun Application.adventureModule(
                 return@post
             }
             try {
-                runtimeFragmentResolver.prepare(request.runtimeFragments)
+                runtimeFragmentResolver.prepare(eligibleRuntimeFragments(request.runtimeFragments, request.flags))
             } catch (failure: Exception) {
                 if (failure is CancellationException) throw failure
                 logger.warn("requestId={} operation={} failure={}", call.callId, "warmup", failure.javaClass.simpleName)
@@ -239,6 +241,7 @@ fun Application.adventureModule(
                     var completedCompression = request.contextCompression
                     var inputReady = false
                     var appliedFragment: String? = resolved.fragment
+                    var emittedSignals = resolved.emittedSignals
                     stream.collect { event ->
                         when (event) {
                             is TurnStreamEvent.Token -> {
@@ -247,7 +250,8 @@ fun Application.adventureModule(
                             }
                             is TurnStreamEvent.Fragment -> {
                                 appliedFragment = event.fragment
-                                sse("fragment", eventJson.encodeToString(StreamFragment(event.fragment)))
+                                emittedSignals = event.emittedSignals
+                                if (event.fragment.isNotBlank()) sse("fragment", eventJson.encodeToString(StreamFragment(event.fragment)))
                             }
                             TurnStreamEvent.GenerationReady -> sse("generation_ready", "{}")
                             TurnStreamEvent.InputReady -> {
@@ -264,7 +268,8 @@ fun Application.adventureModule(
                     if (generated.isNotEmpty() && metrics != null) {
                         if (!inputReady) sse("input_ready", "{}")
                         val requestId = call.callId ?: "unknown"
-                        val completedHistory = (appliedFragment?.let { request.history + ChatEntry("runtime-fragment", it) } ?: request.history) +
+                        val completedFlags = applyRuntimeSignals(request.flags, request.signals, emittedSignals)
+                        val completedHistory = (appliedFragment?.takeIf { it.isNotBlank() }?.let { request.history + ChatEntry("runtime-fragment", it) } ?: request.history) +
                             ChatEntry("player", request.playerAction) +
                             ChatEntry("game-master", generated.toString())
                         val warmupRequest = WarmupRequest(
@@ -277,6 +282,8 @@ fun Application.adventureModule(
                             worldState = request.worldState,
                             contextCompression = completedCompression,
                             locations = request.locations,
+                            flags = completedFlags,
+                            signals = request.signals,
                         )
                         val acceptedWorldState = coordinator.resolveWorldStateAndWarmup(
                             resolved.request.copy(contextCompression = completedCompression),
@@ -303,7 +310,7 @@ fun Application.adventureModule(
                                 )
                                 null
                             }
-                            sse("done", eventJson.encodeToString(StreamDone(metrics, acceptedWorldState, completedCompression)))
+                            sse("done", eventJson.encodeToString(StreamDone(metrics, acceptedWorldState, completedCompression, completedFlags)))
                             reservation?.let { rerankReservation ->
                                 postTurnScope.launch {
                                     var candidate: de.aidadventure.server.model.RuntimeFragmentDefinition? = null
@@ -311,7 +318,7 @@ fun Application.adventureModule(
                                         if (acceptedWorldState.location.isNotBlank() || acceptedWorldState.narrativeFocus.isNotBlank()) {
                                             candidate = runtimeFragmentResolver.resolve(
                                                 completedHistory,
-                                                request.runtimeFragments,
+                                                eligibleRuntimeFragments(request.runtimeFragments, completedFlags),
                                                 acceptedWorldState.narrativeFocus,
                                                 acceptedWorldState.location,
                                                 request.locations[acceptedWorldState.location],
@@ -341,7 +348,7 @@ fun Application.adventureModule(
                             throw failure
                         }
                     } else if (metrics != null) {
-                        sse("done", eventJson.encodeToString(StreamDone(metrics, request.worldState, completedCompression)))
+                        sse("done", eventJson.encodeToString(StreamDone(metrics, request.worldState, completedCompression, request.flags)))
                     }
                 } catch (_: ClosedWriteChannelException) {
                     logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)
@@ -371,7 +378,11 @@ fun Application.adventureModule(
 
 private const val CONFIGURED_MODEL_ID = "configured-llama-cpp"
 
-data class ResolvedTurn(val request: TurnRequest, val fragment: String?)
+data class ResolvedTurn(
+    val request: TurnRequest,
+    val fragment: String?,
+    val emittedSignals: List<String> = emptyList(),
+)
 
 private fun TurnRequest.configuredFor(port: Int) = copy(modelId = CONFIGURED_MODEL_ID, llamaCppPort = port)
 private fun PrefillRequest.configuredFor(port: Int) = copy(modelId = CONFIGURED_MODEL_ID, llamaCppPort = port)
@@ -434,6 +445,8 @@ object RequestValidator {
         worldState = request.worldState,
         contextCompression = request.contextCompression,
         locations = request.locations,
+        flags = request.flags,
+        signals = request.signals,
     )
 
     fun validate(request: PrefillRequest): ApiError? = when {
@@ -449,6 +462,8 @@ object RequestValidator {
             worldState = request.worldState,
             contextCompression = request.contextCompression,
             locations = request.locations,
+            flags = request.flags,
+            signals = request.signals,
         )
     }
 
@@ -462,6 +477,8 @@ object RequestValidator {
         worldState = request.worldState,
         contextCompression = request.contextCompression,
         locations = request.locations,
+        flags = request.flags,
+        signals = request.signals,
     )
 
     private fun validate(
@@ -475,8 +492,10 @@ object RequestValidator {
         worldState: de.aidadventure.server.worldstate.WorldState,
         contextCompression: ContextCompression,
         locations: Map<String, String>,
+        flags: Map<String, Boolean>,
+        signals: Map<String, List<de.aidadventure.server.model.FlagAssignment>>,
     ): ApiError? = when {
-        validateContext(sessionId, modelId, port, scenarioMarkdown, history, runtimeFragments, worldState, contextCompression, locations) != null -> invalid()
+        validateContext(sessionId, modelId, port, scenarioMarkdown, history, runtimeFragments, worldState, contextCompression, locations, flags, signals) != null -> invalid()
         playerAction.isBlank() || playerAction.length > MAX_TEXT_LENGTH -> invalid()
         else -> null
     }
@@ -491,6 +510,8 @@ object RequestValidator {
         worldState: de.aidadventure.server.worldstate.WorldState,
         contextCompression: ContextCompression,
         locations: Map<String, String>,
+        flags: Map<String, Boolean>,
+        signals: Map<String, List<de.aidadventure.server.model.FlagAssignment>>,
     ): ApiError? = when {
         sessionId.isBlank() || sessionId.length > MAX_SESSION_ID_LENGTH -> invalid()
         modelId.isBlank() || modelId.length > MAX_MODEL_ID_LENGTH -> invalid()
@@ -503,6 +524,16 @@ object RequestValidator {
         runtimeFragments.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
         runtimeFragments.any { !it.isValidRuntimeFragmentDefinition() } -> invalid()
         runtimeFragments.map { it.matchText }.toSet().size != runtimeFragments.size -> invalid()
+        flags.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
+        flags.keys.any { it.isBlank() || it.length > MAX_NAME_LENGTH } -> invalid()
+        signals.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
+        signals.any { (name, assignments) ->
+            name.isBlank() || name.length > MAX_NAME_LENGTH || assignments.isEmpty() || assignments.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS ||
+                assignments.any { it.flag !in flags }
+        } -> invalid()
+        runtimeFragments.any { fragment ->
+            fragment.conditions.any { it.flag !in flags } || fragment.emittedSignals.any { it !in signals }
+        } -> invalid()
         else -> null
     }
 
@@ -510,13 +541,15 @@ object RequestValidator {
         role in ALLOWED_HISTORY_ROLES && content.isNotBlank() && content.length <= MAX_TEXT_LENGTH
 
     private fun de.aidadventure.server.model.RuntimeFragmentDefinition.isValidRuntimeFragmentDefinition(): Boolean =
-        matchText.isNotBlank() && fragment.isNotBlank() &&
-            matchText.length <= MAX_TEXT_LENGTH && fragment.length <= MAX_TEXT_LENGTH
+        matchText.isNotBlank() && (fragment.isNotBlank() || emittedSignals.isNotEmpty()) &&
+            matchText.length <= MAX_TEXT_LENGTH && fragment.length <= MAX_TEXT_LENGTH &&
+            conditions.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS && emittedSignals.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS
 
     private fun invalid() = invalidRequestError()
 
     private const val MAX_SESSION_ID_LENGTH = 256
     private const val MAX_MODEL_ID_LENGTH = 256
+    private const val MAX_NAME_LENGTH = 256
     private const val MAX_SCENARIO_LENGTH = 200_000
     private const val MAX_TEXT_LENGTH = 20_000
     private const val MAX_HISTORY_ENTRIES = 100_000

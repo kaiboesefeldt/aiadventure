@@ -381,16 +381,20 @@ private fun ChildrenBuilder.renderMetrics(metrics: TurnMetrics) { listOfNotNull(
 private fun clientMessage(cause: Throwable) = cause.message ?: "Something went wrong. Please try again."
 internal fun flushStreamUpdate(update: () -> Unit) = flushSync(update)
 internal fun sessionForDisplay(persisted: GameSession, streamed: GameSession?) = streamed ?: persisted
-internal fun newGameSession(scenario: Scenario, id: String, time: Long): GameSession = GameSession(
+internal fun newGameSession(scenario: Scenario, id: String, time: Long): GameSession {
+    val frontmatter = ScenarioFrontmatter.parse(scenario.markdown)
+    return GameSession(
     id = id,
     scenarioId = scenario.id,
     title = "${scenario.name} adventure",
     messages = emptyList(),
     createdAt = time,
     updatedAt = time,
-    worldState = ScenarioFrontmatter.parse(scenario.markdown).initialWorldState,
+    worldState = frontmatter.initialWorldState,
+    flags = frontmatter.initialFlags,
     introductionPending = true,
-)
+    )
+}
 internal fun isVisibleTranscriptMessage(message: GameMessage) = !message.hidden && message.role != "runtime-fragment"
 internal fun runtimeFragmentForGameMaster(messages: List<GameMessage>, index: Int): String? =
     messages.getOrNull(index)?.takeIf { it.role == "game-master" }

@@ -3,6 +3,9 @@ package de.aidadventure.server
 import com.sun.net.httpserver.HttpServer
 import de.aidadventure.server.llamacpp.LlamaCppGateway
 import de.aidadventure.server.model.ChatEntry
+import de.aidadventure.server.model.FlagAssignment
+import de.aidadventure.server.model.FlagCondition
+import de.aidadventure.server.model.RuntimeFragmentDefinition
 import de.aidadventure.server.model.PrefillDisposition
 import de.aidadventure.server.model.PrefillRequest
 import de.aidadventure.server.model.TurnMetrics
@@ -207,6 +210,40 @@ class ApplicationTest {
             registry.coordinator.rerankRequests.single().history,
         )
         assertTrue(registry.coordinator.warmupRequests.isEmpty())
+    }
+
+    @Test
+    fun `selected signal-only fragment updates flags before next retrieval`() = testApplication {
+        val registry = FakeRegistry()
+        registry.coordinator.turnEvents = flowOf(
+            TurnStreamEvent.Fragment("", listOf("found-map")),
+            TurnStreamEvent.Token("The map is found."),
+            TurnStreamEvent.Done(TurnMetrics(null, 2, 1)),
+        )
+        val available = RuntimeFragmentDefinition("map now available", "A route appears.", listOf(FlagCondition("has-map", true)))
+        val unavailable = RuntimeFragmentDefinition("map still hidden", "The map remains hidden.", listOf(FlagCondition("has-map", false)))
+        val resolver = object : RuntimeFragmentResolver {
+            override suspend fun prepare(definitions: List<RuntimeFragmentDefinition>) = Unit
+            override suspend fun resolve(history: List<ChatEntry>, definitions: List<RuntimeFragmentDefinition>): RuntimeFragmentDefinition? =
+                definitions.singleOrNull()
+        }
+        application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolver) }
+        configureJsonClient()
+
+        val response = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest(worldState = WorldState(location = "Harbour")).copy(
+                runtimeFragments = listOf(available, unavailable),
+                flags = mapOf("has-map" to false),
+                signals = mapOf("found-map" to listOf(FlagAssignment("has-map", true))),
+            ))
+        }
+
+        assertContains(response.bodyAsText(), "\"flags\":{\"has-map\":true}")
+        assertFalse(response.bodyAsText().contains("event: fragment"))
+        runBlocking { withTimeout(1_000) { registry.coordinator.rerankCompleted.await() } }
+        assertEquals(mapOf("has-map" to true), registry.coordinator.rerankRequests.single().flags)
+        assertEquals(available, registry.coordinator.rerankCandidates.single())
     }
 
     @Test
@@ -480,7 +517,7 @@ class ApplicationTest {
                 ": connected\n\n" +
                     "event: token\ndata: {\"text\":\"The door opens.\"}\n\n" +
                     "event: input_ready\ndata: {}\n\n" +
-                    "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"\",\"narrativeFocus\":\"\"}}\n\n",
+                    "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"\",\"narrativeFocus\":\"\"},\"flags\":{}}\n\n",
                 response.bodyAsText(),
             )
             assertEquals(listOf(turnRequest()), registry.coordinator.turnRequests)
@@ -512,7 +549,7 @@ class ApplicationTest {
             val donePayload = response.bodyAsText()
             assertContains(
                 donePayload,
-                "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"Leuchtturm\",\"narrativeFocus\":\"Finde den Saboteur\"}}",
+                "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":2,\"cacheTokens\":1},\"worldState\":{\"location\":\"Leuchtturm\",\"narrativeFocus\":\"Finde den Saboteur\"},\"flags\":{}}",
             )
             assertFalse(donePayload.contains("unresolvedSituation"))
             assertFalse(donePayload.contains("activeThread"))

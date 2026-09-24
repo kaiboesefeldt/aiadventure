@@ -16,7 +16,15 @@ data class ChatEntry(
 data class RuntimeFragmentDefinition(
     val matchText: String,
     val fragment: String,
+    val conditions: List<FlagCondition> = emptyList(),
+    val emittedSignals: List<String> = emptyList(),
 )
+
+@Serializable
+data class FlagCondition(val flag: String, val value: Boolean)
+
+@Serializable
+data class FlagAssignment(val flag: String, val value: Boolean)
 
 data class FragmentRelevanceRequest(
     val sessionId: String,
@@ -43,6 +51,8 @@ data class TurnRequest(
     val contextCompression: ContextCompression = ContextCompression(),
     val locations: Map<String, String> = emptyMap(),
     val initialSituation: String = "",
+    val flags: Map<String, Boolean> = emptyMap(),
+    val signals: Map<String, List<FlagAssignment>> = emptyMap(),
 )
 
 @Serializable
@@ -58,6 +68,8 @@ data class PrefillRequest(
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
     val locations: Map<String, String> = emptyMap(),
+    val flags: Map<String, Boolean> = emptyMap(),
+    val signals: Map<String, List<FlagAssignment>> = emptyMap(),
 )
 
 @Serializable
@@ -71,6 +83,8 @@ data class WarmupRequest(
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
     val locations: Map<String, String> = emptyMap(),
+    val flags: Map<String, Boolean> = emptyMap(),
+    val signals: Map<String, List<FlagAssignment>> = emptyMap(),
 )
 
 @Serializable
@@ -88,7 +102,7 @@ data class TurnMetrics(
 
 sealed interface TurnStreamEvent {
     data class Token(val text: String) : TurnStreamEvent
-    data class Fragment(val fragment: String) : TurnStreamEvent
+    data class Fragment(val fragment: String, val emittedSignals: List<String> = emptyList()) : TurnStreamEvent
     data object GenerationReady : TurnStreamEvent
     data object InputReady : TurnStreamEvent
     data class Done(val metrics: TurnMetrics, val contextCompression: ContextCompression = ContextCompression()) : TurnStreamEvent
@@ -107,6 +121,7 @@ data class StreamDone(
     val worldState: WorldState = WorldState(),
     @EncodeDefault(EncodeDefault.Mode.NEVER)
     val contextCompression: ContextCompression = ContextCompression(),
+    val flags: Map<String, Boolean> = emptyMap(),
 )
 
 @Serializable

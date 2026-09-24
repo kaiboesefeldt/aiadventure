@@ -16,8 +16,8 @@ object ScenarioImport {
         if (markdown.isBlank()) return ImportResult.Rejected("Scenario file is empty.")
         try {
             ScenarioFrontmatter.parse(markdown)
-        } catch (_: IllegalArgumentException) {
-            return ImportResult.Rejected("Invalid scenario frontmatter.")
+        } catch (error: IllegalArgumentException) {
+            return ImportResult.Rejected(error.message ?: "Invalid scenario frontmatter.")
         }
 
         val fingerprint = fingerprint(name, markdown)

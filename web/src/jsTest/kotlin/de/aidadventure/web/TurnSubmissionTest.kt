@@ -7,6 +7,7 @@ import de.aidadventure.web.api.TurnMetrics
 import de.aidadventure.web.api.TurnCompletion
 import de.aidadventure.web.api.TurnRequest
 import de.aidadventure.web.api.WarmupRequest
+import de.aidadventure.web.api.TurnRequestMapper
 import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
@@ -18,6 +19,43 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.promise
 
 class TurnSubmissionTest {
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `completed turn persists flags returned by server for the following turn`() = GlobalScope.promise<Unit> {
+        val scenario = Scenario("scenario-1", "harbor.md", """
+            ---
+            flags:
+              has-map: false
+            signals:
+              found-map:
+                triggers:
+                  - set-flag:
+                      has-map: true
+            ---
+            # Harbor
+        """.trimIndent(), 1)
+        val initial = newGameSession(scenario, "session-1", 1)
+        val sessions = RecordingSessions()
+        var submittedFlags: Map<String, Boolean>? = null
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+            override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
+                submittedFlags = request.flags
+                onToken("A map lies on the table.")
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState(), flags = mapOf("has-map" to true))
+            }
+        }
+
+        val completed = TurnSubmission(sessions, api).submit(initial.copy(flags = emptyMap()), scenario, "look", {}, {}).session
+        assertEquals(mapOf("has-map" to false), submittedFlags)
+
+        assertEquals(mapOf("has-map" to false), submittedFlags)
+        assertEquals(mapOf("has-map" to true), completed.flags)
+        assertEquals(completed.flags, TurnRequestMapper.map(completed, scenario, "continue", completed.id).flags)
+        assertEquals(completed, sessions.saved.single())
+    }
+
     @OptIn(DelicateCoroutinesApi::class)
     @Test
     fun `completed turn stores fragment immediately before its player action`() = GlobalScope.promise<Unit> {

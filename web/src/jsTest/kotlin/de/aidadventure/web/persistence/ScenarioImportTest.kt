@@ -21,16 +21,30 @@ class ScenarioImportTest {
 
     @Test
     fun `invalid fragments reject import and valid raw template remains`() {
-        assertEquals(
-            ImportResult.Rejected("Invalid scenario frontmatter."),
+        val rejected = assertIs<ImportResult.Rejected>(
             ScenarioImport.fromFile("x.md", "---\nruntime-fragments: []\n---\n# X", emptyList(), 1),
         )
+        assertTrue(rejected.message.contains("runtime-fragments"))
 
         val created = assertIs<ImportResult.Created>(
             ScenarioImport.fromFile("x.md", "---\nruntime-fragments: {}\n---\n# X", emptyList(), 1),
         )
 
         assertTrue(created.scenario.markdown.startsWith("---"))
+    }
+
+    @Test
+    fun `import rejection reports the invalid YAML element`() {
+        val rejected = assertIs<ImportResult.Rejected>(
+            ScenarioImport.fromFile(
+                "x.md",
+                "---\nflags: {visited: false}\nruntime-fragments:\n  lighthouse:\n    condition: {missing: true}\n    emit-text: Ready.\n---\n# X",
+                emptyList(),
+                1,
+            ),
+        )
+
+        assertTrue(rejected.message.contains("runtime-fragments.lighthouse.condition.missing"))
     }
 
     @Test
