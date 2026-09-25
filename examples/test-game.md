@@ -22,6 +22,34 @@ locations:
   Hafenkneipe: "Name: \"Zum schiefen Mast\". Raues Gasthaus am Wasser, in dem Seeleute Gerüchte austauschen."
   Schuppen der Hafenmeisterin: "Abgelegener Lagerschuppen nahe dem Kai, verwaltet von der Hafenmeisterin."
   Steg: "Schmaler, nasser, glitschiger Holzsteg über dunklem Hafenwasser."
+flags:
+  war-im-leuchtturm: false
+  hat-gezeitenskizze: false
+  kennt-gezeitenfenster: false
+  kennt-lichtkennung: false
+  hafenmeisterin-misstrauisch: false
+signals:
+  betritt-leuchtturm:
+    triggers:
+      - set-flag:
+          war-im-leuchtturm: true
+  findet-gezeitenskizze:
+    triggers:
+      - set-flag:
+          hat-gezeitenskizze: true
+          kennt-gezeitenfenster: true
+  entziffert-lichtkennung:
+    triggers:
+      - set-flag:
+          kennt-lichtkennung: true
+  beunruhigt-hafenmeisterin:
+    triggers:
+      - set-flag:
+          hafenmeisterin-misstrauisch: true
+  belegt-den-irrtum:
+    triggers:
+      - set-flag:
+          hafenmeisterin-misstrauisch: false
 runtime-fragments:
   "Die Figur steht am Leuchtturm":
     "Die Figur untersucht den dunklen Leuchtturm von außen und sucht einen Zugang": >
@@ -34,7 +62,18 @@ runtime-fragments:
       Deute eine verborgene Verbindung zum Hafen an und beschreibe die Risiken eines Vordringens in die Enge.
     "Die Figur fragt nach Schlüsseln, Zugängen oder wer den Leuchtturm betreten darf": >
       Streue einen Widerspruch zwischen offizieller Zuständigkeit und tatsächlicher Gelegenheit ein.
+  "Die Figur betritt den Leuchtturm":
+    "Die Figur löst die Kette und tritt vorsichtig durch die Tür":
+      signal: betritt-leuchtturm
+      emit-text: >
+        Sobald die Figur wirklich eintritt, erhält sie einen klaren Blick auf die
+        verriegelte Laternenkammer und den feuchten Steinboden.
   "Die Figur ist im Leuchtturm":
+    condition:
+      war-im-leuchtturm: true
+    emit-text: >
+      Die Figur ist im abgesperrten Turm; halte die Gefahr des nassen,
+      windschiefen Gemäuers präsent.
     "Die Figur steigt die enge Wendeltreppe hinauf und der Wind oder die Höhe wird gefährlich": >
       Erzeuge eine kurze riskante Situation, in der Umsicht belohnt wird, und verbinde sie mit einem Hinweis auf das Signallicht.
     "Die Figur betrachtet die Laternenkammer, die Linse oder die dunkle Lampe genau": >
@@ -47,6 +86,24 @@ runtime-fragments:
       Nutze die Beobachtung als unauffälligen Hinweis auf menschliche Aktivität, ohne sie sofort eindeutig zu erklären.
     "Die Figur entdeckt blaues Glas, eine Abdeckung oder einen veränderten Lampenaufsatz": >
       Mache daraus einen Hinweis auf ein verabredetes Erkennungszeichen und lenke die Aufmerksamkeit auf mögliche Mitwisser im Hafen.
+    "Die Figur untersucht die eingeritzten Kreise neben der Laterne":
+      condition:
+        - hat-gezeitenskizze: false
+          then:
+            "Die Figur findet ein halb verbranntes Blatt in einer Wandritze":
+              signal: findet-gezeitenskizze
+              emit-text: >
+                Das Blatt zeigt dieselben Kreise wie die Wand und eine
+                Gezeiten-Tabelle mit einer handschriftlichen Kennung.
+        - hat-gezeitenskizze: true
+          then:
+            "Die Figur vergleicht die Gezeitenskizze mit den Kreisen":
+              condition:
+                kennt-lichtkennung: false
+              signal: entziffert-lichtkennung
+              emit-text: >
+                Die Markierungen ergeben eine Kennung für ein kurzes
+                Lichtsignal: zwei langsame Blitze, dann ein schneller.
   "Die Figur erkundet die Mole":
     "Die Figur folgt nassen Spuren im Turm oder auf der Mole": >
       Führe die Spur zu einem neuen Ort oder Detail und lass offen, ob sie von Helfern, Schmugglern oder einer falschen Fährte stammt.
@@ -68,6 +125,12 @@ runtime-fragments:
       Bestätige eine Verbindung zwischen zwei Orten und weise auf einen dritten Ort hin, der als Nächstes überprüft werden sollte.
     "Die Figur fragt nach Gezeiten, Uhrzeiten oder dem Ablauf der Nacht": >
       Gib einen zeitgebundenen Hinweis, der die Handlung vorantreibt und eine bevorstehende Gelegenheit ankündigt.
+    "Die Figur wartet auf das in der Skizze markierte Gezeitenfenster":
+      condition:
+        kennt-gezeitenfenster: true
+      emit-text: >
+        Im kurzen Stillwasser gleitet ein unbeleuchtetes Boot an der Mole vorbei.
+        Die Figur kann es verfolgen, unbemerkt beobachten oder die Hafenwache holen.
     "Die Figur öffnet Fässer oder sucht zwischen harmlosen Waren nach Verstecktem": >
       Lass sie etwas Verdächtiges finden, das Fragen aufwirft, aber keinen vollständigen Beweis liefert.
     "Die Figur bemerkt einen Beobachter am Kai oder fühlt sich verfolgt": >
@@ -94,6 +157,18 @@ runtime-fragments:
       Lass die Hafenmeisterin auf Diskretion drängen und mach sichtbar, welchen Preis die Figur für Offenheit oder Heimlichkeit zahlen könnte.
     "Die Figur rekonstruiert den ersten Alarm oder hakt bei Details der Geschichte nach": >
       Lass sich ein Detail der Erzählung verschieben und führe zu einem überprüfbaren Widerspruch.
+  "Die Figur legt der Hafenmeisterin den Fund aus dem Leuchtturm vor":
+    signal: beunruhigt-hafenmeisterin
+    emit-text: >
+      Die Hafenmeisterin reagiert zunächst misstrauisch auf den Verdacht und
+      versucht, das Gespräch auf die Hafenwache zu lenken.
+    "Die Figur zeigt ihr die entzifferte Lichtkennung":
+      condition:
+        kennt-lichtkennung: true
+      signal: belegt-den-irrtum
+      emit-text: >
+        Als sie die Kennung erkennt, weicht ihr Misstrauen. Sie gibt zu, dass
+        das Signal früher für sichere Hafeneinfahrten benutzt wurde.
   "Die Figur sucht Hinweise in der Hafenkneipe":
     "Die Figur fragt nach seltsamen Geräuschen, Bojen oder nächtlichen Signalen": >
       Lass ein Gerücht ein Muster liefern, das zur Beobachtung am Wasser oder zum Leuchtturm zurückführt.
