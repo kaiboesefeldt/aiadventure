@@ -35,6 +35,50 @@ import web.html.HTMLElement
 class AdventureAppNavigationTest {
     @OptIn(DelicateCoroutinesApi::class)
     @Test
+    fun `resumed introduction navigates to its prior turn diagnostic after a failed retry`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+        val session = GameSession("session", scenario.id, "Harbor", messages = listOf(
+            GameMessage("player", "hidden introduction", 1, hidden = true, messageId = "hidden-intro"),
+            GameMessage("game-master", "Saved welcome", 2, messageId = "saved-intro-output"),
+        ), createdAt = 1, updatedAt = 2)
+        val events = recordingDebugEvents(
+            DebugEvent("stale-intro", "session", "failed-intro", 0, 1, "turn_status", "started", transcriptRole = "game-master", transcriptIndex = 0, transcriptMessageId = "discarded-intro-output"),
+            DebugEvent("prior-intro", "session", "next-turn", 0, 3, "background_rerank", "prior_completed", fields = mapOf("source" to "prior_turn"), transcriptRole = "game-master", transcriptIndex = 0, transcriptMessageId = "saved-intro-output"),
+        )
+        val elementPrototype = js("Element.prototype")
+        val oldScrollIntoView = elementPrototype.scrollIntoView
+        elementPrototype.scrollIntoView = js("function () { window.__lastScrolledId = this.id; }")
+        try {
+            flushSync { createRoot(container).render(AdventureApp.create {
+                scenarioRepository = scenarioRepository(scenario)
+                sessionRepository = fixedSessions(session)
+                debugEventRepository = events
+                api = unusedApi()
+                initialScenarios = listOf(scenario)
+            }) }
+            container.clickButtonNamed(scenario.name)
+            nextBrowserTick()
+            container.clickButtonNamed(session.title)
+            nextBrowserTick()
+            assertNull(container.querySelector("#transcript-message-1"))
+            container.click("#transcript-message-0 button[aria-label='Show diagnostics']")
+            nextBrowserTick()
+            nextBrowserTick()
+            assertEquals("debug-event-prior-intro", window.asDynamic().__lastScrolledId)
+            assertNull(container.querySelector("#debug-event-stale-intro button[aria-label='Show transcript message']"))
+            container.click("#debug-event-prior-intro button[aria-label='Show transcript message']")
+            nextBrowserTick()
+            assertEquals("transcript-message-0", window.asDynamic().__lastScrolledId)
+        } finally {
+            elementPrototype.scrollIntoView = oldScrollIntoView
+            container.remove()
+        }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
     fun `resumed retry does not link a failed turn event to the replacement player`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)

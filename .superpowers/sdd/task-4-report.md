@@ -129,3 +129,22 @@ same visible index. The old event would then point to unrelated text.
 - Self-review: only web model, submission, navigation, and tests changed;
   no server code or assertions changed. Diagnostic events still contain IDs,
   indexes, and roles without copies of transcript text.
+
+## Follow-up: prior result after an introduction
+
+The first ordinary turn after an introduction has a `prior_turn` background
+result. Its prior player input is hidden, so the diagnostic now references the
+visible introduction game-master output by durable message ID, role, and
+visible index. Ordinary turns continue to reference the prior visible player.
+If the introduction output has no message ID (legacy data), navigation stays
+disabled rather than guessing by index.
+
+- Test-first focused browser run: 37 tests, 2 expected submission failures.
+  The new tests cover a resumed introduction and a failed introduction
+  followed by retry, persistence round trip, and the next turn. A navigation
+  test confirms the prior result opens the saved output and an event from the
+  failed introduction cannot link to it.
+- After the mapping change, the focused `TurnSubmissionTest` and
+  `AdventureAppNavigationTest` browser run passed.
+- Self-review: only `TurnSubmission` mapping and its submission/navigation
+  tests changed in this follow-up; no server code or assertions changed.

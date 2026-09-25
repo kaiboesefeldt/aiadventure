@@ -66,10 +66,16 @@ internal class TurnSubmission(
         val gameMasterMessageId = "$messageBaseId-game-master"
         var nextSequence = 0
         val priorPlayerRawIndex = session.messages.indexOfLast { it.role == "player" && isVisibleTranscriptMessage(it) }
-        val priorPlayerIndex = priorPlayerRawIndex
+        val hiddenIntroductionRawIndex = session.messages.indexOfFirst { it.role == "player" && it.hidden }
+        val priorIntroductionOutputRawIndex = if (priorPlayerRawIndex >= 0 || hiddenIntroductionRawIndex < 0) -1
+        else session.messages.indices.firstOrNull { index ->
+            index > hiddenIntroductionRawIndex && session.messages[index].role == "game-master" && isVisibleTranscriptMessage(session.messages[index])
+        } ?: -1
+        val priorMessageRawIndex = if (priorPlayerRawIndex >= 0) priorPlayerRawIndex else priorIntroductionOutputRawIndex
+        val priorMessage = session.messages.getOrNull(priorMessageRawIndex)
+        val priorMessageIndex = priorMessageRawIndex
             .takeIf { it >= 0 }
             ?.let { rawIndex -> session.messages.take(rawIndex).count(::isVisibleTranscriptMessage) }
-        val priorPlayerMessageId = session.messages.getOrNull(priorPlayerRawIndex)?.messageId
         val currentPlayerIndex = session.messages.count(::isVisibleTranscriptMessage)
         val started = session.copy(
             messages = session.messages + GameMessage("player", playerAction, clock(), hidden = introduction, messageId = playerMessageId),
@@ -99,20 +105,20 @@ internal class TurnSubmission(
                     val priorTurn = diagnostic.fields["source"] == "prior_turn"
                     val outputExists = streamedText.isNotEmpty()
                     val transcriptIndex = when {
-                        priorTurn -> priorPlayerIndex
+                        priorTurn -> priorMessageIndex
                         introduction -> if (outputExists) currentPlayerIndex else null
                         diagnostic.transcriptRole == "player" -> currentPlayerIndex
                         diagnostic.transcriptRole == "game-master" && outputExists -> currentPlayerIndex + 1
                         else -> null
                     }
                     val transcriptRole = when {
-                        priorTurn && priorPlayerIndex != null -> "player"
+                        priorTurn -> priorMessage?.role
                         introduction && transcriptIndex != null -> "game-master"
                         introduction -> null
                         else -> diagnostic.transcriptRole
                     }
                     val transcriptMessageId = when {
-                        priorTurn -> priorPlayerMessageId
+                        priorTurn -> priorMessage?.messageId
                         introduction -> if (outputExists) gameMasterMessageId else null
                         diagnostic.transcriptRole == "player" -> playerMessageId
                         diagnostic.transcriptRole == "game-master" && outputExists -> gameMasterMessageId

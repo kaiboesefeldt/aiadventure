@@ -312,6 +312,81 @@ class TurnSubmissionTest {
 
     @OptIn(DelicateCoroutinesApi::class)
     @Test
+    fun `next turn prior diagnostic links resumed introduction output`() = GlobalScope.promise<Unit> {
+        val events = RecordingDebugEvents()
+        var calls = 0
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+            override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("Use diagnostic overload")
+            override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
+                if (calls++ == 0) onToken("Welcome") else {
+                    onDiagnostic(StreamDiagnostic("background_rerank", "prior_completed", mapOf("source" to "prior_turn"), transcriptRole = "player"))
+                    onToken("You enter the harbor")
+                }
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+            }
+        }
+        val submission = TurnSubmission(RecordingSessions(), api, debugEvents = events)
+        val introduction = submission.submitIntroduction(newGameSession(scenario(), "session-1", 1), scenario(), {}, {}).session
+        val resumed = de.aidadventure.web.persistence.decodePersistedGameSession(
+            kotlinx.serialization.json.Json.encodeToString(GameSession.serializer(), introduction),
+        )
+        submission.submit(resumed, scenario(), "look", {}, {})
+        val prior = events.saved.single { it.fields["source"] == "prior_turn" }
+        assertEquals(0, prior.transcriptIndex)
+        assertEquals("game-master", prior.transcriptRole)
+        assertEquals(resumed.messages.last().messageId, prior.transcriptMessageId)
+        assertFalse(prior.transcriptMessageId == resumed.messages.first().messageId)
+        assertFalse(prior.toString().contains("Welcome"))
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `failed introduction retry leaves prior diagnostic linked only to saved output`() = GlobalScope.promise<Unit> {
+        val events = RecordingDebugEvents()
+        var calls = 0
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+            override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("Use diagnostic overload")
+            override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
+                when (calls++) {
+                    0 -> {
+                        onToken("Discarded welcome")
+                        onDiagnostic(StreamDiagnostic("turn_status", "started", transcriptRole = "game-master"))
+                        error("first introduction failed")
+                    }
+                    1 -> onToken("Saved welcome")
+                    else -> {
+                        onDiagnostic(StreamDiagnostic("background_rerank", "prior_completed", mapOf("source" to "prior_turn"), transcriptRole = "player"))
+                        onToken("Next response")
+                    }
+                }
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+            }
+        }
+        val submission = TurnSubmission(RecordingSessions(), api, debugEvents = events)
+        val initial = newGameSession(scenario(), "session-1", 1)
+        runCatching { submission.submitIntroduction(initial, scenario(), {}, {}) }
+            .onSuccess { error("Expected introduction failure") }
+        val saved = submission.submitIntroduction(initial, scenario(), {}, {}).session
+        val resumed = de.aidadventure.web.persistence.decodePersistedGameSession(
+            kotlinx.serialization.json.Json.encodeToString(GameSession.serializer(), saved),
+        )
+        submission.submit(resumed, scenario(), "look", {}, {})
+        val stale = events.saved.first()
+        val prior = events.saved.single { it.fields["source"] == "prior_turn" }
+        assertFalse(stale.transcriptMessageId == resumed.messages.last().messageId)
+        assertEquals(resumed.messages.last().messageId, prior.transcriptMessageId)
+        assertEquals("game-master", prior.transcriptRole)
+        assertEquals(0, prior.transcriptIndex)
+        assertFalse(events.saved.toString().contains("Discarded welcome"))
+        assertFalse(events.saved.toString().contains("Saved welcome"))
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
     fun `runtime fragment inserted after an early diagnostic does not shift its visible transcript index`() = GlobalScope.promise<Unit> {
         val events = RecordingDebugEvents()
         val streamed = mutableListOf<GameSession>()
