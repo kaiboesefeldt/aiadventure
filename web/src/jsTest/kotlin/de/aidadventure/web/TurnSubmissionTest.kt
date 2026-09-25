@@ -26,8 +26,202 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.promise
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 
 class TurnSubmissionTest {
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `scheduled background outcome is fetched after turn and linked to its output`() = GlobalScope.promise<Unit> {
+        val sessions = RecordingSessions()
+        val events = RecordingDebugEvents()
+        val outcomeSaved = CompletableDeferred<DebugEvent>()
+        events.onAppend = { if (it.stage == "prior_completed") outcomeSaved.complete(it) }
+        val operationId = "operation-1"
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+            override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("Use diagnostic overload")
+            override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
+                onToken("SECRET_OUTPUT")
+                onDiagnostic(StreamDiagnostic("background_rerank", "scheduled", mapOf("operationId" to operationId), "game-master"))
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+            }
+            override suspend fun awaitBackgroundDiagnostic(sessionId: String, operationId: String): StreamDiagnostic? {
+                assertEquals("session-1", sessionId)
+                assertEquals("operation-1", operationId)
+                assertEquals(1, sessions.saved.size)
+                return StreamDiagnostic("background_rerank", "prior_completed", mapOf("operationId" to operationId, "source" to "prior_turn", "result" to "accepted"), "player", DiagnosticMetrics(cacheTokens = 7))
+            }
+        }
+        val completed = TurnSubmission(sessions, api, debugEvents = events)
+            .submit(sessionWithPreviousPair(), scenario(), "SECRET_ACTION", {}, {})
+        val outcome = withTimeout(1000) { outcomeSaved.await() }
+        val scheduled = events.saved.single { it.stage == "scheduled" }
+        assertEquals(scheduled.turnId, outcome.turnId)
+        assertEquals(scheduled.turnOrder, outcome.turnOrder)
+        assertEquals(scheduled.transcriptMessageId, outcome.transcriptMessageId)
+        assertEquals(completed.session.messages.last().messageId, outcome.transcriptMessageId)
+        assertEquals(scheduled.transcriptIndex, outcome.transcriptIndex)
+        assertEquals("prior_turn", outcome.fields["source"])
+        assertEquals(7, outcome.metrics?.cacheTokens)
+        assertFalse(outcome.toString().contains("SECRET_ACTION"))
+        assertFalse(outcome.toString().contains("SECRET_OUTPUT"))
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `later duplicate background outcome is deduped by operation id`() = GlobalScope.promise<Unit> {
+        val sessions = RecordingSessions()
+        val events = RecordingDebugEvents()
+        val outcomeSaved = CompletableDeferred<Unit>()
+        events.onAppend = { if (it.stage == "prior_completed") outcomeSaved.complete(Unit) }
+        val operationId = "operation-2"
+        var turns = 0
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+            override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("Use diagnostic overload")
+            override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
+                if (turns++ == 0) {
+                    onToken("First output")
+                    onDiagnostic(StreamDiagnostic("background_rerank", "scheduled", mapOf("operationId" to operationId), "game-master"))
+                } else {
+                    onDiagnostic(StreamDiagnostic("background_rerank", "prior_completed", mapOf("operationId" to operationId, "source" to "prior_turn"), "player"))
+                    onToken("Second output")
+                }
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+            }
+            override suspend fun awaitBackgroundDiagnostic(sessionId: String, operationId: String): StreamDiagnostic? =
+                StreamDiagnostic("background_rerank", "prior_completed", mapOf("operationId" to operationId, "source" to "prior_turn"), "player")
+        }
+        val first = TurnSubmission(sessions, api, debugEvents = events)
+            .submit(sessionWithPreviousPair(), scenario(), "first", {}, {}).session
+        withTimeout(1000) { outcomeSaved.await() }
+        TurnSubmission(sessions, api, debugEvents = events).submit(first, scenario(), "second", {}, {})
+        yield()
+        val outcomes = events.saved.filter { it.kind == "background_rerank" && it.stage == "prior_completed" && it.fields["operationId"] == operationId }
+        assertEquals(1, outcomes.size)
+        assertEquals(events.saved.single { it.stage == "scheduled" }.turnId, outcomes.single().turnId)
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `later turn outcome wins when follow-up is still waiting`() = GlobalScope.promise<Unit> {
+        val sessions = RecordingSessions()
+        val events = RecordingDebugEvents()
+        val followupStarted = CompletableDeferred<Unit>()
+        val releaseFollowup = CompletableDeferred<StreamDiagnostic?>()
+        val operationId = "operation-3"
+        var turns = 0
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+            override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("Use diagnostic overload")
+            override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
+                if (turns++ == 0) {
+                    onToken("First output")
+                    onDiagnostic(StreamDiagnostic("background_rerank", "scheduled", mapOf("operationId" to operationId), "game-master"))
+                } else {
+                    onDiagnostic(StreamDiagnostic("background_rerank", "prior_completed", mapOf("operationId" to operationId, "source" to "prior_turn"), "player"))
+                    onToken("Second output")
+                }
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+            }
+            override suspend fun awaitBackgroundDiagnostic(sessionId: String, operationId: String): StreamDiagnostic? {
+                followupStarted.complete(Unit)
+                return releaseFollowup.await()
+            }
+        }
+        val first = TurnSubmission(sessions, api, debugEvents = events)
+            .submit(sessionWithPreviousPair(), scenario(), "first", {}, {}).session
+        withTimeout(1000) { followupStarted.await() }
+        TurnSubmission(sessions, api, debugEvents = events).submit(first, scenario(), "second", {}, {})
+        releaseFollowup.complete(StreamDiagnostic("background_rerank", "prior_completed", mapOf("operationId" to operationId, "source" to "prior_turn"), "player"))
+        yield()
+        assertEquals(1, events.saved.count { it.kind == "background_rerank" && it.stage == "prior_completed" && it.fields["operationId"] == operationId })
+        assertEquals(events.saved.single { it.stage == "scheduled" }.turnId, events.saved.single { it.stage == "prior_completed" }.turnId)
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `later turn outcome retains origin while scheduled write is pending`() = GlobalScope.promise<Unit> {
+        val sessions = RecordingSessions()
+        val scheduledWrite = CompletableDeferred<Unit>()
+        val operationId = "operation-pending"
+        val saved = mutableListOf<DebugEvent>()
+        val outcomeSaved = CompletableDeferred<DebugEvent>()
+        val events = object : DebugEventRepository {
+            override suspend fun listForSession(sessionId: String): List<DebugEvent> = saved.filter { it.sessionId == sessionId }
+            override suspend fun append(event: DebugEvent) {
+                if (event.stage == "scheduled") scheduledWrite.await()
+                saved += event
+                if (event.stage == "prior_completed") outcomeSaved.complete(event)
+            }
+            override suspend fun clearSession(sessionId: String) = Unit
+            override suspend fun deleteForSessions(sessionIds: Set<String>) = Unit
+        }
+        var turns = 0
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+            override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("Use diagnostic overload")
+            override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
+                if (turns++ == 0) {
+                    onToken("First output")
+                    onDiagnostic(StreamDiagnostic("background_rerank", "scheduled", mapOf("operationId" to operationId), "game-master"))
+                } else {
+                    onDiagnostic(StreamDiagnostic("background_rerank", "prior_completed", mapOf("operationId" to operationId, "source" to "prior_turn"), "player"))
+                    onToken("Second output")
+                }
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+            }
+        }
+        try {
+            val first = TurnSubmission(sessions, api, debugEvents = events)
+                .submit(sessionWithPreviousPair(), scenario(), "first", {}, {}).session
+            assertTrue(saved.none { it.stage == "scheduled" })
+            TurnSubmission(sessions, api, debugEvents = events).submit(first, scenario(), "second", {}, {})
+            val outcome = withTimeout(1000) { outcomeSaved.await() }
+            assertEquals(first.messages.last().messageId, outcome.transcriptMessageId)
+            assertEquals("game-master", outcome.transcriptRole)
+            assertEquals(first.messages.count(::isVisibleTranscriptMessage) - 1, outcome.transcriptIndex)
+        } finally { scheduledWrite.complete(Unit) }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `new submission recovers pending background result after reload`() = GlobalScope.promise<Unit> {
+        val sessions = RecordingSessions()
+        val events = RecordingDebugEvents()
+        val outcomeSaved = CompletableDeferred<DebugEvent>()
+        events.onAppend = { if (it.stage == "prior_completed") outcomeSaved.complete(it) }
+        val operationId = "operation-reload"
+        val scheduled = DebugEvent(
+            id = "old-turn-5", sessionId = "session-1", turnId = "old-turn", sequence = 5,
+            createdAt = 5, kind = "background_rerank", stage = "scheduled",
+            fields = mapOf("operationId" to operationId), transcriptRole = "game-master",
+            turnOrder = 4, transcriptIndex = 1, transcriptMessageId = "saved-output",
+        )
+        events.saved += scheduled
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+            override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("Use diagnostic overload")
+            override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
+                onToken("New output")
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+            }
+            override suspend fun awaitBackgroundDiagnostic(sessionId: String, operationId: String): StreamDiagnostic? =
+                StreamDiagnostic("background_rerank", "prior_completed", mapOf("operationId" to operationId, "source" to "prior_turn"), "player")
+        }
+        TurnSubmission(sessions, api, debugEvents = events).submit(sessionWithPreviousPair(), scenario(), "new action", {}, {})
+        val recovered = withTimeout(1000) { outcomeSaved.await() }
+        assertEquals(scheduled.turnId, recovered.turnId)
+        assertEquals(scheduled.transcriptMessageId, recovered.transcriptMessageId)
+        assertEquals(scheduled.transcriptIndex, recovered.transcriptIndex)
+        assertEquals(1, events.saved.count { it.stage == "prior_completed" && it.fields["operationId"] == operationId })
+    }
+
     @OptIn(DelicateCoroutinesApi::class)
     @Test
     fun `completed turn persists flags returned by server for the following turn`() = GlobalScope.promise<Unit> {
@@ -573,8 +767,9 @@ private class DiagnosticAdventureApi(private val outcome: DiagnosticOutcome) : A
 
 private class RecordingDebugEvents : DebugEventRepository {
     val saved = mutableListOf<DebugEvent>()
+    var onAppend: ((DebugEvent) -> Unit)? = null
     override suspend fun listForSession(sessionId: String): List<DebugEvent> = saved.filter { it.sessionId == sessionId }
-    override suspend fun append(event: DebugEvent) { saved += event }
+    override suspend fun append(event: DebugEvent) { saved += event; onAppend?.invoke(event) }
     override suspend fun clearSession(sessionId: String) { saved.removeAll { it.sessionId == sessionId } }
     override suspend fun deleteForSessions(sessionIds: Set<String>) { saved.removeAll { it.sessionId in sessionIds } }
 }

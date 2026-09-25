@@ -8,6 +8,7 @@ import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.DebugEvent
 import de.aidadventure.web.model.Scenario
+import de.aidadventure.web.model.StreamDiagnostic
 import de.aidadventure.web.persistence.SessionRepository
 import de.aidadventure.web.persistence.DebugEventRepository
 import kotlinx.browser.window
@@ -18,6 +19,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 internal data class CompletedTurn(val session: GameSession, val metrics: TurnMetrics)
 
@@ -28,6 +31,9 @@ internal class TurnSubmission(
     private val debugEvents: DebugEventRepository? = null,
     private val onDiagnosticPersistenceFailure: (Throwable) -> Unit = {
         window.asDynamic().console.warn("Could not save diagnostic event")
+    },
+    private val onBackgroundDiagnosticFailure: (Throwable) -> Unit = {
+        window.asDynamic().console.warn("Could not retrieve background diagnostic")
     },
 ) {
     private val diagnosticWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -61,6 +67,7 @@ internal class TurnSubmission(
     ): CompletedTurn {
         val turnOrder = nextTurnId++
         val turnId = "turn-${clock()}-$turnOrder"
+        recoverScheduledOutcomes(session.id)
         val messageBaseId = "$turnId-${kotlin.random.Random.nextLong()}"
         val playerMessageId = "$messageBaseId-player"
         val gameMasterMessageId = "$messageBaseId-game-master"
@@ -85,6 +92,7 @@ internal class TurnSubmission(
 
         val streamedText = StringBuilder()
         var messages = started.messages
+        val scheduledBackgroundEvents = mutableListOf<DebugEvent>()
         val completion = try {
             api.play(TurnRequestMapper.map(session, scenario, playerAction, liveSessionId, includeInitialSituation = introduction), onGenerationReady, onInputReady, { fragment ->
                 messages = messages.dropLast(1) + GameMessage("runtime-fragment", fragment, clock()) + messages.takeLast(1)
@@ -133,13 +141,18 @@ internal class TurnSubmission(
                         transcriptIndex = transcriptIndex,
                         transcriptMessageId = transcriptMessageId,
                     )
-                    diagnosticWriteScope.launch(start = CoroutineStart.UNDISPATCHED) {
-                        try {
-                            repository.append(event)
-                        } catch (failure: Throwable) {
-                            if (!currentCoroutineContext().isActive) throw failure
-                            runCatching { onDiagnosticPersistenceFailure(failure) }
+                    val operationId = diagnostic.fields["operationId"]?.takeIf(String::isNotBlank)
+                    when {
+                        diagnostic.kind == "background_rerank" && diagnostic.stage == "scheduled" && operationId != null -> {
+                            scheduledBackgroundEvents += event
+                            val key = session.id to operationId
+                            scheduledBackgroundEventsPending[key] = event
+                            appendDiagnostic(repository, event) { scheduledBackgroundEventsPending.remove(key) }
                         }
+                        diagnostic.kind == "background_rerank" && diagnostic.stage.startsWith("prior_") && operationId != null -> {
+                            enqueueBackgroundOutcome(repository, session.id, operationId, diagnostic, event)
+                        }
+                        else -> appendDiagnostic(repository, event)
                     }
                 }
             })
@@ -150,6 +163,7 @@ internal class TurnSubmission(
                 updatedAt = clock(),
             )
             sessions.save(partial)
+            startBackgroundFollowups(session.id, scheduledBackgroundEvents)
             return CompletedTurn(partial, TurnMetrics(null, null, null))
         } catch (cause: Throwable) {
             onStreamed(started)
@@ -165,11 +179,116 @@ internal class TurnSubmission(
         )
         if (introduction) check(streamedText.isNotBlank()) { "The introduction was empty. Please try again." }
         sessions.save(completed)
+        startBackgroundFollowups(session.id, scheduledBackgroundEvents)
         return CompletedTurn(completed, completion.metrics)
+    }
+
+    private fun appendDiagnostic(repository: DebugEventRepository, event: DebugEvent, onSaved: () -> Unit = {}) {
+        diagnosticWriteScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                repository.append(event)
+                onSaved()
+            } catch (failure: Throwable) {
+                if (!currentCoroutineContext().isActive) throw failure
+                runCatching { onDiagnosticPersistenceFailure(failure) }
+            }
+        }
+    }
+
+    private fun startBackgroundFollowups(sessionId: String, scheduledEvents: List<DebugEvent>) {
+        val repository = debugEvents ?: return
+        scheduledEvents.forEach { scheduled ->
+            val operationId = scheduled.fields["operationId"] ?: return@forEach
+            val key = sessionId to operationId
+            if (!backgroundFollowupsInFlight.add(key)) return@forEach
+            diagnosticWriteScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    val outcome = api.awaitBackgroundDiagnostic(sessionId, operationId)
+                    if (outcome != null && outcome.kind == "background_rerank" &&
+                        outcome.stage.startsWith("prior_") && outcome.fields["operationId"] == operationId
+                    ) {
+                        persistBackgroundOutcome(repository, sessionId, operationId, outcome, scheduled)
+                    }
+                } catch (failure: Throwable) {
+                    if (!currentCoroutineContext().isActive) throw failure
+                    runCatching { onBackgroundDiagnosticFailure(failure) }
+                } finally {
+                    backgroundFollowupsInFlight.remove(key)
+                }
+            }
+        }
+    }
+
+    private fun recoverScheduledOutcomes(sessionId: String) {
+        val repository = debugEvents ?: return
+        diagnosticWriteScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                val events = repository.listForSession(sessionId)
+                val completed = events.filter { it.kind == "background_rerank" && it.stage.startsWith("prior_") }
+                    .mapNotNull { it.fields["operationId"] }.toSet()
+                startBackgroundFollowups(sessionId, events.filter {
+                    it.kind == "background_rerank" && it.stage == "scheduled" &&
+                        it.fields["operationId"]?.let { operationId -> operationId !in completed } == true
+                })
+            } catch (failure: Throwable) {
+                if (!currentCoroutineContext().isActive) throw failure
+                runCatching { onBackgroundDiagnosticFailure(failure) }
+            }
+        }
+    }
+
+    private fun enqueueBackgroundOutcome(
+        repository: DebugEventRepository,
+        sessionId: String,
+        operationId: String,
+        diagnostic: StreamDiagnostic,
+        fallback: DebugEvent,
+    ) {
+        diagnosticWriteScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                persistBackgroundOutcome(repository, sessionId, operationId, diagnostic, fallback)
+            } catch (failure: Throwable) {
+                if (!currentCoroutineContext().isActive) throw failure
+                runCatching { onDiagnosticPersistenceFailure(failure) }
+            }
+        }
+    }
+
+    private suspend fun persistBackgroundOutcome(
+        repository: DebugEventRepository,
+        sessionId: String,
+        operationId: String,
+        diagnostic: StreamDiagnostic,
+        fallback: DebugEvent,
+    ) {
+        backgroundOutcomeMutex.withLock {
+            val existing = repository.listForSession(sessionId)
+            if (existing.any { it.kind == "background_rerank" && it.stage.startsWith("prior_") && it.fields["operationId"] == operationId }) return@withLock
+            val scheduled = existing.firstOrNull {
+                it.kind == "background_rerank" && it.stage == "scheduled" && it.fields["operationId"] == operationId
+            } ?: scheduledBackgroundEventsPending[sessionId to operationId]
+            val origin = scheduled ?: fallback
+            val sequence = if (scheduled != null) {
+                (existing.filter { it.turnId == origin.turnId }.maxOfOrNull { it.sequence } ?: origin.sequence) + 1
+            } else fallback.sequence
+            repository.append(origin.copy(
+                id = "background-outcome-$sessionId-$operationId",
+                sequence = sequence,
+                createdAt = clock(),
+                kind = diagnostic.kind,
+                stage = diagnostic.stage,
+                fields = diagnostic.fields,
+                metrics = diagnostic.metrics,
+            ))
+            scheduledBackgroundEventsPending.remove(sessionId to operationId)
+        }
     }
 
     companion object {
         private var nextTurnId = 0L
+        private val backgroundOutcomeMutex = Mutex()
+        private val backgroundFollowupsInFlight = mutableSetOf<Pair<String, String>>()
+        private val scheduledBackgroundEventsPending = mutableMapOf<Pair<String, String>, DebugEvent>()
         const val INTRODUCTION_INSTRUCTION =
             "Begin this new adventure with a short, immersive introduction in the scenario's language. " +
                 "Establish the player's starting situation and surroundings using the scenario and initial world state. " +

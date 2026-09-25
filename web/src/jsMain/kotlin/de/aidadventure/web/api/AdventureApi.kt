@@ -21,6 +21,7 @@ interface AdventureApi {
         play(request, onInputReady, onFragment, onToken)
     suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion =
         play(request, onGenerationReady, onInputReady, onFragment, onToken)
+    suspend fun awaitBackgroundDiagnostic(sessionId: String, operationId: String): StreamDiagnostic? = null
     fun stopActiveTurn() = Unit
 }
 
@@ -83,6 +84,32 @@ class AdventureApiClient(
             activeTurnReader = null
             activeTurnController = null
         }
+    }
+
+    override suspend fun awaitBackgroundDiagnostic(sessionId: String, operationId: String): StreamDiagnostic? {
+        val path = "/api/turn/background?sessionId=${encodeQueryComponent(sessionId)}&operationId=${encodeQueryComponent(operationId)}"
+        val response = window.fetch("$normalizedBaseUrl$path").await().asDynamic()
+        if (response.status.unsafeCast<Int>() == 404) return null
+        requireBrowserSuccess(response)
+        val reader = response.body?.getReader() ?: throw AdventureApiException("The background result ended unexpectedly.")
+        val textDecoder = js("new TextDecoder()")
+        val decoder = SseFrameDecoder()
+        var diagnostic: StreamDiagnostic? = null
+        fun consume(chunk: String) {
+            decoder.push(chunk).forEach { frame ->
+                if (frame.event == "diagnostic") {
+                    if (diagnostic != null) throw AdventureApiException("The background result contained multiple diagnostics.")
+                    diagnostic = streamJson.decodeFromString<StreamDiagnostic>(frame.data)
+                }
+            }
+        }
+        while (true) {
+            val result = reader.read().unsafeCast<Promise<dynamic>>().await()
+            if (result.done.unsafeCast<Boolean>()) break
+            consume(decodeText(textDecoder, result.value, stream = true))
+        }
+        consume(decodeText(textDecoder, null, stream = false))
+        return diagnostic ?: throw AdventureApiException("The background result ended unexpectedly.")
     }
 
     private suspend fun browserFetchTurn(request: TurnRequest, controller: dynamic): dynamic {
@@ -160,10 +187,13 @@ internal fun processTurnStreamChunk(
 }
 
 private fun decodeText(decoder: dynamic, bytes: dynamic, stream: Boolean): String {
+    if (bytes == null) return decoder.decode().unsafeCast<String>()
     val options = js("({})")
     options.stream = stream
     return decoder.decode(bytes, options).unsafeCast<String>()
 }
+
+private fun encodeQueryComponent(value: String): String = js("encodeURIComponent")(value).unsafeCast<String>()
 
 class AdventureApiException(message: String) : Exception(message)
 
