@@ -228,6 +228,7 @@ private val PlayView = FC<PlayViewProps> { props ->
     useEffectWithCleanup(dependencies = arrayOf(debugOpen, liveId)) {
         val repository = props.debugEvents
         if (debugOpen && repository.asDynamic() != null) {
+            TurnSubmission(props.sessions, props.api, debugEvents = repository).recoverPendingBackground(liveId)
             var lastSeen = diagnosticEvents
             val timer = window.setInterval({
                 scope.launch {

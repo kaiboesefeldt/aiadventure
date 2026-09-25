@@ -38,6 +38,8 @@ internal class TurnSubmission(
 ) {
     private val diagnosticWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
+    fun recoverPendingBackground(sessionId: String) = recoverScheduledOutcomes(sessionId)
+
     suspend fun submitIntroduction(
         session: GameSession,
         scenario: Scenario,

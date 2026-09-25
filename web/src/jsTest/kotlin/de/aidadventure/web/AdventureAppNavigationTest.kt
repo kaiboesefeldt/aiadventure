@@ -12,6 +12,7 @@ import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.DebugEvent
 import de.aidadventure.web.model.DiagnosticMetrics
 import de.aidadventure.web.model.Scenario
+import de.aidadventure.web.model.StreamDiagnostic
 import de.aidadventure.web.model.WorldState
 import de.aidadventure.web.persistence.ScenarioRepository
 import de.aidadventure.web.persistence.DebugEventRepository
@@ -24,8 +25,10 @@ import kotlin.test.assertNotNull
 import kotlinx.browser.window
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.await
 import kotlinx.coroutines.promise
+import kotlinx.coroutines.withTimeout
 import react.create
 import react.dom.client.createRoot
 import react.dom.flushSync
@@ -33,6 +36,54 @@ import web.dom.document
 import web.html.HTMLElement
 
 class AdventureAppNavigationTest {
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `opening debug panel recovers a persisted scheduled outcome after reload`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+        val session = GameSession("session", scenario.id, "Harbor", messages = listOf(
+            GameMessage("game-master", "Saved welcome", 2, messageId = "saved-output"),
+        ), createdAt = 1, updatedAt = 2)
+        val operationId = "operation-panel-recovery"
+        val scheduled = DebugEvent("scheduled", "session", "old-turn", 2, 2, "background_rerank", "scheduled",
+            fields = mapOf("operationId" to operationId), transcriptRole = "game-master",
+            transcriptIndex = 0, transcriptMessageId = "saved-output")
+        val events = recordingDebugEvents(scheduled)
+        val fetched = CompletableDeferred<Unit>()
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+            override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("unused")
+            override suspend fun awaitBackgroundDiagnostic(sessionId: String, operationId: String): StreamDiagnostic? {
+                assertEquals("session", sessionId)
+                assertEquals("operation-panel-recovery", operationId)
+                fetched.complete(Unit)
+                return StreamDiagnostic("background_rerank", "prior_completed", mapOf("operationId" to operationId, "source" to "prior_turn"), "player")
+            }
+        }
+        try {
+            flushSync { createRoot(container).render(AdventureApp.create {
+                scenarioRepository = scenarioRepository(scenario)
+                sessionRepository = fixedSessions(session)
+                debugEventRepository = events
+                this.api = api
+                initialScenarios = listOf(scenario)
+            }) }
+            container.clickButtonNamed(scenario.name)
+            nextBrowserTick()
+            container.clickButtonNamed(session.title)
+            nextBrowserTick()
+            assertEquals(false, fetched.isCompleted)
+            container.click("button[aria-label='Open debug panel']")
+            withTimeout(1000) { fetched.await() }
+            nextBrowserTick()
+            val outcome = events.saved.single { it.stage == "prior_completed" }
+            assertEquals(scheduled.turnId, outcome.turnId)
+            assertEquals("saved-output", outcome.transcriptMessageId)
+        } finally { container.remove() }
+    }
+
     @OptIn(DelicateCoroutinesApi::class)
     @Test
     fun `resumed introduction navigates to its prior turn diagnostic after a failed retry`() = GlobalScope.promise<Unit> {
