@@ -35,19 +35,61 @@ import web.html.HTMLElement
 class AdventureAppNavigationTest {
     @OptIn(DelicateCoroutinesApi::class)
     @Test
+    fun `resumed retry does not link a failed turn event to the replacement player`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+        val session = GameSession("session", scenario.id, "Harbor", messages = listOf(
+            GameMessage("player", "retry action", 3, messageId = "retry-player"),
+            GameMessage("game-master", "retry response", 4, messageId = "retry-output"),
+        ), createdAt = 1, updatedAt = 4)
+        val events = recordingDebugEvents(
+            DebugEvent("failed", "session", "failed-turn", 0, 2, "turn_state", "initial", transcriptRole = "player", transcriptIndex = 0, transcriptMessageId = "failed-player"),
+            DebugEvent("retry", "session", "retry-turn", 0, 3, "turn_state", "initial", transcriptRole = "player", transcriptIndex = 0, transcriptMessageId = "retry-player"),
+        )
+        val elementPrototype = js("Element.prototype")
+        val oldScrollIntoView = elementPrototype.scrollIntoView
+        elementPrototype.scrollIntoView = js("function () { window.__lastScrolledId = this.id; }")
+        try {
+            flushSync { createRoot(container).render(AdventureApp.create {
+                scenarioRepository = scenarioRepository(scenario)
+                sessionRepository = fixedSessions(session)
+                debugEventRepository = events
+                api = unusedApi()
+                initialScenarios = listOf(scenario)
+            }) }
+            container.clickButtonNamed(scenario.name)
+            nextBrowserTick()
+            container.clickButtonNamed(session.title)
+            nextBrowserTick()
+            container.click("#transcript-message-0 button[aria-label='Show diagnostics']")
+            nextBrowserTick()
+            nextBrowserTick()
+            assertEquals("debug-event-retry", window.asDynamic().__lastScrolledId)
+            assertNotNull(container.querySelector("#debug-event-retry"))
+            assertNull(container.querySelector("#debug-event-failed button[aria-label='Show transcript message']"))
+            assertNotNull(container.querySelector("#debug-event-retry button[aria-label='Show transcript message']"))
+        } finally {
+            elementPrototype.scrollIntoView = oldScrollIntoView
+            container.remove()
+        }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
     fun `resumed transcript and diagnostic events navigate in both directions`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
         val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
         val session = GameSession("session", scenario.id, "Harbor", messages = listOf(
-            GameMessage("player", "hidden introduction", 1, hidden = true),
-            GameMessage("game-master", "Welcome", 2),
-            GameMessage("player", "Visit pier", 3),
-            GameMessage("game-master", "At the pier", 4),
+            GameMessage("player", "hidden introduction", 1, hidden = true, messageId = "intro-input"),
+            GameMessage("game-master", "Welcome", 2, messageId = "intro-output"),
+            GameMessage("player", "Visit pier", 3, messageId = "player-action"),
+            GameMessage("game-master", "At the pier", 4, messageId = "player-output"),
         ), createdAt = 1, updatedAt = 4)
         val events = recordingDebugEvents(
-            DebugEvent("intro-event", "session", "intro", 0, 2, "turn_status", "completed", transcriptRole = "game-master", transcriptIndex = 0),
-            DebugEvent("player-event", "session", "turn", 0, 3, "turn_state", "initial", transcriptRole = "player", transcriptIndex = 1),
+            DebugEvent("intro-event", "session", "intro", 0, 2, "turn_status", "completed", transcriptRole = "game-master", transcriptIndex = 0, transcriptMessageId = "intro-output"),
+            DebugEvent("player-event", "session", "turn", 0, 3, "turn_state", "initial", transcriptRole = "player", transcriptIndex = 1, transcriptMessageId = "player-action"),
         )
         val elementPrototype = js("Element.prototype")
         val oldScrollIntoView = elementPrototype.scrollIntoView

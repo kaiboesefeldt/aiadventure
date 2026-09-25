@@ -34,6 +34,7 @@ data class GameMessage(
     val content: String,
     val createdAt: Long,
     val hidden: Boolean = false,
+    val messageId: String? = null,
 )
 
 @Serializable
@@ -90,4 +91,5 @@ data class DebugEvent(
     val transcriptRole: String? = null,
     val turnOrder: Long = 0,
     val transcriptIndex: Int? = null,
+    val transcriptMessageId: String? = null,
 )

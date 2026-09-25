@@ -103,3 +103,29 @@
 - Scope is limited to navigation, the diagnostic reference field, submission mapping, styling for the new controls, and relevant tests.
 - References use only indexes and roles. No message body is copied into `DebugEvent`.
 - A diagnostic emitted before any game-master output has no output reference. A failed turn can retain diagnostics while its transient transcript is discarded; the UI shows no navigation control unless the referenced visible message exists.
+
+## Follow-up: durable message identity
+
+The initial index-and-role check above had a stale-link gap: an unsaved player
+message from a failed or cancelled turn could be replaced by a retry at the
+same visible index. The old event would then point to unrelated text.
+
+- Added backward-compatible nullable `GameMessage.messageId` and
+  `DebugEvent.transcriptMessageId`. Each submitted turn gets distinct player
+  and game-master IDs. Streamed, partial, and final copies of its game-master
+  message retain the same ID.
+- A `source=prior_turn` event copies the prior visible player's ID when one
+  exists. Introduction diagnostics reference only the visible game-master
+  output after output begins. The index remains diagnostic metadata; both
+  navigation controls require an exact visible message ID and matching role.
+  Legacy messages/events without IDs simply have no navigation control.
+- Test-first focused run: 34 tests, 3 expected failures for failed-turn retry,
+  cancelled-before-output retry, and stale navigation after resume. After the
+  implementation, the same focused suite passed. The retry test serializes
+  and decodes the completed session before checking IDs. Existing successful,
+  resumed, prior-turn, partial-output, and introduction tests still pass.
+- Serial verification: `./gradlew :web:compileTestKotlinJs`,
+  `./gradlew :web:browserTest`, and `./gradlew check` all passed.
+- Self-review: only web model, submission, navigation, and tests changed;
+  no server code or assertions changed. Diagnostic events still contain IDs,
+  indexes, and roles without copies of transcript text.

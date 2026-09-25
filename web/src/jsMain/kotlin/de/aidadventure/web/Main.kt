@@ -341,9 +341,9 @@ private val PlayView = FC<PlayViewProps> { props ->
                 className = ClassName("message")
                 asDynamic().tabIndex = -1
                 MarkdownMessage { content = message.content }
-                val matchingEvent = diagnosticEvents.firstOrNull {
-                    it.sessionId == liveId && it.transcriptIndex == index && it.transcriptRole == message.role
-                }
+                val matchingEvent = message.messageId?.let { messageId -> diagnosticEvents.firstOrNull {
+                    it.sessionId == liveId && it.transcriptMessageId == messageId && it.transcriptRole == message.role
+                } }
                 if (matchingEvent != null) ReactHTML.button {
                     className = ClassName("secondary-button debug-navigation-button")
                     ariaLabel = "Show diagnostics"

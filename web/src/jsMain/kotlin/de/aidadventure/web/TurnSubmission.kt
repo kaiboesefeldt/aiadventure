@@ -61,13 +61,18 @@ internal class TurnSubmission(
     ): CompletedTurn {
         val turnOrder = nextTurnId++
         val turnId = "turn-${clock()}-$turnOrder"
+        val messageBaseId = "$turnId-${kotlin.random.Random.nextLong()}"
+        val playerMessageId = "$messageBaseId-player"
+        val gameMasterMessageId = "$messageBaseId-game-master"
         var nextSequence = 0
-        val priorPlayerIndex = session.messages.indexOfLast { it.role == "player" && isVisibleTranscriptMessage(it) }
+        val priorPlayerRawIndex = session.messages.indexOfLast { it.role == "player" && isVisibleTranscriptMessage(it) }
+        val priorPlayerIndex = priorPlayerRawIndex
             .takeIf { it >= 0 }
             ?.let { rawIndex -> session.messages.take(rawIndex).count(::isVisibleTranscriptMessage) }
+        val priorPlayerMessageId = session.messages.getOrNull(priorPlayerRawIndex)?.messageId
         val currentPlayerIndex = session.messages.count(::isVisibleTranscriptMessage)
         val started = session.copy(
-            messages = session.messages + GameMessage("player", playerAction, clock(), hidden = introduction),
+            messages = session.messages + GameMessage("player", playerAction, clock(), hidden = introduction, messageId = playerMessageId),
             updatedAt = clock(),
         )
         onStarted(started)
@@ -83,7 +88,7 @@ internal class TurnSubmission(
                 streamedText.append(token)
                 onStreamed(
                     started.copy(
-                        messages = messages + GameMessage("game-master", streamedText.toString(), clock()),
+                        messages = messages + GameMessage("game-master", streamedText.toString(), clock(), messageId = gameMasterMessageId),
                         updatedAt = clock(),
                     ),
                 )
@@ -106,6 +111,13 @@ internal class TurnSubmission(
                         introduction -> null
                         else -> diagnostic.transcriptRole
                     }
+                    val transcriptMessageId = when {
+                        priorTurn -> priorPlayerMessageId
+                        introduction -> if (outputExists) gameMasterMessageId else null
+                        diagnostic.transcriptRole == "player" -> playerMessageId
+                        diagnostic.transcriptRole == "game-master" && outputExists -> gameMasterMessageId
+                        else -> null
+                    }
                     val event = DebugEvent(
                         id = "$turnId-$sequence", sessionId = session.id, turnId = turnId,
                         sequence = sequence, createdAt = clock(), kind = diagnostic.kind,
@@ -113,6 +125,7 @@ internal class TurnSubmission(
                         metrics = diagnostic.metrics, transcriptRole = transcriptRole,
                         turnOrder = turnOrder,
                         transcriptIndex = transcriptIndex,
+                        transcriptMessageId = transcriptMessageId,
                     )
                     diagnosticWriteScope.launch(start = CoroutineStart.UNDISPATCHED) {
                         try {
@@ -127,7 +140,7 @@ internal class TurnSubmission(
         } catch (stopped: TurnStreamStoppedException) {
             if (streamedText.isEmpty()) throw stopped
             val partial = started.copy(
-                messages = messages + GameMessage("game-master", streamedText.toString(), clock()),
+                messages = messages + GameMessage("game-master", streamedText.toString(), clock(), messageId = gameMasterMessageId),
                 updatedAt = clock(),
             )
             sessions.save(partial)
@@ -137,7 +150,7 @@ internal class TurnSubmission(
             throw cause
         }
         val completed = started.copy(
-            messages = messages + GameMessage("game-master", streamedText.toString(), clock()),
+            messages = messages + GameMessage("game-master", streamedText.toString(), clock(), messageId = gameMasterMessageId),
             updatedAt = clock(),
             worldState = completion.worldState,
             contextCompression = completion.contextCompression,

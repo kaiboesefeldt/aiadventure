@@ -99,8 +99,9 @@ internal val DebugPanel = FC<DebugPanelProps> { props ->
             if (ordered.isEmpty()) ReactHTML.p { className = ClassName("empty-state"); +"No turn diagnostics yet." }
             val visibleMessages = props.session.messages.filter(::isVisibleTranscriptMessage)
             ordered.forEach { event ->
-                val index = event.transcriptIndex
-                renderDebugEvent(event, if (index != null && visibleMessages.getOrNull(index)?.role == event.transcriptRole) index else null, props.onShowTranscript)
+                val messageId = event.transcriptMessageId
+                val index = if (messageId == null) -1 else visibleMessages.indexOfFirst { it.messageId == messageId && it.role == event.transcriptRole }
+                renderDebugEvent(event, index.takeIf { it >= 0 }, props.onShowTranscript)
             }
         }
     }

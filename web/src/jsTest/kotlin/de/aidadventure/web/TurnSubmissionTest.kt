@@ -248,6 +248,7 @@ class TurnSubmissionTest {
         assertEquals(2, events.saved.size)
         assertEquals(listOf(2, 0), events.saved.map { it.transcriptIndex })
         assertEquals("SECRET_GAME_MASTER_OUTPUT", completed.session.messages.last().content)
+        assertTrue(completed.session.messages.last().messageId != null)
         assertEquals(completed.session, sessions.saved.single())
         assertTrue(events.saved.none { it.toString().contains("SECRET_GAME_MASTER_OUTPUT") })
     }
@@ -259,7 +260,7 @@ class TurnSubmissionTest {
         val previous = sessionWithPreviousPair().copy(messages = listOf(
             GameMessage("player", "hidden introduction", 1, hidden = true),
             GameMessage("game-master", "Welcome", 2),
-            GameMessage("player", "visit pier", 3),
+            GameMessage("player", "visit pier", 3, messageId = "prior-player"),
             GameMessage("game-master", "At the pier", 4),
         ))
         val api = object : AdventureApi {
@@ -277,6 +278,7 @@ class TurnSubmissionTest {
         }
         TurnSubmission(RecordingSessions(), api, debugEvents = events).submit(previous, scenario(), "new action", {}, {})
         assertEquals(listOf(1, 3, null, 4), events.saved.map { it.transcriptIndex })
+        assertEquals("prior-player", events.saved.first().transcriptMessageId)
         assertFalse(events.saved.toString().contains("visit pier"))
         assertFalse(events.saved.toString().contains("new action"))
         assertFalse(events.saved.toString().contains("New output"))
@@ -297,10 +299,14 @@ class TurnSubmissionTest {
                 return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
             }
         }
-        TurnSubmission(RecordingSessions(), api, debugEvents = events).submitIntroduction(newGameSession(scenario(), "session-1", 1), scenario(), {}, {})
+        val completed = TurnSubmission(RecordingSessions(), api, debugEvents = events)
+            .submitIntroduction(newGameSession(scenario(), "session-1", 1), scenario(), {}, {}).session
         assertEquals(listOf(null, 0), events.saved.map { it.transcriptIndex })
         assertEquals(null, events.saved.first().transcriptRole)
+        assertEquals(null, events.saved.first().transcriptMessageId)
         assertEquals("game-master", events.saved.last().transcriptRole)
+        assertEquals(completed.messages.last().messageId, events.saved.last().transcriptMessageId)
+        assertFalse(completed.messages.first().messageId == events.saved.last().transcriptMessageId)
         assertFalse(events.saved.toString().contains(TurnSubmission.INTRODUCTION_INSTRUCTION))
     }
 
@@ -308,6 +314,7 @@ class TurnSubmissionTest {
     @Test
     fun `runtime fragment inserted after an early diagnostic does not shift its visible transcript index`() = GlobalScope.promise<Unit> {
         val events = RecordingDebugEvents()
+        val streamed = mutableListOf<GameSession>()
         val api = object : AdventureApi {
             override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
             override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
@@ -315,15 +322,18 @@ class TurnSubmissionTest {
             override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
                 onDiagnostic(StreamDiagnostic("turn_state", "initial", transcriptRole = "player"))
                 onFragment("Hidden retrieved context")
-                onToken("Visible answer")
+                onToken("Visible ")
+                onToken("answer")
                 onDiagnostic(StreamDiagnostic("turn_status", "completed", transcriptRole = "game-master"))
                 return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
             }
         }
         val completed = TurnSubmission(RecordingSessions(), api, debugEvents = events)
-            .submit(sessionWithPreviousPair(), scenario(), "new action", {}, {}).session
+            .submit(sessionWithPreviousPair(), scenario(), "new action", {}, streamed::add).session
         assertEquals(listOf(2, 3), events.saved.map { it.transcriptIndex })
         assertEquals(listOf("player", "game-master", "player", "game-master"), completed.messages.filter(::isVisibleTranscriptMessage).map { it.role })
+        assertEquals(1, streamed.mapNotNull { it.messages.lastOrNull()?.takeIf { message -> message.role == "game-master" }?.messageId }.distinct().size)
+        assertEquals(completed.messages.last().messageId, streamed.last().messages.last().messageId)
         assertFalse(events.saved.toString().contains("Hidden retrieved context"))
     }
 
@@ -334,6 +344,62 @@ class TurnSubmissionTest {
             """{"id":"old","sessionId":"session-1","turnId":"turn-1","sequence":0,"createdAt":1,"kind":"turn_status","stage":"completed"}""",
         )
         assertEquals(null, event.transcriptIndex)
+        assertEquals(null, event.transcriptMessageId)
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `failed turn retry gives its player a new durable identity`() = GlobalScope.promise<Unit> {
+        verifyRetryDoesNotReuseMessageId(cancelled = false)
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `cancelled turn before output retry gives its player a new durable identity`() = GlobalScope.promise<Unit> {
+        verifyRetryDoesNotReuseMessageId(cancelled = true)
+    }
+
+    private suspend fun verifyRetryDoesNotReuseMessageId(cancelled: Boolean) {
+        val events = RecordingDebugEvents()
+        val sessions = RecordingSessions()
+        val base = sessionWithPreviousPair()
+        var attempts = 0
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+            override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("Use diagnostic overload")
+            override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
+                onDiagnostic(StreamDiagnostic("turn_state", "initial", transcriptRole = "player"))
+                if (attempts++ == 0) {
+                    if (cancelled) throw TurnStreamStoppedException()
+                    error("model unavailable")
+                }
+                onToken("New response")
+                onDiagnostic(StreamDiagnostic("turn_status", "completed", transcriptRole = "game-master"))
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+            }
+        }
+        val submission = TurnSubmission(sessions, api, debugEvents = events)
+        runCatching { submission.submit(base, scenario(), "first action", {}, {}) }
+            .onSuccess { error("Expected first turn to stop") }
+        assertEquals(emptyList(), sessions.saved)
+        val completed = submission.submit(base, scenario(), "retry action", {}, {}).session
+        val resumed = de.aidadventure.web.persistence.decodePersistedGameSession(
+            kotlinx.serialization.json.Json.encodeToString(GameSession.serializer(), completed),
+        )
+        val oldId = events.saved.first().transcriptMessageId
+        val player = resumed.messages.last { it.role == "player" }
+        val response = resumed.messages.last()
+        assertTrue(oldId != null)
+        assertTrue(player.messageId != null)
+        assertTrue(response.messageId != null)
+        assertFalse(oldId == player.messageId)
+        assertFalse(resumed.messages.any { it.messageId == oldId })
+        assertEquals(player.messageId, events.saved[1].transcriptMessageId)
+        assertEquals(response.messageId, events.saved[2].transcriptMessageId)
+        assertFalse(events.saved.toString().contains("first action"))
+        assertFalse(events.saved.toString().contains("retry action"))
+        assertFalse(events.saved.toString().contains("New response"))
     }
 
     @OptIn(DelicateCoroutinesApi::class)
