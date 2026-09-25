@@ -29,6 +29,8 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -37,6 +39,72 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
+    @Test
+    fun `latest turn background result remains available after rerank completes without another turn`() = runBlocking {
+        val fake = ControllableGateway(classify = { "Y" }, warmup = { CacheMetrics(8, 2) })
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        val reservation = coordinator.reserveRerank(warmup(), "origin-request")!!
+        assertTrue(coordinator.completeReservedRerank(reservation, candidate()))
+        fake.awaitWarmupCompletion()
+        assertFalse(coordinator.tryBeginIdleClose())
+
+        val result = withTimeout(1_000) { coordinator.awaitBackgroundDiagnostic(reservation.operationId) }
+        assertEquals("background_rerank", result?.kind)
+        assertEquals("prior_completed", result?.stage)
+        assertEquals(reservation.operationId, result?.fields?.get("operationId"))
+        assertEquals("Y", result?.fields?.get("classifierResponse"))
+        assertEquals(8, result?.metrics?.cacheTokens)
+        assertNull(coordinator.awaitBackgroundDiagnostic(reservation.operationId))
+        val nextTurn = coordinator.beginTurn(turn("look")).toList()
+        assertTrue(nextTurn.filterIsInstance<TurnStreamEvent.Diagnostic>()
+            .none { it.value.kind == "background_rerank" })
+        coordinator.close()
+    }
+
+    @Test
+    fun `background result waits for completion and expires after five minutes`() = runBlocking {
+        var now = 1_000L
+        val fake = ControllableGateway(classify = { "N" })
+        val coordinator = SessionPrefillCoordinator(fake, clock = { now })
+        val reservation = coordinator.reserveRerank(warmup(), "origin-request")!!
+        assertTrue(coordinator.completeReservedRerank(reservation, candidate()))
+        fake.awaitWarmup()
+        val awaiting = async { coordinator.awaitBackgroundDiagnostic(reservation.operationId) }
+        assertFalse(awaiting.isCompleted)
+        fake.completeWarmup()
+        assertEquals("N", withTimeout(1_000) { awaiting.await() }?.fields?.get("classifierResponse"))
+
+        val expiring = coordinator.reserveRerank(warmup(), "second-request")!!
+        assertTrue(coordinator.completeReservedRerank(expiring, candidate()))
+        withTimeout(1_000) { while (expiring.diagnosticCompletedAtMillis == null) yield() }
+        now += 5 * 60 * 1_000L
+        assertNull(coordinator.awaitBackgroundDiagnostic(expiring.operationId))
+        coordinator.close()
+    }
+
+    @Test
+    fun `background diagnostics omit malformed classifier text and clear on close`() = runBlocking {
+        val fake = ControllableGateway(
+            classify = { "SECRET_PLAYER_ACTION SECRET_GAME_MASTER_OUTPUT" },
+            warmup = { CacheMetrics(null, null) },
+        )
+        val coordinator = SessionPrefillCoordinator(fake)
+        val reservation = coordinator.reserveRerank(warmup(), "origin-request")!!
+        assertTrue(coordinator.completeReservedRerank(reservation, candidate()))
+        withTimeout(1_000) { while (reservation.diagnosticCompletedAtMillis == null) yield() }
+        val result = coordinator.awaitBackgroundDiagnostic(reservation.operationId)
+        assertEquals("rejected", result?.fields?.get("result"))
+        assertNull(result?.fields?.get("classifierResponse"))
+        assertFalse(result.toString().contains("SECRET_PLAYER_ACTION"))
+        assertFalse(result.toString().contains("SECRET_GAME_MASTER_OUTPUT"))
+
+        val later = coordinator.reserveRerank(warmup(), "later-request")!!
+        assertTrue(coordinator.completeReservedRerank(later, candidate()))
+        withTimeout(1_000) { while (later.diagnosticCompletedAtMillis == null) yield() }
+        coordinator.close()
+        assertNull(coordinator.awaitBackgroundDiagnostic(later.operationId))
+    }
+
     @Test
     fun `world state failure reports the accepted fallback after the failure`() = runBlocking {
         val prior = WorldState("Harbour", "Find the keeper")

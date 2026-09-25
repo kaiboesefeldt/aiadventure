@@ -58,6 +58,36 @@ import kotlin.test.assertTrue
 
 class ApplicationTest {
     @Test
+    fun `latest turn background outcome is available through follow up SSE without another turn`() = testApplication {
+        val registry = FakeRegistry()
+        application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolving(null)) }
+        configureJsonClient()
+
+        val turnBody = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest(worldState = WorldState(location = "Harbour")))
+        }.bodyAsText()
+        val scheduled = turnBody.split("\n\n").first { it.contains("\"kind\":\"background_rerank\"") }
+        val operationId = Json.parseToJsonElement(scheduled.substringAfter("data: ")).jsonObject
+            .getValue("fields").jsonObject.getValue("operationId").jsonPrimitive.content
+        runBlocking { withTimeout(1_000) { registry.coordinator.rerankCompleted.await() } }
+
+        val followUp = client.get("/api/turn/background?sessionId=live-1&operationId=$operationId")
+        val followUpBody = followUp.bodyAsText()
+        assertEquals(HttpStatusCode.OK, followUp.status)
+        assertContains(followUpBody, "event: diagnostic")
+        assertContains(followUpBody, "\"operationId\":\"$operationId\"")
+        assertContains(followUpBody, "\"stage\":\"prior_completed\"")
+        assertFalse(followUpBody.contains("look"))
+        assertFalse(followUpBody.contains("The door opens."))
+        assertEquals(HttpStatusCode.NotFound,
+            client.get("/api/turn/background?sessionId=live-1&operationId=$operationId").status)
+        assertEquals(HttpStatusCode.BadRequest,
+            client.get("/api/turn/background?sessionId=live-1&operationId=invalid").status)
+        assertEquals(1, registry.coordinator.turnRequests.size)
+    }
+
+    @Test
     fun `cancelled turn keeps serialized diagnostics free of transcript text`() = testApplication {
         val registry = FakeRegistry()
         registry.coordinator.turnEvents = flow {
@@ -883,6 +913,8 @@ class ApplicationTest {
             return coordinator
         }
 
+        override fun coordinatorIfPresent(key: CoordinatorKey): PrefillCoordinator? = coordinator
+
         override suspend fun remove(key: CoordinatorKey) = Unit
 
         override suspend fun removeIdle(nowMillis: Long) {
@@ -896,6 +928,7 @@ class ApplicationTest {
         val rerankRequests = mutableListOf<WarmupRequest>()
         val rerankCandidates = mutableListOf<de.aidadventure.server.model.RuntimeFragmentDefinition?>()
         val rerankCompleted = CompletableDeferred<Unit>()
+        private val backgroundOutcomes = mutableMapOf<String, StreamDiagnostic>()
         val turnRequests = mutableListOf<TurnRequest>()
         val worldStatePrimaryRequests = mutableListOf<TurnRequest>()
         var turnEvents: Flow<TurnStreamEvent>? = null
@@ -937,9 +970,18 @@ class ApplicationTest {
             candidate: de.aidadventure.server.model.RuntimeFragmentDefinition?,
         ): Boolean {
             rerankCandidates += candidate
+            backgroundOutcomes[reservation.operationId] = StreamDiagnostic(
+                "background_rerank", "prior_completed", fields = mapOf(
+                    "source" to "prior_turn", "operationId" to reservation.operationId,
+                    "result" to if (candidate == null) "no_candidate" else "accepted",
+                ),
+            )
             rerankCompleted.complete(Unit)
             return true
         }
+
+        override suspend fun awaitBackgroundDiagnostic(operationId: String): StreamDiagnostic? =
+            backgroundOutcomes.remove(operationId)
 
         override suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent> {
             turnRequests += request

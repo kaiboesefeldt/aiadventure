@@ -359,7 +359,7 @@ fun Application.adventureModule(
                             }
                             if (reservation != null) diagnostic(StreamDiagnostic(
                                 kind = "background_rerank", stage = "scheduled", transcriptRole = "game-master",
-                                fields = mapOf("operation" to "fragment_relevance_and_warmup"),
+                                fields = mapOf("operation" to "fragment_relevance_and_warmup", "operationId" to reservation.operationId),
                             ))
                             diagnostic(StreamDiagnostic("turn_status", "completed", transcriptRole = "game-master"))
                             sse("done", eventJson.encodeToString(StreamDone(metrics, acceptedWorldState, completedCompression, completedFlags)))
@@ -428,6 +428,27 @@ fun Application.adventureModule(
                         logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)
                     }
                 }
+            }
+        }
+        get("/api/turn/background") {
+            val sessionId = call.request.queryParameters["sessionId"]
+            val operationId = call.request.queryParameters["operationId"]
+            if (sessionId.isNullOrBlank() || sessionId.length > 256 ||
+                operationId == null || runCatching { UUID.fromString(operationId) }.isFailure
+            ) {
+                call.respond(HttpStatusCode.BadRequest, ApiError("invalid_request", "Background result query is invalid."))
+                return@get
+            }
+            val coordinator = prefillRegistry.coordinatorIfPresent(
+                CoordinatorKey(sessionId, CONFIGURED_MODEL_ID, llamaCppPort),
+            )
+            val result = coordinator?.awaitBackgroundDiagnostic(operationId)
+            if (result == null) {
+                call.respond(HttpStatusCode.NotFound, ApiError("not_found", "Background result is unavailable."))
+                return@get
+            }
+            call.respondTextWriter(contentType = ContentType.Text.EventStream) {
+                sse("diagnostic", eventJson.encodeToString(result))
             }
         }
         get("/") { call.respondResource("ui/index.html") }
