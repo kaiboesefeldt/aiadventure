@@ -78,8 +78,9 @@ class PrefillCoordinatorTest {
         coordinator.rerankAndWarmup(warmup(), candidate(), "prior-request")
         classifyStarted.await()
         val events = mutableListOf<TurnStreamEvent>()
+        val turnFlow = coordinator.beginTurn(turn("SECRET_PLAYER_ACTION"))
         val waiting = async {
-            runCatching { coordinator.beginTurn(turn("SECRET_PLAYER_ACTION")).collect(events::add) }.exceptionOrNull()
+            runCatching { turnFlow.collect(events::add) }.exceptionOrNull()
         }
         allowFailure.complete(Unit)
         val failure = waiting.await()
