@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory
 
 interface PrefillRegistry {
     fun coordinatorFor(key: CoordinatorKey): PrefillCoordinator
+    fun coordinatorIfPresent(key: CoordinatorKey): PrefillCoordinator? = null
     suspend fun remove(key: CoordinatorKey)
     suspend fun removeIdle(nowMillis: Long)
 }
@@ -32,6 +33,10 @@ internal class ExpiringPrefillRegistry(
             return@synchronized it.coordinator
         }
         coordinatorFactory(key, sharedLeases).also { entries[key] = Entry(it, now) }
+    }
+
+    override fun coordinatorIfPresent(key: CoordinatorKey): PrefillCoordinator? = synchronized(lock) {
+        entries[key]?.also { it.lastUsedMillis = clock() }?.coordinator
     }
 
     override suspend fun remove(key: CoordinatorKey) {

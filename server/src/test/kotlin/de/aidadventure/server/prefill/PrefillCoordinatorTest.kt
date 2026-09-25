@@ -23,11 +23,14 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -36,6 +39,183 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
+    @Test
+    fun `latest turn background result remains available after rerank completes without another turn`() = runBlocking {
+        val fake = ControllableGateway(classify = { "Y" }, warmup = { CacheMetrics(8, 2) })
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        val reservation = coordinator.reserveRerank(warmup(), "origin-request")!!
+        assertTrue(coordinator.completeReservedRerank(reservation, candidate()))
+        fake.awaitWarmupCompletion()
+        assertFalse(coordinator.tryBeginIdleClose())
+
+        val result = withTimeout(1_000) { coordinator.awaitBackgroundDiagnostic(reservation.operationId) }
+        assertEquals("background_rerank", result?.kind)
+        assertEquals("prior_completed", result?.stage)
+        assertEquals(reservation.operationId, result?.fields?.get("operationId"))
+        assertEquals("Y", result?.fields?.get("classifierResponse"))
+        assertEquals(8, result?.metrics?.cacheTokens)
+        assertEquals(result, coordinator.awaitBackgroundDiagnostic(reservation.operationId))
+        assertFalse(coordinator.tryBeginIdleClose())
+        val nextTurn = coordinator.beginTurn(turn("look")).toList()
+        assertTrue(nextTurn.filterIsInstance<TurnStreamEvent.Diagnostic>()
+            .any { it.value.kind == "background_rerank" && it.value.fields["operationId"] == reservation.operationId })
+        coordinator.close()
+    }
+
+    @Test
+    fun `background result waits for completion and expires after five minutes`() = runBlocking {
+        var now = 1_000L
+        val fake = ControllableGateway(classify = { "N" })
+        val coordinator = SessionPrefillCoordinator(fake, clock = { now })
+        val reservation = coordinator.reserveRerank(warmup(), "origin-request")!!
+        assertTrue(coordinator.completeReservedRerank(reservation, candidate()))
+        fake.awaitWarmup()
+        val awaiting = async { coordinator.awaitBackgroundDiagnostic(reservation.operationId) }
+        assertFalse(awaiting.isCompleted)
+        fake.completeWarmup()
+        assertEquals("N", withTimeout(1_000) { awaiting.await() }?.fields?.get("classifierResponse"))
+        assertEquals("N", coordinator.awaitBackgroundDiagnostic(reservation.operationId)?.fields?.get("classifierResponse"))
+
+        val expiring = coordinator.reserveRerank(warmup(), "second-request")!!
+        assertTrue(coordinator.completeReservedRerank(expiring, candidate()))
+        withTimeout(1_000) { while (expiring.diagnosticCompletedAtMillis == null) yield() }
+        now += 5 * 60 * 1_000L
+        val nextTurn = coordinator.beginTurn(turn("look")).toList()
+        assertTrue(nextTurn.filterIsInstance<TurnStreamEvent.Diagnostic>()
+            .none { it.value.kind == "background_rerank" })
+        assertNull(coordinator.awaitBackgroundDiagnostic(reservation.operationId))
+        assertNull(coordinator.awaitBackgroundDiagnostic(expiring.operationId))
+        assertTrue(coordinator.tryBeginIdleClose())
+        coordinator.close()
+    }
+
+    @Test
+    fun `background diagnostics omit malformed classifier text and clear on close`() = runBlocking {
+        val fake = ControllableGateway(
+            classify = { "SECRET_PLAYER_ACTION SECRET_GAME_MASTER_OUTPUT" },
+            warmup = { CacheMetrics(null, null) },
+        )
+        val coordinator = SessionPrefillCoordinator(fake)
+        val reservation = coordinator.reserveRerank(warmup(), "origin-request")!!
+        assertTrue(coordinator.completeReservedRerank(reservation, candidate()))
+        withTimeout(1_000) { while (reservation.diagnosticCompletedAtMillis == null) yield() }
+        val result = coordinator.awaitBackgroundDiagnostic(reservation.operationId)
+        assertEquals("rejected", result?.fields?.get("result"))
+        assertNull(result?.fields?.get("classifierResponse"))
+        assertFalse(result.toString().contains("SECRET_PLAYER_ACTION"))
+        assertFalse(result.toString().contains("SECRET_GAME_MASTER_OUTPUT"))
+
+        val later = coordinator.reserveRerank(warmup(), "later-request")!!
+        assertTrue(coordinator.completeReservedRerank(later, candidate()))
+        withTimeout(1_000) { while (later.diagnosticCompletedAtMillis == null) yield() }
+        coordinator.close()
+        assertNull(coordinator.awaitBackgroundDiagnostic(later.operationId))
+    }
+
+    @Test
+    fun `world state failure reports the accepted fallback after the failure`() = runBlocking {
+        val prior = WorldState("Harbour", "Find the keeper")
+        val fake = ControllableGateway(
+            stream = { flowOf(TurnStreamEvent.Token("SECRET_GAME_MASTER_OUTPUT"), TurnStreamEvent.Done(TurnMetrics(null, 4, 3))) },
+            worldState = { throw IllegalStateException("SECRET_PLAYER_ACTION") },
+            warmup = { CacheMetrics(2, 1) },
+        )
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        val request = turn("SECRET_PLAYER_ACTION")
+        coordinator.beginTurn(request).toList()
+        val diagnostics = mutableListOf<de.aidadventure.server.model.StreamDiagnostic>()
+        val accepted = coordinator.resolveWorldStateAndWarmup(
+            request, "SECRET_GAME_MASTER_OUTPUT", warmup().copy(worldState = prior),
+            WorldStateResolutionRequest("session-1", "# Harbor", prior, "SECRET_PLAYER_ACTION", "SECRET_GAME_MASTER_OUTPUT"),
+            "request-1", diagnostics::add,
+        )
+
+        assertEquals(prior, accepted)
+        assertEquals(listOf("failed", "fallback_accepted", "completed"), diagnostics.map { it.stage })
+        assertEquals("Harbour", diagnostics[1].fields["location"])
+        assertEquals("Find the keeper", diagnostics[1].fields["narrativeFocus"])
+        assertEquals("Harbour", fake.warmupRequests.single().worldState.location)
+        assertFalse(diagnostics.joinToString().contains("SECRET_PLAYER_ACTION"))
+        assertFalse(diagnostics.joinToString().contains("SECRET_GAME_MASTER_OUTPUT"))
+        coordinator.close()
+    }
+
+    @Test
+    fun `waiting turn receives prior rerank failure before its terminal error`() = runBlocking {
+        val allowFailure = CompletableDeferred<Unit>()
+        val classifyStarted = CompletableDeferred<Unit>()
+        val fake = ControllableGateway(classify = {
+            classifyStarted.complete(Unit)
+            allowFailure.await()
+            throw IllegalStateException("SECRET_PLAYER_ACTION")
+        })
+        val coordinator = SessionPrefillCoordinator(fake)
+        coordinator.rerankAndWarmup(warmup(), candidate(), "prior-request")
+        classifyStarted.await()
+        val events = mutableListOf<TurnStreamEvent>()
+        val turnFlow = coordinator.beginTurn(turn("SECRET_PLAYER_ACTION"))
+        val waiting = async {
+            runCatching { turnFlow.collect(events::add) }.exceptionOrNull()
+        }
+        allowFailure.complete(Unit)
+        val failure = waiting.await()
+
+        assertTrue(failure is IllegalStateException)
+        val diagnostic = events.filterIsInstance<TurnStreamEvent.Diagnostic>().single().value
+        assertEquals("background_rerank", diagnostic.kind)
+        assertEquals("prior_failed", diagnostic.stage)
+        assertFalse(diagnostic.toString().contains("SECRET_PLAYER_ACTION"))
+        coordinator.close()
+    }
+
+    @Test
+    fun `world state and warmup report accepted and failed outcomes without transcript text`() = runBlocking {
+        val fake = ControllableGateway(
+            stream = { flowOf(TurnStreamEvent.Token("SECRET_GAME_MASTER_OUTPUT"), TurnStreamEvent.Done(TurnMetrics(null, 4, 3))) },
+            worldState = { WorldState("Bell Tower", "Find the bell keeper") },
+            warmup = { throw IllegalStateException("SECRET_GAME_MASTER_OUTPUT") },
+        )
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        val request = turn("SECRET_PLAYER_ACTION")
+        coordinator.beginTurn(request).toList()
+        val diagnostics = mutableListOf<de.aidadventure.server.model.StreamDiagnostic>()
+        val accepted = coordinator.resolveWorldStateAndWarmup(
+            request, "SECRET_GAME_MASTER_OUTPUT", warmup(),
+            WorldStateResolutionRequest("session-1", "# Harbor", WorldState(), "SECRET_PLAYER_ACTION", "SECRET_GAME_MASTER_OUTPUT"),
+            "request-1", diagnostics::add,
+        )
+
+        assertEquals("Bell Tower", accepted.location)
+        assertEquals(listOf("world_state", "warmup"), diagnostics.map { it.kind })
+        assertEquals(listOf("accepted", "failed"), diagnostics.map { it.stage })
+        assertFalse(diagnostics.joinToString().contains("SECRET_PLAYER_ACTION"))
+        assertFalse(diagnostics.joinToString().contains("SECRET_GAME_MASTER_OUTPUT"))
+        coordinator.close()
+    }
+
+    @Test
+    fun `next turn reports prior background relevance and warmup outcome before generation`() = runBlocking {
+        val fake = ControllableGateway(
+            classify = { "Y" },
+            warmup = { CacheMetrics(8, 2) },
+            stream = { flowOf(TurnStreamEvent.Token("Safe output"), TurnStreamEvent.Done(TurnMetrics(null, 4, 3))) },
+        )
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        coordinator.rerankAndWarmup(warmup(), candidate(), "prior-request")
+        fake.awaitWarmupCompletion()
+
+        val events = coordinator.beginTurn(turn("SECRET_PLAYER_ACTION")).toList()
+        val diagnostics = events.filterIsInstance<TurnStreamEvent.Diagnostic>().map { it.value }
+        assertEquals("background_rerank", diagnostics.first().kind)
+        assertEquals("prior_completed", diagnostics.first().stage)
+        assertEquals("accepted", diagnostics.first().fields["result"])
+        assertEquals("candidate key", diagnostics.first().fields["matchText"])
+        assertEquals("8", diagnostics.first().metrics?.cacheTokens?.toString())
+        assertTrue(events.indexOfFirst { it is TurnStreamEvent.Diagnostic } < events.indexOfFirst { it is TurnStreamEvent.GenerationReady })
+        assertFalse(diagnostics.joinToString().contains("SECRET_PLAYER_ACTION"))
+        coordinator.close()
+    }
+
     @Test
     fun `prefill forwards the location catalog to the primary request`() = runBlocking {
         val fake = ControllableGateway(prefill = { CacheMetrics(null, null) })

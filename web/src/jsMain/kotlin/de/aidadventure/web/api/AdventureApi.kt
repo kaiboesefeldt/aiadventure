@@ -4,6 +4,7 @@ import de.aidadventure.web.model.ContextCompression
 import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
+import de.aidadventure.web.model.StreamDiagnostic
 import de.aidadventure.web.model.WorldState
 import de.aidadventure.web.persistence.ScenarioFrontmatter
 import kotlinx.browser.window
@@ -18,6 +19,9 @@ interface AdventureApi {
     suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion
     suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion =
         play(request, onInputReady, onFragment, onToken)
+    suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion =
+        play(request, onGenerationReady, onInputReady, onFragment, onToken)
+    suspend fun awaitBackgroundDiagnostic(sessionId: String, operationId: String): StreamDiagnostic? = null
     fun stopActiveTurn() = Unit
 }
 
@@ -51,6 +55,10 @@ class AdventureApiClient(
     }
 
     override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
+        return play(request, onGenerationReady, onInputReady, onFragment, onToken, {})
+    }
+
+    override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
         activeTurnStopped = false
         val controller = js("new AbortController()")
         activeTurnController = controller
@@ -68,14 +76,40 @@ class AdventureApiClient(
             }
             if (activeTurnStopped) throw TurnStreamStoppedException()
             if (result.done.unsafeCast<Boolean>()) break
-            processTurnStreamChunk(decoder, decodeText(textDecoder, result.value, stream = true), onInputReady, onFragment, onToken, onGenerationReady) { activeTurnStopped }?.let { return it }
+            processTurnStreamChunk(decoder, decodeText(textDecoder, result.value, stream = true), onInputReady, onFragment, onToken, onGenerationReady, { activeTurnStopped }, onDiagnostic)?.let { return it }
         }
-        processTurnStreamChunk(decoder, decodeText(textDecoder, null, stream = false), onInputReady, onFragment, onToken, onGenerationReady) { activeTurnStopped }?.let { return it }
+        processTurnStreamChunk(decoder, decodeText(textDecoder, null, stream = false), onInputReady, onFragment, onToken, onGenerationReady, { activeTurnStopped }, onDiagnostic)?.let { return it }
         throw AdventureApiException("The model response ended unexpectedly.")
         } finally {
             activeTurnReader = null
             activeTurnController = null
         }
+    }
+
+    override suspend fun awaitBackgroundDiagnostic(sessionId: String, operationId: String): StreamDiagnostic? {
+        val path = "/api/turn/background?sessionId=${encodeQueryComponent(sessionId)}&operationId=${encodeQueryComponent(operationId)}"
+        val response = window.fetch("$normalizedBaseUrl$path").await().asDynamic()
+        if (response.status.unsafeCast<Int>() == 404) return null
+        requireBrowserSuccess(response)
+        val reader = response.body?.getReader() ?: throw AdventureApiException("The background result ended unexpectedly.")
+        val textDecoder = js("new TextDecoder()")
+        val decoder = SseFrameDecoder()
+        var diagnostic: StreamDiagnostic? = null
+        fun consume(chunk: String) {
+            decoder.push(chunk).forEach { frame ->
+                if (frame.event == "diagnostic") {
+                    if (diagnostic != null) throw AdventureApiException("The background result contained multiple diagnostics.")
+                    diagnostic = streamJson.decodeFromString<StreamDiagnostic>(frame.data)
+                }
+            }
+        }
+        while (true) {
+            val result = reader.read().unsafeCast<Promise<dynamic>>().await()
+            if (result.done.unsafeCast<Boolean>()) break
+            consume(decodeText(textDecoder, result.value, stream = true))
+        }
+        consume(decodeText(textDecoder, null, stream = false))
+        return diagnostic ?: throw AdventureApiException("The background result ended unexpectedly.")
     }
 
     private suspend fun browserFetchTurn(request: TurnRequest, controller: dynamic): dynamic {
@@ -133,6 +167,7 @@ internal fun processTurnStreamChunk(
     onToken: (String) -> Unit,
     onGenerationReady: () -> Unit = {},
     shouldStop: () -> Boolean = { false },
+    onDiagnostic: (StreamDiagnostic) -> Unit = {},
 ): TurnCompletion? {
     for (frame in decoder.push(chunk)) {
         when (frame.event) {
@@ -143,6 +178,7 @@ internal fun processTurnStreamChunk(
             "input_ready" -> onInputReady()
             "fragment" -> onFragment(streamJson.decodeFromString<StreamFragment>(frame.data).fragment)
             "token" -> onToken(streamJson.decodeFromString<StreamToken>(frame.data).text)
+            "diagnostic" -> onDiagnostic(streamJson.decodeFromString<StreamDiagnostic>(frame.data))
             "done" -> streamJson.decodeFromString<StreamDone>(frame.data).let { return TurnCompletion(it.metrics, it.worldState, it.contextCompression, it.flags) }
             "error" -> throw AdventureApiException(streamJson.decodeFromString<StreamError>(frame.data).message)
         }
@@ -151,10 +187,13 @@ internal fun processTurnStreamChunk(
 }
 
 private fun decodeText(decoder: dynamic, bytes: dynamic, stream: Boolean): String {
+    if (bytes == null) return decoder.decode().unsafeCast<String>()
     val options = js("({})")
     options.stream = stream
     return decoder.decode(bytes, options).unsafeCast<String>()
 }
+
+private fun encodeQueryComponent(value: String): String = js("encodeURIComponent")(value).unsafeCast<String>()
 
 class AdventureApiException(message: String) : Exception(message)
 

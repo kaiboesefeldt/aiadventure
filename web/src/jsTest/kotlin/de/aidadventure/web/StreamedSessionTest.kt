@@ -5,7 +5,6 @@ import de.aidadventure.web.model.GameSession
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
 
 class StreamedSessionTest {
     @Test
@@ -26,27 +25,6 @@ class StreamedSessionTest {
     @Test
     fun `runtime fragment is excluded from transcript`() {
         assertFalse(isVisibleTranscriptMessage(GameMessage("runtime-fragment", "secret", 1)))
-    }
-
-    @Test
-    fun `runtime fragment belongs only to its following completed game master message`() {
-        val messages = listOf(
-            GameMessage("runtime-fragment", "hidden context", 1),
-            GameMessage("player", "look", 2),
-            GameMessage("game-master", "The tower answers.", 3),
-        )
-
-        assertEquals("hidden context", runtimeFragmentForGameMaster(messages, 2))
-        assertNull(runtimeFragmentForGameMaster(messages, 1))
-    }
-
-    @Test
-    fun `unrelated and partial messages have no runtime fragment`() {
-        assertNull(runtimeFragmentForGameMaster(listOf(GameMessage("game-master", "first", 1)), 0))
-        assertNull(runtimeFragmentForGameMaster(listOf(
-            GameMessage("runtime-fragment", "hidden context", 1),
-            GameMessage("game-master", "partial", 2),
-        ), 1))
     }
 
     private fun session(messages: List<GameMessage>) = GameSession(

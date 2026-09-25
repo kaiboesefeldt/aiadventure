@@ -8,6 +8,7 @@ import de.aidadventure.server.model.FragmentRelevanceRequest
 import de.aidadventure.server.model.TurnMetrics
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
+import de.aidadventure.server.model.DiagnosticMetrics
 import de.aidadventure.server.model.WarmupRequest
 import de.aidadventure.server.worldstate.WorldState
 import de.aidadventure.server.worldstate.WorldStateResolutionRequest
@@ -32,6 +33,28 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class LlamaCppGatewayTest {
+    private fun List<TurnStreamEvent>.withoutDiagnostics(): List<TurnStreamEvent> =
+        filterNot { it is TurnStreamEvent.Diagnostic }
+
+    @Test
+    fun `native final timings become measured diagnostic metrics while absent values stay absent`() = runBlocking {
+        nativeServer(finalTimingFields = ",\"tokens_predicted\":7,\"timings\":{\"prompt_n\":3,\"prompt_ms\":12.5,\"prompt_per_second\":240.0,\"predicted_n\":7,\"predicted_ms\":35.0,\"predicted_per_second\":200.0}").use { server ->
+            val events = LlamaCppGateway().stream(request(server.port), LlamaCppSlot(2)).toList()
+            val metrics = events.filterIsInstance<TurnStreamEvent.Diagnostic>().single { it.value.kind == "llama_completion" }.value.metrics
+            assertEquals(DiagnosticMetrics(promptTokens = 3, contextTokens = 8192, predictedTokens = 7,
+                cacheTokens = 17, evaluatedTokens = 20, promptDurationMs = 12.5, predictedDurationMs = 35.0,
+                promptTokensPerSecond = 240.0, predictedTokensPerSecond = 200.0), metrics)
+            assertTrue(events.indexOfFirst { it is TurnStreamEvent.Diagnostic } < events.indexOfFirst { it is TurnStreamEvent.Done })
+        }
+        nativeServer().use { server ->
+            val metrics = LlamaCppGateway().stream(request(server.port), LlamaCppSlot(2)).toList()
+                .filterIsInstance<TurnStreamEvent.Diagnostic>().single { it.value.kind == "llama_completion" }.value.metrics!!
+            assertEquals(17, metrics.cacheTokens)
+            assertEquals(null, metrics.promptDurationMs)
+            assertEquals(null, metrics.predictedTokens)
+        }
+    }
+
     @Test
     fun `native turn rejects actual templated token overflow before generation`() = runBlocking {
         nativeServer(contextCapacity = 1030, tokenCount = 100).use { server ->
@@ -148,7 +171,7 @@ class LlamaCppGatewayTest {
 
                 assertEquals(
                     listOf(TurnStreamEvent.Done(TurnMetrics(null, 20, 17))),
-                    LlamaCppGateway(traceLogger = nativeTrace).stream(request(native.port), LlamaCppSlot(2)).toList(),
+                    LlamaCppGateway(traceLogger = nativeTrace).stream(request(native.port), LlamaCppSlot(2)).toList().withoutDiagnostics(),
                 )
                 assertEquals(
                     listOf(TurnStreamEvent.Done(TurnMetrics(null, null, null))),
@@ -328,7 +351,7 @@ class LlamaCppGatewayTest {
                     TurnStreamEvent.Token("Hello"),
                     TurnStreamEvent.Done(TurnMetrics(null, 20, 17)),
                 ),
-                gateway.stream(request(server.port), LlamaCppSlot(2)).toList(),
+                gateway.stream(request(server.port), LlamaCppSlot(2)).toList().withoutDiagnostics(),
             )
             assertEquals(listOf("/apply-template", "/tokenize", "/slots", "/completion"), server.paths)
             val body = server.completionBodies.single().jsonObject
@@ -463,9 +486,10 @@ class LlamaCppGatewayTest {
         streamContents: List<String> = listOf("Hello"),
         contextCapacity: Int = 8192,
         tokenCount: Int = 10,
+        finalTimingFields: String = "",
     ): NativeServer {
         val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
-        return NativeServer(server, templatePrompt, templateDelayMillis, completionDelayMillis, completionContent, streamContents, contextCapacity, tokenCount).also { it.start() }
+        return NativeServer(server, templatePrompt, templateDelayMillis, completionDelayMillis, completionContent, streamContents, contextCapacity, tokenCount, finalTimingFields).also { it.start() }
     }
 
     private fun chatServer(streamContents: List<String>): ChatServer {
@@ -482,6 +506,7 @@ class LlamaCppGatewayTest {
         private val streamContents: List<String>,
         private val contextCapacity: Int,
         private val tokenCount: Int,
+        private val finalTimingFields: String,
     ) : AutoCloseable {
         private val executor = Executors.newSingleThreadExecutor()
         val tokenizeBodies = mutableListOf<String>()
@@ -523,7 +548,7 @@ class LlamaCppGatewayTest {
                         streamContents.forEach { content ->
                             writer.write("data: {\"content\":\"$content\",\"stop\":false}\n\n")
                         }
-                        writer.write("data: {\"content\":\"\",\"stop\":true,\"tokens_cached\":17,\"tokens_evaluated\":20}\n\n")
+                        writer.write("data: {\"content\":\"\",\"stop\":true,\"tokens_cached\":17,\"tokens_evaluated\":20$finalTimingFields}\n\n")
                         writer.flush()
                     }
                 } else {

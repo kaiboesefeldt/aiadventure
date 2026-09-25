@@ -13,9 +13,12 @@ import de.aidadventure.server.model.RuntimeFragmentDefinition
 import de.aidadventure.server.model.ChatEntry
 import de.aidadventure.server.model.TurnRequest
 import de.aidadventure.server.model.TurnStreamEvent
+import de.aidadventure.server.model.StreamDiagnostic
+import de.aidadventure.server.model.DiagnosticMetrics
 import de.aidadventure.server.model.WarmupRequest
 import de.aidadventure.server.worldstate.WorldState
 import de.aidadventure.server.worldstate.WorldStateResolutionRequest
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -58,10 +61,18 @@ private fun PrefillRequest.asTurnRequest() = TurnRequest(
 data class CoordinatorKey(val sessionId: String, val modelId: String, val port: Int)
 
 class RerankReservation internal constructor(internal val generation: Long) {
+    val operationId: String = UUID.randomUUID().toString()
     private val candidate = CompletableDeferred<RuntimeFragmentDefinition?>()
+    private val diagnostic = CompletableDeferred<StreamDiagnostic>()
+    @Volatile internal var diagnosticCompletedAtMillis: Long? = null
 
     internal suspend fun awaitCandidate(): RuntimeFragmentDefinition? = candidate.await()
     internal fun complete(candidate: RuntimeFragmentDefinition?): Boolean = this.candidate.complete(candidate)
+    internal suspend fun awaitDiagnostic(): StreamDiagnostic = diagnostic.await()
+    internal fun completeDiagnostic(value: StreamDiagnostic, atMillis: Long) {
+        diagnosticCompletedAtMillis = atMillis
+        diagnostic.complete(value)
+    }
 }
 
 internal data class CoordinatorLeaseDiagnostic(
@@ -100,6 +111,7 @@ interface PrefillCoordinator {
         reservation: RerankReservation,
         candidate: RuntimeFragmentDefinition?,
     ): Boolean = false
+    suspend fun awaitBackgroundDiagnostic(operationId: String): StreamDiagnostic? = null
     suspend fun resolveWorldStateAndWarmup(
         primaryRequest: TurnRequest,
         gameMasterResponse: String,
@@ -107,6 +119,14 @@ interface PrefillCoordinator {
         resolution: WorldStateResolutionRequest,
         requestId: String = "unknown",
     ): WorldState = request.worldState
+    suspend fun resolveWorldStateAndWarmup(
+        primaryRequest: TurnRequest,
+        gameMasterResponse: String,
+        request: WarmupRequest,
+        resolution: WorldStateResolutionRequest,
+        requestId: String,
+        onDiagnostic: (StreamDiagnostic) -> Unit,
+    ): WorldState = resolveWorldStateAndWarmup(primaryRequest, gameMasterResponse, request, resolution, requestId)
     suspend fun resolvedTurnFor(request: TurnRequest): ResolvedTurn? = null
     suspend fun beginTurn(request: TurnRequest, requestId: String): Flow<TurnStreamEvent> = beginTurn(request)
     suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent>
@@ -193,6 +213,7 @@ internal class SessionPrefillCoordinator(
             diagnostic.accepted,
         )
     },
+    private val clock: () -> Long = System::currentTimeMillis,
 ) : PrefillCoordinator {
     private val mutex = Mutex()
     private val coordinatorId = Integer.toHexString(System.identityHashCode(this))
@@ -202,6 +223,8 @@ internal class SessionPrefillCoordinator(
     private var shutdownComplete = false
     private var nextFragment: RuntimeFragmentDefinition? = null
     private var latestContextCompression = ContextCompression()
+    private val pendingTurnDiagnostics = mutableListOf<StreamDiagnostic>()
+    private val backgroundReservations = mutableMapOf<String, RerankReservation>()
     private var state: State = State.Idle
 
     override suspend fun submit(request: PrefillRequest): PrefillDisposition = mutex.withLock {
@@ -288,6 +311,15 @@ internal class SessionPrefillCoordinator(
         request: WarmupRequest,
         resolution: WorldStateResolutionRequest,
         requestId: String,
+    ): WorldState = resolveWorldStateAndWarmup(primaryRequest, gameMasterResponse, request, resolution, requestId) { }
+
+    override suspend fun resolveWorldStateAndWarmup(
+        primaryRequest: TurnRequest,
+        gameMasterResponse: String,
+        request: WarmupRequest,
+        resolution: WorldStateResolutionRequest,
+        requestId: String,
+        onDiagnostic: (StreamDiagnostic) -> Unit,
     ): WorldState {
         val operation = mutex.withLock {
             check(!closed) { "Prefill coordinator is closed." }
@@ -296,20 +328,37 @@ internal class SessionPrefillCoordinator(
             state = State.Prefilling(current.lease, worldStateOperation, resolvedTurn = null, pending = null)
             worldStateOperation.job = scope.launch(start = CoroutineStart.LAZY) {
                 val accepted = try {
-                    gateway.resolveWorldState(primaryRequest, gameMasterResponse, resolution, current.lease.slot) ?: request.worldState
+                    val proposed = gateway.resolveWorldState(primaryRequest, gameMasterResponse, resolution, current.lease.slot)
+                    onDiagnostic(StreamDiagnostic(
+                        kind = "world_state", stage = if (proposed == null) "unchanged" else "accepted",
+                        transcriptRole = "game-master",
+                        fields = mapOf("location" to (proposed ?: request.worldState).location,
+                            "narrativeFocus" to (proposed ?: request.worldState).narrativeFocus),
+                    ))
+                    proposed ?: request.worldState
                 } catch (_: CancellationException) {
+                    onDiagnostic(StreamDiagnostic("world_state", "cancelled", transcriptRole = "game-master"))
                     throw CancellationException("World-State resolution cancelled.")
                 } catch (failure: Throwable) {
                     onWarmupFailure(WarmupFailure(requestId, "world_state", failure.javaClass.simpleName))
+                    onDiagnostic(StreamDiagnostic("world_state", "failed",
+                        fields = mapOf("failureCategory" to failure.javaClass.simpleName), transcriptRole = "game-master"))
+                    onDiagnostic(StreamDiagnostic("world_state", "fallback_accepted", transcriptRole = "game-master",
+                        fields = mapOf("location" to request.worldState.location,
+                            "narrativeFocus" to request.worldState.narrativeFocus)))
                     request.worldState
                 }
                 val canonicalWarmup = request.copy(worldState = accepted)
                 worldStateOperation.acceptedState = accepted
                 try {
-                    gateway.warmup(canonicalWarmup, current.lease.slot)
+                    val metrics = gateway.warmup(canonicalWarmup, current.lease.slot)
+                    onDiagnostic(StreamDiagnostic("warmup", "completed", transcriptRole = "game-master",
+                        metrics = DiagnosticMetrics(cacheTokens = metrics.cachedTokens, evaluatedTokens = metrics.evaluatedTokens)))
                 } catch (failure: Throwable) {
                     if (failure is CancellationException) throw failure
                     onWarmupFailure(WarmupFailure(requestId, "warmup", failure.javaClass.simpleName))
+                    onDiagnostic(StreamDiagnostic("warmup", "failed",
+                        fields = mapOf("failureCategory" to failure.javaClass.simpleName), transcriptRole = "game-master"))
                 } finally {
                     worldStateOperation.result.complete(accepted)
                     prefillFinished(current.lease, worldStateOperation, null)
@@ -386,6 +435,23 @@ internal class SessionPrefillCoordinator(
         reservation.complete(candidate)
     }
 
+    override suspend fun awaitBackgroundDiagnostic(operationId: String): StreamDiagnostic? {
+        val reservation = mutex.withLock {
+            pruneBackgroundReservationsLocked()
+            backgroundReservations[operationId]
+        } ?: return null
+        return reservation.awaitDiagnostic()
+    }
+
+    private fun pruneBackgroundReservationsLocked() {
+        val now = clock()
+        val expiredIds = backgroundReservations.filterValues { reservation ->
+            reservation.diagnosticCompletedAtMillis?.let { now - it >= BACKGROUND_RESULT_TTL_MS } == true
+        }.keys
+        expiredIds.forEach(backgroundReservations::remove)
+        pendingTurnDiagnostics.removeAll { it.fields["operationId"] in expiredIds }
+    }
+
     override suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent> = beginTurn(request, "unknown")
 
     override suspend fun beginTurn(request: TurnRequest, requestId: String): Flow<TurnStreamEvent> = mutex.withLock {
@@ -417,7 +483,8 @@ internal class SessionPrefillCoordinator(
     override fun tryBeginIdleClose(): Boolean {
         if (!mutex.tryLock()) return false
         return try {
-            if (closed || !state.isIdleForTtl()) {
+            pruneBackgroundReservationsLocked()
+            if (closed || !state.isIdleForTtl() || backgroundReservations.isNotEmpty()) {
                 false
             } else {
                 closed = true
@@ -447,6 +514,8 @@ internal class SessionPrefillCoordinator(
             try {
                 shutdown.lease?.let(::releaseLeaseLocked)
                 state = State.Idle
+                backgroundReservations.clear()
+                pendingTurnDiagnostics.clear()
                 shutdownComplete = true
                 null
             } catch (failure: Throwable) {
@@ -511,43 +580,79 @@ internal class SessionPrefillCoordinator(
         nextFragment = null
         val lease = existingLease ?: acquireLease(request.llamaCppPort)
         val operation = RerankingOperation(RerankReservation(++generation))
+        pruneBackgroundReservationsLocked()
+        backgroundReservations[operation.reservation.operationId] = operation.reservation
         state = State.Prefilling(lease, operation, resolvedTurn = null, pending = null)
         operation.job = scope.launch(start = CoroutineStart.LAZY) {
-            val failure = try {
-                val candidate = operation.reservation.awaitCandidate()
-                val prepared = prepareWarmup(request, lease.slot)
-                val response = candidate?.let {
-                    val relevanceRequest = FragmentRelevanceRequest(
-                        sessionId = request.sessionId,
-                        modelId = request.modelId,
-                        llamaCppPort = request.llamaCppPort,
-                        scenarioMarkdown = request.scenarioMarkdown,
-                        history = request.history,
-                        candidateKey = it.matchText,
-                        worldState = prepared.worldState,
-                        contextCompression = prepared.contextCompression,
-                        locations = request.locations,
+            try {
+                val failure = try {
+                    val candidate = operation.reservation.awaitCandidate()
+                    val prepared = prepareWarmup(request, lease.slot)
+                    val response = candidate?.let {
+                        val relevanceRequest = FragmentRelevanceRequest(
+                            sessionId = request.sessionId,
+                            modelId = request.modelId,
+                            llamaCppPort = request.llamaCppPort,
+                            scenarioMarkdown = request.scenarioMarkdown,
+                            history = request.history,
+                            candidateKey = it.matchText,
+                            worldState = prepared.worldState,
+                            contextCompression = prepared.contextCompression,
+                            locations = request.locations,
+                        )
+                        gateway.classifyFragment(relevanceRequest, lease.slot)
+                    }
+                    val decision = response?.let(::parseFragmentDecision)
+                    val accepted = candidate != null && decision == true
+                    operation.resolvedFragment = candidate?.takeIf { accepted }
+                    rerankDiagnosticSink(RerankDiagnostic(response, decision, accepted))
+                    val canonicalWarmup = prepared.copy(
+                        history = candidate?.takeIf { accepted && it.fragment.isNotBlank() }
+                            ?.let { request.history + ChatEntry("runtime-fragment", it.fragment) }
+                            ?: request.history,
                     )
-                    gateway.classifyFragment(relevanceRequest, lease.slot)
+                    val metrics = gateway.warmup(canonicalWarmup, lease.slot)
+                    operation.diagnostic = StreamDiagnostic(
+                        kind = "background_rerank", stage = "prior_completed", transcriptRole = "player",
+                        fields = mapOf(
+                            "source" to "prior_turn",
+                            "operationId" to operation.reservation.operationId,
+                            "result" to when {
+                                candidate == null -> "no_candidate"
+                                accepted -> "accepted"
+                                else -> "rejected"
+                            },
+                            "matchText" to candidate?.matchText.orEmpty(),
+                            "fragment" to operation.resolvedFragment?.fragment.orEmpty(),
+                            "warmup" to "completed",
+                        ) + (response?.takeIf { it == "Y" || it == "N" }
+                            ?.let { mapOf("classifierResponse" to it) } ?: emptyMap()),
+                        metrics = DiagnosticMetrics(cacheTokens = metrics.cachedTokens, evaluatedTokens = metrics.evaluatedTokens),
+                    )
+                    null
+                } catch (_: CancellationException) {
+                    operation.diagnostic = StreamDiagnostic(
+                        kind = "background_rerank", stage = "prior_cancelled", transcriptRole = "player",
+                        fields = mapOf("source" to "prior_turn", "operationId" to operation.reservation.operationId),
+                    )
+                    return@launch
+                } catch (failure: Throwable) {
+                    operation.diagnostic = StreamDiagnostic(
+                        kind = "background_rerank", stage = "prior_failed", transcriptRole = "player",
+                        fields = mapOf("source" to "prior_turn", "operationId" to operation.reservation.operationId,
+                            "failureCategory" to failure.javaClass.simpleName),
+                    )
+                    failure
                 }
-                val decision = response?.let(::parseFragmentDecision)
-                val accepted = candidate != null && decision == true
-                operation.resolvedFragment = candidate?.takeIf { accepted }
-                rerankDiagnosticSink(RerankDiagnostic(response, decision, accepted))
-                val canonicalWarmup = prepared.copy(
-                    history = candidate?.takeIf { accepted && it.fragment.isNotBlank() }
-                        ?.let { request.history + ChatEntry("runtime-fragment", it.fragment) }
-                        ?: request.history,
+                prefillFinished(lease, operation, failure)
+                failure?.let { onWarmupFailure(WarmupFailure(requestId, "rerank", it.javaClass.simpleName)) }
+            } finally {
+                operation.reservation.completeDiagnostic(
+                    operation.diagnostic ?: StreamDiagnostic("background_rerank", "prior_cancelled",
+                        fields = mapOf("source" to "prior_turn", "operationId" to operation.reservation.operationId)),
+                    clock(),
                 )
-                gateway.warmup(canonicalWarmup, lease.slot)
-                null
-            } catch (_: CancellationException) {
-                return@launch
-            } catch (failure: Throwable) {
-                failure
             }
-            prefillFinished(lease, operation, failure)
-            failure?.let { onWarmupFailure(WarmupFailure(requestId, "rerank", it.javaClass.simpleName)) }
         }
         operation.job.start()
         return operation
@@ -558,13 +663,14 @@ internal class SessionPrefillCoordinator(
         val execution = TurnExecution(requestId).also(TurnExecution::initialize)
         state = State.Turning(lease, execution)
         recordLeaseTransition("turn_handoff", lease)
-        execution.handoff(lease, resolvedTurn)
+        execution.handoff(lease, resolvedTurn, drainTurnDiagnostics())
         return execution.flow()
     }
 
     private suspend fun prefillFinished(lease: Lease, operation: Operation, failure: Throwable?) {
         mutex.withLock {
             if (closed || operation.generation != generation) return@withLock
+            (operation as? RerankingOperation)?.diagnostic?.let(pendingTurnDiagnostics::add)
 
             when (val current = state) {
                 is State.Prefilling -> if (current.operation === operation && current.lease === lease) {
@@ -595,20 +701,25 @@ internal class SessionPrefillCoordinator(
                     if (failure != null) {
                         generation++
                         val releaseFailure = releaseAfterFailureLocked(lease)
-                        current.execution.fail(releaseFailure ?: failure)
+                        current.execution.fail(releaseFailure ?: failure, drainTurnDiagnostics())
                     } else {
                         if (operation is RerankingOperation) nextFragment = operation.resolvedFragment
                         val resolved = current.resolvedTurn?.takeIf { it.matches(current.request) }?.forRequest(current.request)
                             ?: current.request.withNextFragment()
                         state = State.Turning(lease, current.execution)
                         recordLeaseTransition("turn_handoff", lease)
-                        current.execution.handoff(lease, resolved)
+                        current.execution.handoff(lease, resolved, drainTurnDiagnostics())
                     }
                 }
 
                 else -> Unit
             }
         }
+    }
+
+    private fun drainTurnDiagnostics(): List<StreamDiagnostic> {
+        pruneBackgroundReservationsLocked()
+        return pendingTurnDiagnostics.toList().also { pendingTurnDiagnostics.clear() }
     }
 
     private suspend fun turnFinished(execution: TurnExecution, lease: Lease?): Throwable? = mutex.withLock {
@@ -717,14 +828,18 @@ internal class SessionPrefillCoordinator(
         private lateinit var request: TurnRequest
         private var selectedFragment: String? = null
         private var emittedSignals: List<String> = emptyList()
+        private var priorDiagnostics: List<StreamDiagnostic> = emptyList()
         lateinit var job: Job
 
         fun initialize() {
             job = scope.launch(start = CoroutineStart.LAZY) {
                 var lease: Lease? = null
                 var streamFailure: Throwable? = null
+                var priorDiagnosticsDelivered = false
                 try {
                     lease = ready.await()
+                    priorDiagnostics.forEach { output.send(TurnStreamEvent.Diagnostic(it)) }
+                    priorDiagnosticsDelivered = true
                     if (selectedFragment != null) output.send(TurnStreamEvent.Fragment(selectedFragment.orEmpty(), emittedSignals))
                     request = prepareTurn(request, lease.slot)
                     output.send(TurnStreamEvent.GenerationReady)
@@ -753,6 +868,13 @@ internal class SessionPrefillCoordinator(
                     }
                 } catch (failure: Throwable) {
                     streamFailure = failure
+                    if (!priorDiagnosticsDelivered) {
+                        try {
+                            priorDiagnostics.forEach { output.send(TurnStreamEvent.Diagnostic(it)) }
+                        } catch (_: CancellationException) {
+                            // The collector may have disconnected while the prior result was sent.
+                        }
+                    }
                 }
 
                 val releaseFailure = withContext(NonCancellable) {
@@ -775,14 +897,16 @@ internal class SessionPrefillCoordinator(
             }
         }
 
-        fun handoff(lease: Lease, resolvedTurn: ResolvedTurn) {
+        fun handoff(lease: Lease, resolvedTurn: ResolvedTurn, diagnostics: List<StreamDiagnostic>) {
             this.request = resolvedTurn.request
             selectedFragment = resolvedTurn.fragment
             emittedSignals = resolvedTurn.emittedSignals
+            priorDiagnostics = diagnostics
             ready.complete(lease)
         }
 
-        fun fail(failure: Throwable) {
+        fun fail(failure: Throwable, diagnostics: List<StreamDiagnostic> = emptyList()) {
+            priorDiagnostics = diagnostics
             ready.completeExceptionally(failure)
         }
 
@@ -867,6 +991,7 @@ internal class SessionPrefillCoordinator(
         override val generation: Long get() = reservation.generation
         override lateinit var job: Job
         var resolvedFragment: RuntimeFragmentDefinition? = null
+        var diagnostic: StreamDiagnostic? = null
     }
 
     private class WorldStateOperation(override val generation: Long) : Operation {
@@ -884,6 +1009,7 @@ internal class SessionPrefillCoordinator(
     )
 
     private companion object {
+        const val BACKGROUND_RESULT_TTL_MS = 5 * 60 * 1_000L
         val logger = LoggerFactory.getLogger(SessionPrefillCoordinator::class.java)
     }
 }

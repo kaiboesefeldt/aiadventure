@@ -27,6 +27,7 @@ class AdventureApiUrlTest {
         window.asDynamic().fetch = { url: String, _: dynamic ->
             urls += url
             val response = js("({status: 503, ok: false})")
+            if (url.contains("/api/turn/background?")) response.status = 404
             response.text = { Promise.resolve("{\"message\":\"Test service unavailable\"}") }
             Promise.resolve<dynamic>(response)
         }
@@ -40,8 +41,9 @@ class AdventureApiUrlTest {
             assertFailsWith<AdventureApiException> {
                 client.play(TurnRequest("scenario", emptyList(), "action", "session"), {}, {}, {})
             }
+            assertEquals(null, client.awaitBackgroundDiagnostic("session /", "operation+?"))
             assertEquals(
-                listOf("/api/prefill", "/api/warmup", "/api/turn").map { "$expectedBaseUrl$it" },
+                listOf("/api/prefill", "/api/warmup", "/api/turn", "/api/turn/background?sessionId=session%20%2F&operationId=operation%2B%3F").map { "$expectedBaseUrl$it" },
                 urls,
             )
             if (expectedBaseUrl.isEmpty()) {
