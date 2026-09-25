@@ -30,6 +30,7 @@ interface SessionRepository {
 interface DebugEventRepository {
     suspend fun listForSession(sessionId: String): List<DebugEvent>
     suspend fun append(event: DebugEvent)
+    suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String): Boolean
     suspend fun clearSession(sessionId: String)
     suspend fun deleteForSessions(sessionIds: Set<String>)
 }
@@ -43,7 +44,6 @@ sealed class PersistenceError(message: String, cause: Throwable? = null) : Excep
 class AdventureDatabase private constructor(private val database: dynamic) {
     private val scenarioStore = RepositoryStore<Scenario>(database, SCENARIOS, Scenario.serializer())
     private val sessionStore = RepositoryStore(database, SESSIONS, GameSession.serializer(), ::decodePersistedGameSession)
-    private val debugEventStore = RepositoryStore(database, DEBUG_EVENTS, DebugEvent.serializer())
 
     val scenarios: ScenarioRepository = object : ScenarioRepository {
         override suspend fun list(): List<Scenario> = scenarioStore.list()
@@ -71,7 +71,38 @@ class AdventureDatabase private constructor(private val database: dynamic) {
             }
         }
 
-        override suspend fun append(event: DebugEvent) = debugEventStore.save(event)
+        override suspend fun append(event: DebugEvent) {
+            val transaction = database.transaction(arrayOf(SESSIONS, DEBUG_EVENTS), "readwrite")
+            val observer = TransactionObserver(transaction, "saving diagnostic")
+            if (diagnosticSessionExists(transaction, event.sessionId)) {
+                transaction.objectStore(DEBUG_EVENTS).put(JSON.parse(Json.encodeToString(DebugEvent.serializer(), event)))
+            }
+            observer.awaitCompletion()
+        }
+
+        override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String): Boolean {
+            val transaction = database.transaction(arrayOf(SESSIONS, DEBUG_EVENTS), "readwrite")
+            val observer = TransactionObserver(transaction, "saving background diagnostic")
+            if (!diagnosticSessionExists(transaction, event.sessionId)) {
+                observer.awaitCompletion()
+                return false
+            }
+            val eventsStore = transaction.objectStore(DEBUG_EVENTS)
+            val existing = awaitRequest(eventsStore.index("sessionId").getAll(event.sessionId), "finding scheduled diagnostic") { result ->
+                result.unsafeCast<Array<dynamic>>().map { Json.decodeFromString(DebugEvent.serializer(), JSON.stringify(it)) }
+            }
+            val scheduledExists = existing.any {
+                it.kind == "background_rerank" && it.stage == "scheduled" &&
+                    it.fields["operationId"] == operationId && it.turnId == event.turnId
+            }
+            val outcomeExists = existing.any {
+                it.kind == "background_rerank" && it.stage.startsWith("prior_") && it.fields["operationId"] == operationId
+            }
+            val appended = scheduledExists && !outcomeExists
+            if (appended) eventsStore.put(JSON.parse(Json.encodeToString(DebugEvent.serializer(), event)))
+            observer.awaitCompletion()
+            return appended
+        }
 
         override suspend fun clearSession(sessionId: String) = deleteForSessions(setOf(sessionId))
 
@@ -83,6 +114,11 @@ class AdventureDatabase private constructor(private val database: dynamic) {
             observer.awaitCompletion()
         }
     }
+
+    private suspend fun diagnosticSessionExists(transaction: dynamic, sessionId: String): Boolean =
+        awaitRequest(transaction.objectStore(SESSIONS).get(sessionId), "finding diagnostic session") { result ->
+            result != null && !(js("result === undefined") as Boolean)
+        }
 
     private suspend fun deleteSessionAndEvents(sessionId: String) {
         val transaction = database.transaction(arrayOf(SESSIONS, DEBUG_EVENTS), "readwrite")

@@ -9,8 +9,53 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.promise
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class DebugEventPersistenceTest {
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `ordinary diagnostic append does not recreate a deleted session log`() = GlobalScope.promise<Unit> {
+        val name = "debug-append-deleted-${kotlin.js.Date.now()}-${kotlin.random.Random.nextInt()}"
+        val database = AdventureDatabase.open(name)
+        val diagnostic = event("late", "session-a", "turn-a", 0, 10)
+        try {
+            database.debugEvents.append(diagnostic)
+            assertEquals(emptyList(), database.debugEvents.listForSession("session-a"))
+            database.sessions.save(session("session-a", "scenario-a"))
+            database.debugEvents.append(diagnostic)
+            assertEquals(listOf(diagnostic), database.debugEvents.listForSession("session-a"))
+            database.sessions.delete("session-a")
+            database.debugEvents.append(diagnostic)
+            assertEquals(emptyList(), database.debugEvents.listForSession("session-a"))
+        } finally { database.close(); js("globalThis.indexedDB").deleteDatabase(name) }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `background outcome append requires live session and scheduled event`() = GlobalScope.promise<Unit> {
+        val name = "debug-background-guard-${kotlin.js.Date.now()}-${kotlin.random.Random.nextInt()}"
+        val database = AdventureDatabase.open(name)
+        val scheduled = event("scheduled", "session-a", "turn-a", 0, 10).copy(
+            kind = "background_rerank", stage = "scheduled", fields = mapOf("operationId" to "operation-a"),
+        )
+        val outcome = scheduled.copy(id = "outcome", sequence = 1, stage = "prior_completed")
+        try {
+            database.sessions.save(session("session-a", "scenario-a"))
+            assertFalse(database.debugEvents.appendBackgroundOutcome(outcome, "operation-a"))
+            database.debugEvents.append(scheduled)
+            assertTrue(database.debugEvents.appendBackgroundOutcome(outcome, "operation-a"))
+            assertFalse(database.debugEvents.appendBackgroundOutcome(outcome, "operation-a"))
+            database.debugEvents.clearSession("session-a")
+            assertFalse(database.debugEvents.appendBackgroundOutcome(outcome, "operation-a"))
+            assertEquals(emptyList(), database.debugEvents.listForSession("session-a"))
+            database.debugEvents.append(scheduled)
+            database.sessions.delete("session-a")
+            assertFalse(database.debugEvents.appendBackgroundOutcome(outcome, "operation-a"))
+            assertEquals(emptyList(), database.debugEvents.listForSession("session-a"))
+        } finally { database.close(); js("globalThis.indexedDB").deleteDatabase(name) }
+    }
+
     @OptIn(DelicateCoroutinesApi::class)
     @Test
     fun `equal timestamp turns list turn 9 before turn 10`() = GlobalScope.promise<Unit> {
@@ -19,6 +64,7 @@ class DebugEventPersistenceTest {
         val ninth = event("ninth", "session-a", "turn-9", 0, 10).copy(turnOrder = 9)
         val tenth = event("tenth", "session-a", "turn-10", 0, 10).copy(turnOrder = 10)
         try {
+            database.sessions.save(session("session-a", "scenario-a"))
             database.debugEvents.append(tenth)
             database.debugEvents.append(ninth)
             assertEquals(listOf(ninth, tenth), database.debugEvents.listForSession("session-a"))
@@ -34,6 +80,8 @@ class DebugEventPersistenceTest {
         val second = event("two", "session-a", "turn-a", 1, 9).copy(metrics = DiagnosticMetrics(cacheTokens = 7))
         val other = event("three", "session-b", "turn-b", 0, 11)
         try {
+            database.sessions.save(session("session-a", "scenario-a"))
+            database.sessions.save(session("session-b", "scenario-b"))
             database.debugEvents.append(second)
             database.debugEvents.append(other)
             database.debugEvents.append(first)

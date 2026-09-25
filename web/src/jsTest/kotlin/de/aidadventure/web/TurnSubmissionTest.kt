@@ -31,6 +31,61 @@ import kotlinx.coroutines.yield
 class TurnSubmissionTest {
     @OptIn(DelicateCoroutinesApi::class)
     @Test
+    fun `clearing diagnostics while followup waits does not recreate an outcome`() = GlobalScope.promise<Unit> {
+        verifyRemovedScheduledEventDoesNotReappear(deleteSession = false)
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `deleting session while followup waits does not recreate an outcome`() = GlobalScope.promise<Unit> {
+        verifyRemovedScheduledEventDoesNotReappear(deleteSession = true)
+    }
+
+    private suspend fun verifyRemovedScheduledEventDoesNotReappear(deleteSession: Boolean) {
+        val events = RecordingDebugEvents()
+        val followupStarted = CompletableDeferred<Unit>()
+        val releaseFollowup = CompletableDeferred<StreamDiagnostic>()
+        val postRemovalRead = CompletableDeferred<Unit>()
+        var removed = false
+        events.onList = { if (removed) postRemovalRead.complete(Unit) }
+        val sessions = object : SessionRepository {
+            private val saved = mutableListOf<GameSession>()
+            override suspend fun list(): List<GameSession> = saved
+            override suspend fun save(session: GameSession) { saved += session }
+            override suspend fun find(id: String): GameSession? = saved.lastOrNull { it.id == id }
+            override suspend fun delete(id: String) {
+                saved.removeAll { it.id == id }
+                events.deleteForSessions(setOf(id))
+            }
+        }
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+            override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("Use diagnostic overload")
+            override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
+                onToken("Output")
+                onDiagnostic(StreamDiagnostic("background_rerank", "scheduled", mapOf("operationId" to "operation-removed"), "game-master"))
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+            }
+            override suspend fun awaitBackgroundDiagnostic(sessionId: String, operationId: String): StreamDiagnostic? {
+                followupStarted.complete(Unit)
+                return releaseFollowup.await()
+            }
+        }
+        TurnSubmission(sessions, api, debugEvents = events)
+            .submit(sessionWithPreviousPair(), scenario(), "look", {}, {})
+        withTimeout(1000) { followupStarted.await() }
+        if (deleteSession) sessions.delete("session-1") else events.clearSession("session-1")
+        removed = true
+        releaseFollowup.complete(StreamDiagnostic("background_rerank", "prior_completed", mapOf(
+            "operationId" to "operation-removed", "source" to "prior_turn"), "player"))
+        withTimeout(1000) { postRemovalRead.await() }
+        yield()
+        assertEquals(emptyList(), events.saved)
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
     fun `scheduled background outcome is fetched after turn and linked to its output`() = GlobalScope.promise<Unit> {
         val sessions = RecordingSessions()
         val events = RecordingDebugEvents()
@@ -157,6 +212,11 @@ class TurnSubmissionTest {
                 saved += event
                 if (event.stage == "prior_completed") outcomeSaved.complete(event)
             }
+            override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String): Boolean {
+                if (saved.none { it.stage == "scheduled" && it.fields["operationId"] == operationId }) return false
+                append(event)
+                return true
+            }
             override suspend fun clearSession(sessionId: String) = Unit
             override suspend fun deleteForSessions(sessionIds: Set<String>) = Unit
         }
@@ -181,6 +241,8 @@ class TurnSubmissionTest {
                 .submit(sessionWithPreviousPair(), scenario(), "first", {}, {}).session
             assertTrue(saved.none { it.stage == "scheduled" })
             TurnSubmission(sessions, api, debugEvents = events).submit(first, scenario(), "second", {}, {})
+            assertTrue(saved.none { it.stage == "prior_completed" })
+            scheduledWrite.complete(Unit)
             val outcome = withTimeout(1000) { outcomeSaved.await() }
             assertEquals(first.messages.last().messageId, outcome.transcriptMessageId)
             assertEquals("game-master", outcome.transcriptRole)
@@ -698,6 +760,7 @@ class TurnSubmissionTest {
         val events = object : DebugEventRepository {
             override suspend fun listForSession(sessionId: String): List<DebugEvent> = emptyList()
             override suspend fun append(event: DebugEvent): Unit = error("IndexedDB write failed")
+            override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String): Boolean = false
             override suspend fun clearSession(sessionId: String) = Unit
             override suspend fun deleteForSessions(sessionIds: Set<String>) = Unit
         }
@@ -723,6 +786,7 @@ class TurnSubmissionTest {
                 writeStarted.complete(Unit)
                 releaseWrite.await()
             }
+            override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String): Boolean = false
             override suspend fun clearSession(sessionId: String) = Unit
             override suspend fun deleteForSessions(sessionIds: Set<String>) = Unit
         }
@@ -768,8 +832,20 @@ private class DiagnosticAdventureApi(private val outcome: DiagnosticOutcome) : A
 private class RecordingDebugEvents : DebugEventRepository {
     val saved = mutableListOf<DebugEvent>()
     var onAppend: ((DebugEvent) -> Unit)? = null
-    override suspend fun listForSession(sessionId: String): List<DebugEvent> = saved.filter { it.sessionId == sessionId }
+    var onList: (() -> Unit)? = null
+    override suspend fun listForSession(sessionId: String): List<DebugEvent> {
+        onList?.invoke()
+        return saved.filter { it.sessionId == sessionId }
+    }
     override suspend fun append(event: DebugEvent) { saved += event; onAppend?.invoke(event) }
+    override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String): Boolean {
+        if (saved.none { it.sessionId == event.sessionId && it.turnId == event.turnId &&
+                it.stage == "scheduled" && it.fields["operationId"] == operationId }) return false
+        if (saved.any { it.sessionId == event.sessionId && it.stage.startsWith("prior_") &&
+                it.fields["operationId"] == operationId }) return false
+        append(event)
+        return true
+    }
     override suspend fun clearSession(sessionId: String) { saved.removeAll { it.sessionId == sessionId } }
     override suspend fun deleteForSessions(sessionIds: Set<String>) { saved.removeAll { it.sessionId in sessionIds } }
 }

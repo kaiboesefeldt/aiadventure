@@ -12,6 +12,7 @@ import de.aidadventure.web.model.StreamDiagnostic
 import de.aidadventure.web.persistence.SessionRepository
 import de.aidadventure.web.persistence.DebugEventRepository
 import kotlinx.browser.window
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -148,11 +149,15 @@ internal class TurnSubmission(
                         diagnostic.kind == "background_rerank" && diagnostic.stage == "scheduled" && operationId != null -> {
                             scheduledBackgroundEvents += event
                             val key = session.id to operationId
-                            scheduledBackgroundEventsPending[key] = event
-                            appendDiagnostic(repository, event) { scheduledBackgroundEventsPending.remove(key) }
+                            val saved = CompletableDeferred<Unit>()
+                            scheduledBackgroundWritesPending[key] = saved
+                            appendDiagnostic(repository, event) {
+                                saved.complete(Unit)
+                                if (scheduledBackgroundWritesPending[key] === saved) scheduledBackgroundWritesPending.remove(key)
+                            }
                         }
                         diagnostic.kind == "background_rerank" && diagnostic.stage.startsWith("prior_") && operationId != null -> {
-                            enqueueBackgroundOutcome(repository, session.id, operationId, diagnostic, event)
+                            enqueueBackgroundOutcome(repository, session.id, operationId, diagnostic)
                         }
                         else -> appendDiagnostic(repository, event)
                     }
@@ -185,14 +190,15 @@ internal class TurnSubmission(
         return CompletedTurn(completed, completion.metrics)
     }
 
-    private fun appendDiagnostic(repository: DebugEventRepository, event: DebugEvent, onSaved: () -> Unit = {}) {
+    private fun appendDiagnostic(repository: DebugEventRepository, event: DebugEvent, onFinished: () -> Unit = {}) {
         diagnosticWriteScope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 repository.append(event)
-                onSaved()
             } catch (failure: Throwable) {
                 if (!currentCoroutineContext().isActive) throw failure
                 runCatching { onDiagnosticPersistenceFailure(failure) }
+            } finally {
+                onFinished()
             }
         }
     }
@@ -209,7 +215,7 @@ internal class TurnSubmission(
                     if (outcome != null && outcome.kind == "background_rerank" &&
                         outcome.stage.startsWith("prior_") && outcome.fields["operationId"] == operationId
                     ) {
-                        persistBackgroundOutcome(repository, sessionId, operationId, outcome, scheduled)
+                        persistBackgroundOutcome(repository, sessionId, operationId, outcome)
                     }
                 } catch (failure: Throwable) {
                     if (!currentCoroutineContext().isActive) throw failure
@@ -244,11 +250,10 @@ internal class TurnSubmission(
         sessionId: String,
         operationId: String,
         diagnostic: StreamDiagnostic,
-        fallback: DebugEvent,
     ) {
         diagnosticWriteScope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
-                persistBackgroundOutcome(repository, sessionId, operationId, diagnostic, fallback)
+                persistBackgroundOutcome(repository, sessionId, operationId, diagnostic)
             } catch (failure: Throwable) {
                 if (!currentCoroutineContext().isActive) throw failure
                 runCatching { onDiagnosticPersistenceFailure(failure) }
@@ -261,19 +266,16 @@ internal class TurnSubmission(
         sessionId: String,
         operationId: String,
         diagnostic: StreamDiagnostic,
-        fallback: DebugEvent,
     ) {
         backgroundOutcomeMutex.withLock {
+            scheduledBackgroundWritesPending[sessionId to operationId]?.await()
             val existing = repository.listForSession(sessionId)
             if (existing.any { it.kind == "background_rerank" && it.stage.startsWith("prior_") && it.fields["operationId"] == operationId }) return@withLock
             val scheduled = existing.firstOrNull {
                 it.kind == "background_rerank" && it.stage == "scheduled" && it.fields["operationId"] == operationId
-            } ?: scheduledBackgroundEventsPending[sessionId to operationId]
-            val origin = scheduled ?: fallback
-            val sequence = if (scheduled != null) {
-                (existing.filter { it.turnId == origin.turnId }.maxOfOrNull { it.sequence } ?: origin.sequence) + 1
-            } else fallback.sequence
-            repository.append(origin.copy(
+            } ?: return@withLock
+            val sequence = (existing.filter { it.turnId == scheduled.turnId }.maxOfOrNull { it.sequence } ?: scheduled.sequence) + 1
+            repository.appendBackgroundOutcome(scheduled.copy(
                 id = "background-outcome-$sessionId-$operationId",
                 sequence = sequence,
                 createdAt = clock(),
@@ -281,8 +283,7 @@ internal class TurnSubmission(
                 stage = diagnostic.stage,
                 fields = diagnostic.fields,
                 metrics = diagnostic.metrics,
-            ))
-            scheduledBackgroundEventsPending.remove(sessionId to operationId)
+            ), operationId)
         }
     }
 
@@ -290,7 +291,7 @@ internal class TurnSubmission(
         private var nextTurnId = 0L
         private val backgroundOutcomeMutex = Mutex()
         private val backgroundFollowupsInFlight = mutableSetOf<Pair<String, String>>()
-        private val scheduledBackgroundEventsPending = mutableMapOf<Pair<String, String>, DebugEvent>()
+        private val scheduledBackgroundWritesPending = mutableMapOf<Pair<String, String>, CompletableDeferred<Unit>>()
         const val INTRODUCTION_INSTRUCTION =
             "Begin this new adventure with a short, immersive introduction in the scenario's language. " +
                 "Establish the player's starting situation and surroundings using the scenario and initial world state. " +
