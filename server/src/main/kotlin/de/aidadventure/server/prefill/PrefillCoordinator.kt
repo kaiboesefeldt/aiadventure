@@ -440,19 +440,16 @@ internal class SessionPrefillCoordinator(
             pruneBackgroundReservationsLocked()
             backgroundReservations[operationId]
         } ?: return null
-        val diagnostic = reservation.awaitDiagnostic()
-        mutex.withLock {
-            if (backgroundReservations[operationId] === reservation) backgroundReservations.remove(operationId)
-            pendingTurnDiagnostics.removeAll { it.fields["operationId"] == operationId }
-        }
-        return diagnostic
+        return reservation.awaitDiagnostic()
     }
 
     private fun pruneBackgroundReservationsLocked() {
         val now = clock()
-        backgroundReservations.entries.removeAll { (_, reservation) ->
+        val expiredIds = backgroundReservations.filterValues { reservation ->
             reservation.diagnosticCompletedAtMillis?.let { now - it >= BACKGROUND_RESULT_TTL_MS } == true
-        }
+        }.keys
+        expiredIds.forEach(backgroundReservations::remove)
+        pendingTurnDiagnostics.removeAll { it.fields["operationId"] in expiredIds }
     }
 
     override suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent> = beginTurn(request, "unknown")
@@ -720,7 +717,10 @@ internal class SessionPrefillCoordinator(
         }
     }
 
-    private fun drainTurnDiagnostics(): List<StreamDiagnostic> = pendingTurnDiagnostics.toList().also { pendingTurnDiagnostics.clear() }
+    private fun drainTurnDiagnostics(): List<StreamDiagnostic> {
+        pruneBackgroundReservationsLocked()
+        return pendingTurnDiagnostics.toList().also { pendingTurnDiagnostics.clear() }
+    }
 
     private suspend fun turnFinished(execution: TurnExecution, lease: Lease?): Throwable? = mutex.withLock {
         if (closed) return@withLock null

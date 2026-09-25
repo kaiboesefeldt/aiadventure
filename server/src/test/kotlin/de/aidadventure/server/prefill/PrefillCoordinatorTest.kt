@@ -54,10 +54,11 @@ class PrefillCoordinatorTest {
         assertEquals(reservation.operationId, result?.fields?.get("operationId"))
         assertEquals("Y", result?.fields?.get("classifierResponse"))
         assertEquals(8, result?.metrics?.cacheTokens)
-        assertNull(coordinator.awaitBackgroundDiagnostic(reservation.operationId))
+        assertEquals(result, coordinator.awaitBackgroundDiagnostic(reservation.operationId))
+        assertFalse(coordinator.tryBeginIdleClose())
         val nextTurn = coordinator.beginTurn(turn("look")).toList()
         assertTrue(nextTurn.filterIsInstance<TurnStreamEvent.Diagnostic>()
-            .none { it.value.kind == "background_rerank" })
+            .any { it.value.kind == "background_rerank" && it.value.fields["operationId"] == reservation.operationId })
         coordinator.close()
     }
 
@@ -73,12 +74,18 @@ class PrefillCoordinatorTest {
         assertFalse(awaiting.isCompleted)
         fake.completeWarmup()
         assertEquals("N", withTimeout(1_000) { awaiting.await() }?.fields?.get("classifierResponse"))
+        assertEquals("N", coordinator.awaitBackgroundDiagnostic(reservation.operationId)?.fields?.get("classifierResponse"))
 
         val expiring = coordinator.reserveRerank(warmup(), "second-request")!!
         assertTrue(coordinator.completeReservedRerank(expiring, candidate()))
         withTimeout(1_000) { while (expiring.diagnosticCompletedAtMillis == null) yield() }
         now += 5 * 60 * 1_000L
+        val nextTurn = coordinator.beginTurn(turn("look")).toList()
+        assertTrue(nextTurn.filterIsInstance<TurnStreamEvent.Diagnostic>()
+            .none { it.value.kind == "background_rerank" })
+        assertNull(coordinator.awaitBackgroundDiagnostic(reservation.operationId))
         assertNull(coordinator.awaitBackgroundDiagnostic(expiring.operationId))
+        assertTrue(coordinator.tryBeginIdleClose())
         coordinator.close()
     }
 

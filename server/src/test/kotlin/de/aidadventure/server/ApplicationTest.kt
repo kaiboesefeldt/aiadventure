@@ -80,8 +80,9 @@ class ApplicationTest {
         assertContains(followUpBody, "\"stage\":\"prior_completed\"")
         assertFalse(followUpBody.contains("look"))
         assertFalse(followUpBody.contains("The door opens."))
-        assertEquals(HttpStatusCode.NotFound,
-            client.get("/api/turn/background?sessionId=live-1&operationId=$operationId").status)
+        val retry = client.get("/api/turn/background?sessionId=live-1&operationId=$operationId")
+        assertEquals(HttpStatusCode.OK, retry.status)
+        assertEquals(followUpBody, retry.bodyAsText())
         assertEquals(HttpStatusCode.BadRequest,
             client.get("/api/turn/background?sessionId=live-1&operationId=invalid").status)
         assertEquals(1, registry.coordinator.turnRequests.size)
@@ -981,7 +982,7 @@ class ApplicationTest {
         }
 
         override suspend fun awaitBackgroundDiagnostic(operationId: String): StreamDiagnostic? =
-            backgroundOutcomes.remove(operationId)
+            backgroundOutcomes[operationId]
 
         override suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent> {
             turnRequests += request
