@@ -333,6 +333,7 @@ private val PlayView = FC<PlayViewProps> { props ->
             }
         }
     }
+    ReactHTML.div { className = ClassName(if (debugOpen) "play-layout play-layout--debug-open" else "play-layout")
     ReactHTML.section { className = ClassName("view-card")
         ReactHTML.button { className = ClassName("secondary-button"); disabled = pending; onClick = { props.onBack() }; +"Back to sessions" }
         ReactHTML.h2 { className = ClassName("view-title"); +displayed.title }
@@ -340,17 +341,23 @@ private val PlayView = FC<PlayViewProps> { props ->
             ReactHTML.article {
                 id = "transcript-message-$index".unsafeCast<web.dom.ElementId>()
                 className = ClassName("message")
-                asDynamic().tabIndex = -1
-                MarkdownMessage { content = message.content }
-                val matchingEvent = message.messageId?.let { messageId -> diagnosticEvents.firstOrNull {
-                    it.sessionId == liveId && it.transcriptMessageId == messageId && it.transcriptRole == message.role
-                } }
-                if (matchingEvent != null) ReactHTML.button {
-                    className = ClassName("secondary-button debug-navigation-button")
-                    ariaLabel = "Show diagnostics"
-                    onClick = { selectedDebugEventId = matchingEvent.id; debugOpen = true }
-                    +"Show diagnostics"
+                asDynamic().tabIndex = if (debugOpen) 0 else -1
+                val showDiagnosticsForMessage = {
+                    if (debugOpen) {
+                        val matchingEvent = message.messageId?.let { messageId -> diagnosticEvents.firstOrNull {
+                            it.sessionId == liveId && it.transcriptMessageId == messageId && it.transcriptRole == message.role
+                        } }
+                        if (matchingEvent != null) selectedDebugEventId = matchingEvent.id
+                    }
                 }
+                asDynamic().onDoubleClick = { showDiagnosticsForMessage() }
+                asDynamic().onKeyDown = { event: dynamic ->
+                    if (debugOpen && event.target == event.currentTarget && (event.key == "Enter" || event.key == " ")) {
+                        event.preventDefault()
+                        showDiagnosticsForMessage()
+                    }
+                }
+                MarkdownMessage { content = message.content }
             }
         } }
         error?.let { ReactHTML.p { className = ClassName("status-error"); +it } }
@@ -363,7 +370,7 @@ private val PlayView = FC<PlayViewProps> { props ->
         ReactHTML.button { className = ClassName("primary-button"); disabled = props.session.introductionPending || action.isBlank(); onClick = { submit() }; +(if (pending && props.session.introductionPending) "Introducing adventure…" else if (pending && inputReady) "Updating world…" else if (pending) "Sending…" else "Send") }
     }
     ReactHTML.button {
-        className = ClassName("debug-open-button")
+        className = ClassName(if (debugOpen) "debug-open-button debug-open-button--hidden" else "debug-open-button")
         ariaLabel = "Open debug panel"
         asDynamic()["aria-expanded"] = debugOpen.toString()
         onClick = { debugOpen = true; diagnosticsRevision++ }
@@ -375,13 +382,9 @@ private val PlayView = FC<PlayViewProps> { props ->
         events = diagnosticEvents.filter { it.sessionId == liveId }
         onClose = ::closeDebugPanel
         onShowTranscript = { index ->
-            debugOpen = false
             window.setTimeout({
                 val target = document.getElementById("transcript-message-$index".unsafeCast<web.dom.ElementId>())
-                if (target != null) {
-                    target.scrollIntoView()
-                    target.focus()
-                }
+                if (target != null) target.scrollIntoView()
             }, 0)
         }
         onClear = {
@@ -391,6 +394,7 @@ private val PlayView = FC<PlayViewProps> { props ->
                     .onFailure { error = clientMessage(it) }
             }
         }
+    }
     }
 }
 

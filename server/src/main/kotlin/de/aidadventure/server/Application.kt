@@ -242,9 +242,9 @@ fun Application.adventureModule(
                         fields = mapOf(
                             "location" to resolved.request.worldState.location,
                             "narrativeFocus" to resolved.request.worldState.narrativeFocus,
-                            "flags" to request.flags.entries.joinToString(", ") { "${it.key}=${it.value}" },
                             "signals" to request.signals.keys.joinToString(", "),
-                        ) + resolved.request.contextCompression.diagnosticFields(),
+                        ) + request.flags.mapKeys { (name, _) -> "flag:${name}" }.mapValues { it.value.toString() } +
+                            resolved.request.contextCompression.diagnosticFields(),
                     ))
                     val stream = coordinator
                         .beginTurn(resolved.request, call.callId ?: "unknown")
@@ -294,7 +294,8 @@ fun Application.adventureModule(
                         val completedFlags = applyRuntimeSignals(request.flags, request.signals, emittedSignals)
                         diagnostic(StreamDiagnostic(
                             kind = "flags", stage = "applied", transcriptRole = "player",
-                            fields = completedFlags.mapValues { it.value.toString() } +
+                            fields = completedFlags.filter { (name, value) -> request.flags[name] != value }
+                                .mapKeys { (name, _) -> "flag:${name}" }.mapValues { it.value.toString() } +
                                 mapOf(
                                     "emittedSignals" to emittedSignals.joinToString(", "),
                                     "appliedAssignments" to emittedSignals.flatMap { request.signals[it].orEmpty() }
