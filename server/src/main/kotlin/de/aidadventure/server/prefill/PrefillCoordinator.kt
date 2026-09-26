@@ -138,13 +138,21 @@ internal interface PrefillGateway {
     suspend fun prepare(request: TurnRequest, slot: LlamaCppSlot): TurnRequest = request
     suspend fun prepareWarmup(request: WarmupRequest, slot: LlamaCppSlot): WarmupRequest = request
     suspend fun maintain(request: WarmupRequest, slot: LlamaCppSlot): ContextCompression = request.contextCompression
+    suspend fun maintain(
+        request: WarmupRequest,
+        slot: LlamaCppSlot,
+        onCall: (StreamDiagnostic) -> Unit,
+    ): ContextCompression = maintain(request, slot)
     fun acquireIdleSlot(port: Int, excludedSlots: Set<LlamaCppSlot>): LlamaCppSlot
     fun releaseSlot(port: Int, slot: LlamaCppSlot)
     suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics
     suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics =
         error("Warmup is not supported by this gateway.")
+    suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot, onCall: (StreamDiagnostic) -> Unit): CacheMetrics = warmup(request, slot)
     suspend fun classifyFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String =
         error("Fragment classification is not supported by this gateway.")
+    suspend fun classifyFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot, onCall: (StreamDiagnostic) -> Unit): String =
+        classifyFragment(request, slot)
     suspend fun resolveWorldState(
         primaryRequest: TurnRequest,
         gameMasterResponse: String,
@@ -152,6 +160,13 @@ internal interface PrefillGateway {
         slot: LlamaCppSlot,
     ): WorldState? =
         error("World-State resolution is not supported by this gateway.")
+    suspend fun resolveWorldState(
+        primaryRequest: TurnRequest,
+        gameMasterResponse: String,
+        request: WorldStateResolutionRequest,
+        slot: LlamaCppSlot,
+        onCall: (StreamDiagnostic) -> Unit,
+    ): WorldState? = resolveWorldState(primaryRequest, gameMasterResponse, request, slot)
     fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent>
 }
 
@@ -161,6 +176,11 @@ internal class LlamaCppPrefillGateway(
     override suspend fun prepare(request: TurnRequest, slot: LlamaCppSlot) = gateway.prepare(request, slot)
     override suspend fun prepareWarmup(request: WarmupRequest, slot: LlamaCppSlot) = gateway.prepareWarmup(request, slot)
     override suspend fun maintain(request: WarmupRequest, slot: LlamaCppSlot) = gateway.maintain(request, slot)
+    override suspend fun maintain(
+        request: WarmupRequest,
+        slot: LlamaCppSlot,
+        onCall: (StreamDiagnostic) -> Unit,
+    ) = gateway.maintain(request, slot, onCall)
 
     override fun acquireIdleSlot(port: Int, excludedSlots: Set<LlamaCppSlot>): LlamaCppSlot =
         gateway.acquireIdleSlot(port, excludedSlots)
@@ -170,9 +190,13 @@ internal class LlamaCppPrefillGateway(
     override suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics = gateway.prefill(request, slot)
 
     override suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics = gateway.warmup(request, slot)
+    override suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot, onCall: (StreamDiagnostic) -> Unit): CacheMetrics =
+        gateway.warmup(request, slot, onCall)
 
     override suspend fun classifyFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String =
         gateway.classifyFragment(request, slot)
+    override suspend fun classifyFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot, onCall: (StreamDiagnostic) -> Unit): String =
+        gateway.classifyFragment(request, slot, onCall)
 
     override suspend fun resolveWorldState(
         primaryRequest: TurnRequest,
@@ -180,6 +204,13 @@ internal class LlamaCppPrefillGateway(
         request: WorldStateResolutionRequest,
         slot: LlamaCppSlot,
     ): WorldState? = gateway.resolveWorldState(primaryRequest, gameMasterResponse, request, slot)
+    override suspend fun resolveWorldState(
+        primaryRequest: TurnRequest,
+        gameMasterResponse: String,
+        request: WorldStateResolutionRequest,
+        slot: LlamaCppSlot,
+        onCall: (StreamDiagnostic) -> Unit,
+    ): WorldState? = gateway.resolveWorldState(primaryRequest, gameMasterResponse, request, slot, onCall)
 
     override fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> = gateway.stream(request, slot)
 }
@@ -328,7 +359,7 @@ internal class SessionPrefillCoordinator(
             state = State.Prefilling(current.lease, worldStateOperation, resolvedTurn = null, pending = null)
             worldStateOperation.job = scope.launch(start = CoroutineStart.LAZY) {
                 val accepted = try {
-                    val proposed = gateway.resolveWorldState(primaryRequest, gameMasterResponse, resolution, current.lease.slot)
+                    val proposed = gateway.resolveWorldState(primaryRequest, gameMasterResponse, resolution, current.lease.slot, onDiagnostic)
                     onDiagnostic(StreamDiagnostic(
                         kind = "world_state", stage = if (proposed == null) "unchanged" else "accepted",
                         transcriptRole = "game-master",
@@ -351,7 +382,7 @@ internal class SessionPrefillCoordinator(
                 val canonicalWarmup = request.copy(worldState = accepted)
                 worldStateOperation.acceptedState = accepted
                 try {
-                    val metrics = gateway.warmup(canonicalWarmup, current.lease.slot)
+                    val metrics = gateway.warmup(canonicalWarmup, current.lease.slot, onDiagnostic)
                     onDiagnostic(StreamDiagnostic("warmup", "completed", transcriptRole = "game-master",
                         metrics = DiagnosticMetrics(cacheTokens = metrics.cachedTokens, evaluatedTokens = metrics.evaluatedTokens)))
                 } catch (failure: Throwable) {
@@ -588,6 +619,7 @@ internal class SessionPrefillCoordinator(
                 val failure = try {
                     val candidate = operation.reservation.awaitCandidate()
                     val prepared = prepareWarmup(request, lease.slot)
+                    val callDiagnostics = mutableListOf<StreamDiagnostic>()
                     val response = candidate?.let {
                         val relevanceRequest = FragmentRelevanceRequest(
                             sessionId = request.sessionId,
@@ -600,7 +632,7 @@ internal class SessionPrefillCoordinator(
                             contextCompression = prepared.contextCompression,
                             locations = request.locations,
                         )
-                        gateway.classifyFragment(relevanceRequest, lease.slot)
+                        gateway.classifyFragment(relevanceRequest, lease.slot, callDiagnostics::add)
                     }
                     val decision = response?.let(::parseFragmentDecision)
                     val accepted = candidate != null && decision == true
@@ -611,7 +643,7 @@ internal class SessionPrefillCoordinator(
                             ?.let { request.history + ChatEntry("runtime-fragment", it.fragment) }
                             ?: request.history,
                     )
-                    val metrics = gateway.warmup(canonicalWarmup, lease.slot)
+                    val metrics = gateway.warmup(canonicalWarmup, lease.slot, callDiagnostics::add)
                     operation.diagnostic = StreamDiagnostic(
                         kind = "background_rerank", stage = "prior_completed", transcriptRole = "player",
                         fields = mapOf(
@@ -626,7 +658,12 @@ internal class SessionPrefillCoordinator(
                             "fragment" to operation.resolvedFragment?.fragment.orEmpty(),
                             "warmup" to "completed",
                         ) + (response?.takeIf { it == "Y" || it == "N" }
-                            ?.let { mapOf("classifierResponse" to it) } ?: emptyMap()),
+                            ?.let { mapOf("classifierResponse" to it) } ?: emptyMap()) +
+                            callDiagnostics.fold(emptyMap()) { fields, diagnostic ->
+                                val prefix = if (diagnostic.stage == "fragment_relevance") "classifier" else "warmup"
+                                fields + diagnostic.fields.mapKeys { (key, _) -> "${prefix}_${key}" } +
+                                    diagnostic.metrics.toDebugFields(prefix)
+                            },
                         metrics = DiagnosticMetrics(cacheTokens = metrics.cachedTokens, evaluatedTokens = metrics.evaluatedTokens),
                     )
                     null
@@ -857,13 +894,15 @@ internal class SessionPrefillCoordinator(
                         val warmup = WarmupRequest(request.sessionId, request.modelId, request.llamaCppPort,
                             request.scenarioMarkdown, request.history + listOf(ChatEntry("player", request.playerAction), ChatEntry("game-master", generated.toString())),
                             request.runtimeFragments, request.worldState, request.contextCompression, request.locations, request.flags, request.signals)
+                        val maintenanceDiagnostics = mutableListOf<StreamDiagnostic>()
                         val artifact = try {
-                            gateway.maintain(warmup, lease.slot)
+                            gateway.maintain(warmup, lease.slot, maintenanceDiagnostics::add)
                         } catch (cancelled: CancellationException) { throw cancelled }
                         catch (failure: Exception) {
                             onWarmupFailure(WarmupFailure(requestId, "context_recap", failure.javaClass.simpleName))
                             request.contextCompression
                         }
+                        maintenanceDiagnostics.forEach { output.send(TurnStreamEvent.Diagnostic(it)) }
                         output.send(completed.copy(contextCompression = artifact))
                     }
                 } catch (failure: Throwable) {
@@ -1011,5 +1050,21 @@ internal class SessionPrefillCoordinator(
     private companion object {
         const val BACKGROUND_RESULT_TTL_MS = 5 * 60 * 1_000L
         val logger = LoggerFactory.getLogger(SessionPrefillCoordinator::class.java)
+    }
+}
+
+private fun DiagnosticMetrics?.toDebugFields(prefix: String): Map<String, String> {
+    val metrics = this ?: return emptyMap()
+    return buildMap {
+        metrics.promptTokens?.let { put("${prefix}_promptTokens", it.toString()) }
+        metrics.contextTokens?.let { put("${prefix}_contextTokens", it.toString()) }
+        metrics.predictedTokens?.let { put("${prefix}_predictedTokens", it.toString()) }
+        metrics.cacheTokens?.let { put("${prefix}_cacheTokens", it.toString()) }
+        metrics.evaluatedTokens?.let { put("${prefix}_evaluatedTokens", it.toString()) }
+        metrics.promptDurationMs?.let { put("${prefix}_promptDurationMs", it.toString()) }
+        metrics.predictedDurationMs?.let { put("${prefix}_predictedDurationMs", it.toString()) }
+        metrics.promptTokensPerSecond?.let { put("${prefix}_promptTokensPerSecond", it.toString()) }
+        metrics.predictedTokensPerSecond?.let { put("${prefix}_predictedTokensPerSecond", it.toString()) }
+        metrics.totalDurationMs?.let { put("${prefix}_totalDurationMs", it.toString()) }
     }
 }

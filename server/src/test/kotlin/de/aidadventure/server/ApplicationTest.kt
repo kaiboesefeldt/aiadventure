@@ -173,7 +173,7 @@ class ApplicationTest {
         )
         assertEquals("Quay", diagnostics.first().getValue("fields").jsonObject.getValue("location").jsonPrimitive.content)
         assertEquals("42", diagnostics[2].getValue("metrics").jsonObject.getValue("totalDurationMs").jsonPrimitive.content)
-        assertEquals("true", diagnostics[3].getValue("fields").jsonObject.getValue("has-map").jsonPrimitive.content)
+        assertEquals("true", diagnostics[3].getValue("fields").jsonObject.getValue("flag:has-map").jsonPrimitive.content)
         assertEquals("Harbour", diagnostics[4].getValue("fields").jsonObject.getValue("location").jsonPrimitive.content)
         assertFalse(diagnostics.joinToString().contains("SECRET_PLAYER_ACTION"))
         assertFalse(diagnostics.joinToString().contains("SECRET_GAME_MASTER_OUTPUT"))

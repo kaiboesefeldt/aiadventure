@@ -98,41 +98,78 @@ internal val DebugPanel = FC<DebugPanelProps> { props ->
             }
             if (ordered.isEmpty()) ReactHTML.p { className = ClassName("empty-state"); +"No turn diagnostics yet." }
             val visibleMessages = props.session.messages.filter(::isVisibleTranscriptMessage)
-            ordered.forEach { event ->
+            val turnParity = ordered.map { it.turnId }.distinct().withIndex().associate { it.value to (it.index % 2) }
+            val backgroundOutcomes = ordered.filter { it.kind == "background_rerank" && it.stage.startsWith("prior_") }
+                .associateBy { it.fields["operationId"] }
+            val scheduledOperationIds = ordered.filter { it.kind == "background_rerank" && it.stage == "scheduled" }
+                .mapNotNull { it.fields["operationId"] }.toSet()
+            ordered.filterNot {
+                it.kind == "background_rerank" && it.stage.startsWith("prior_") && it.fields["operationId"] in scheduledOperationIds
+            }.forEach { storedEvent ->
+                val event = if (storedEvent.kind == "background_rerank" && storedEvent.stage == "scheduled") {
+                    backgroundOutcomes[storedEvent.fields["operationId"]]?.let { outcome ->
+                        storedEvent.copy(stage = outcome.stage, fields = storedEvent.fields + outcome.fields, metrics = outcome.metrics ?: storedEvent.metrics)
+                    } ?: storedEvent
+                } else storedEvent
                 val messageId = event.transcriptMessageId
                 val index = if (messageId == null) -1 else visibleMessages.indexOfFirst { it.messageId == messageId && it.role == event.transcriptRole }
-                renderDebugEvent(event, index.takeIf { it >= 0 }, props.onShowTranscript)
+                val turnIndex = if (index >= 0) index else ordered.asSequence().filter { it.turnId == event.turnId }
+                    .mapNotNull { sameTurn ->
+                        val sameTurnId = sameTurn.transcriptMessageId ?: return@mapNotNull null
+                        visibleMessages.indexOfFirst { it.messageId == sameTurnId && it.role == sameTurn.transcriptRole }.takeIf { it >= 0 }
+                    }.firstOrNull()
+                renderDebugEvent(event, turnIndex, turnParity[event.turnId] ?: 0, props.onShowTranscript)
             }
         }
     }
 }
 
-private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex: Int?, onShowTranscript: (Int) -> Unit) {
+private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex: Int?, turnParity: Int, onShowTranscript: (Int) -> Unit) {
     ReactHTML.article {
         key = event.id
         id = "debug-event-${event.id}".unsafeCast<web.dom.ElementId>()
-        className = ClassName("debug-event")
-        ReactHTML.div {
-            className = ClassName("debug-event-topline")
-            ReactHTML.h4 { +humanLabel(event.kind) }
-            ReactHTML.span { className = ClassName("debug-stage"); +humanLabel(event.stage) }
-        }
-        if (transcriptIndex != null) ReactHTML.button {
-            className = ClassName("secondary-button debug-navigation-button")
-            ariaLabel = "Show transcript message"
-            onClick = { onShowTranscript(transcriptIndex) }
-            +"Show transcript message"
+        className = ClassName("debug-event debug-event-turn-$turnParity")
+        if (transcriptIndex != null) {
+            asDynamic().tabIndex = 0
+            asDynamic().onDoubleClick = { onShowTranscript(transcriptIndex) }
+            asDynamic().onKeyDown = { keyEvent: dynamic ->
+                if (keyEvent.target == keyEvent.currentTarget && (keyEvent.key == "Enter" || keyEvent.key == " ")) {
+                    keyEvent.preventDefault()
+                    onShowTranscript(transcriptIndex)
+                }
+            }
         }
         ReactHTML.details {
-            ReactHTML.summary { +"Details" }
-            val safeFields = event.fields.filterKeys { key ->
-                key.lowercase().filter { it.isLetter() } !in setOf(
-                    "playeraction", "gamemasteroutput", "generated", "generatedtext", "response", "responsetext", "prompt", "history",
-                )
+            asDynamic().open = true
+            ReactHTML.summary {
+                ReactHTML.div {
+                    className = ClassName("debug-event-topline")
+                    ReactHTML.h4 { +humanLabel(event.kind) }
+                    ReactHTML.span { className = ClassName("debug-stage"); +humanLabel(event.stage) }
+                }
             }
-            if (safeFields.isNotEmpty() || event.metrics != null) ReactHTML.dl {
+        val prompts = event.fields.filterKeys { it == "prompt" || it.endsWith("_prompt") }
+        val outputs = event.fields.filterKeys { it == "output" || it.endsWith("_output") }
+        val flags = event.fields.filterKeys { key ->
+            key !in prompts.keys && key !in outputs.keys && key.lowercase().filter { it.isLetter() } !in setOf(
+                "playeraction", "gamemasteroutput", "generated", "generatedtext", "response", "responsetext", "history",
+            )
+        }
+        prompts.forEach { (key, prompt) -> ReactHTML.section {
+            ReactHTML.h5 { +(if (key == "prompt") "Prompt" else "${humanLabel(key.removeSuffix("_prompt"))} prompt") }
+            ReactHTML.pre { className = ClassName("debug-prompt"); +prompt }
+        } }
+        outputs.forEach { (key, output) -> ReactHTML.section {
+            ReactHTML.h5 { +(if (key == "output") "LLM output" else "${humanLabel(key.removeSuffix("_output"))} output") }
+            ReactHTML.pre { className = ClassName("debug-prompt"); +output }
+        } }
+            if (flags.isNotEmpty() || event.metrics != null) ReactHTML.dl {
                 className = ClassName("debug-fields")
-                safeFields.forEach { (key, value) -> field(humanLabel(key), if (key == "source") humanLabel(value) else value) }
+                flags.forEach { (key, value) ->
+                    if (key == "flags") value.split(", ").filter(String::isNotBlank).forEach { line -> field("Flag", line) }
+                    else if (key.startsWith("flag:")) field(key.removePrefix("flag:"), value)
+                    else field(humanLabel(key), if (key == "source") humanLabel(value) else value)
+                }
                 event.metrics?.let { renderDiagnosticMetrics(it) }
             }
         }

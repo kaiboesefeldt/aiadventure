@@ -205,7 +205,9 @@ class LlamaCppGateway private constructor(
         }
     }
 
-    suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics = runInterruptible {
+    suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics = warmup(request, slot) {}
+
+    suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot, onCall: (StreamDiagnostic) -> Unit): CacheMetrics = runInterruptible {
         val port = requirePort(request.llamaCppPort)
         val prompt = applyTemplate(request.sessionId, "warmup", request.llamaCppPort, promptFactory.buildWarmup(request))
         guard(port, slot, prompt, 0)
@@ -215,6 +217,8 @@ class LlamaCppGateway private constructor(
             CompletionRequest(prompt, slot.id, predictedTokens = 0, stream = false),
         )
         CacheMetrics(response.tokensCached, response.tokensEvaluated).also { metrics ->
+            onCall(StreamDiagnostic("llm_call", "warmup", fields = mapOf("prompt" to prompt, "output" to response.content.orEmpty()),
+                metrics = diagnosticMetrics(response)))
             logDiagnostic("completed", port, slot, prompt, metrics)
             traceCompletion("warmup", request.sessionId, metrics)
         }
@@ -225,6 +229,14 @@ class LlamaCppGateway private constructor(
         gameMasterResponse: String,
         request: WorldStateResolutionRequest,
         slot: LlamaCppSlot,
+    ): WorldState? = resolveWorldState(primaryRequest, gameMasterResponse, request, slot) {}
+
+    suspend fun resolveWorldState(
+        primaryRequest: TurnRequest,
+        gameMasterResponse: String,
+        request: WorldStateResolutionRequest,
+        slot: LlamaCppSlot,
+        onCall: (StreamDiagnostic) -> Unit,
     ): WorldState? = runInterruptible {
         val completedTurn = promptFactory.build(primaryRequest) + AiMessage.from(gameMasterResponse)
         val result = completeStructured(
@@ -235,6 +247,7 @@ class LlamaCppGateway private constructor(
             primaryRequest.llamaCppPort,
             "combined",
             predictedTokens = 256,
+            onCall = onCall,
         )
         WorldStateAnalysis.apply(request, result)
     }
@@ -247,6 +260,7 @@ class LlamaCppGateway private constructor(
         port: Int,
         phase: String,
         predictedTokens: Int = 64,
+        onCall: (StreamDiagnostic) -> Unit = {},
     ): String? {
         val prompt = applyTemplate(request.sessionId, "world_state_$phase", port, messages)
         guard(port, slot, prompt, predictedTokens)
@@ -262,6 +276,8 @@ class LlamaCppGateway private constructor(
         )
         traceCompletion("world_state_$phase", request.sessionId, CacheMetrics(response.tokensCached, response.tokensEvaluated))
         val content = response.content
+        onCall(StreamDiagnostic("llm_call", "world_state_$phase", fields = mapOf("prompt" to prompt, "output" to content.orEmpty()),
+            metrics = diagnosticMetrics(response)))
         if (traceLogger.isTraceEnabled) {
             logger.trace(
                 "operation=world_state phase={} requestId={} output={}",
@@ -274,7 +290,10 @@ class LlamaCppGateway private constructor(
         return content
     }
 
-    suspend fun classifyFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String = runInterruptible {
+    suspend fun classifyFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String =
+        classifyFragment(request, slot) {}
+
+    suspend fun classifyFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot, onCall: (StreamDiagnostic) -> Unit): String = runInterruptible {
         val port = requirePort(request.llamaCppPort)
         val prompt = applyTemplate(request.sessionId, "classify_fragment", port, promptFactory.buildRelevance(request))
         guard(port, slot, prompt, 1)
@@ -291,6 +310,8 @@ class LlamaCppGateway private constructor(
         )
         requireNotNull(response.content) { "llama.cpp fragment relevance response did not include content." }.also { content ->
             val metrics = CacheMetrics(response.tokensCached, response.tokensEvaluated)
+            onCall(StreamDiagnostic("llm_call", "fragment_relevance", fields = mapOf("prompt" to prompt, "output" to content),
+                metrics = diagnosticMetrics(response)))
             traceCompletion("classify_fragment", request.sessionId, metrics)
             traceFinalResponse("classify_fragment", request.sessionId, content)
         }
@@ -353,7 +374,7 @@ class LlamaCppGateway private constructor(
                         responseText?.toString()?.let { traceFinalResponse("turn", request.sessionId, it) }
                         send(TurnStreamEvent.Diagnostic(StreamDiagnostic(
                             kind = "llama_completion", stage = "completed", transcriptRole = "game-master",
-                            fields = mapOf("operation" to "turn"),
+                            fields = mapOf("operation" to "turn", "prompt" to prompt),
                             metrics = DiagnosticMetrics(
                                 promptTokens = chunk.timings?.promptTokens ?: budget.promptTokens,
                                 contextTokens = budget.contextTokens,
@@ -541,7 +562,13 @@ class LlamaCppGateway private constructor(
     }
 
     /** Optional post-turn work: runs on the caller's retained lease, never acquires or erases one. */
-    suspend fun maintain(request: WarmupRequest, slot: LlamaCppSlot): ContextCompression = runInterruptible {
+    suspend fun maintain(request: WarmupRequest, slot: LlamaCppSlot): ContextCompression = maintain(request, slot) {}
+
+    suspend fun maintain(
+        request: WarmupRequest,
+        slot: LlamaCppSlot,
+        onCall: (StreamDiagnostic) -> Unit,
+    ): ContextCompression = runInterruptible {
         val context = request.contextCompression
         if (context.pending != null || request.history.lastOrNull()?.role !in listOf("game-master", "assistant", "ai")) return@runInterruptible context
         val port = request.llamaCppPort
@@ -559,6 +586,13 @@ class LlamaCppGateway private constructor(
         if (countTokens(port, prompt).toLong() + RECAP_OUTPUT_TOKENS + CONTEXT_MARGIN > capacity) return@runInterruptible context
         val started = System.nanoTime()
         val result = postCompletion(port, CompletionRequest(prompt, slot.id, predictedTokens = RECAP_OUTPUT_TOKENS, stream = false))
+        val durationMs = (System.nanoTime() - started) / 1_000_000
+        onCall(StreamDiagnostic(
+            kind = "llm_call",
+            stage = "context_recap",
+            fields = mapOf("prompt" to prompt, "output" to result.content.orEmpty()),
+            metrics = diagnosticMetrics(result).copy(totalDurationMs = durationMs),
+        ))
         val recap = result.content?.trim().orEmpty()
         if (result.truncated || result.stoppedLimit || recap.isBlank() || recap.length > ContextEpochs.MAX_RECAP_CHARS) return@runInterruptible context
         val checkpoint = ContextEpochs.checkpoint(request, recap)
@@ -569,7 +603,7 @@ class LlamaCppGateway private constructor(
         if (reducedTokens >= originalTokens || reducedTokens.toLong() + nextCycleReserve > capacity) return@runInterruptible context
         traceCompletion("context_recap", request.sessionId, CacheMetrics(result.tokensCached, result.tokensEvaluated))
         traceFinalResponse("context_recap", request.sessionId, recap)
-        logger.debug("operation=context_recap durationMs={} sourceTokens={} tokensCached={} tokensEvaluated={}", (System.nanoTime() - started) / 1_000_000, originalTokens, result.tokensCached, result.tokensEvaluated)
+        logger.debug("operation=context_recap durationMs={} sourceTokens={} tokensCached={} tokensEvaluated={}", durationMs, originalTokens, result.tokensCached, result.tokensEvaluated)
         context.copy(pending = checkpoint)
     }
 
@@ -601,6 +635,17 @@ class LlamaCppGateway private constructor(
         return json.decodeFromString<ApplyTemplateResponse>(response.body()).prompt
             .also { check(it.isNotBlank()) { "llama.cpp template application returned a blank prompt." } }
     }
+
+    private fun diagnosticMetrics(response: NativeCompletionResponse) = DiagnosticMetrics(
+        cacheTokens = response.tokensCached,
+        evaluatedTokens = response.tokensEvaluated,
+        promptTokens = response.timings?.promptTokens,
+        predictedTokens = response.timings?.predictedTokens,
+        promptDurationMs = response.timings?.promptDurationMs,
+        predictedDurationMs = response.timings?.predictedDurationMs,
+        promptTokensPerSecond = response.timings?.promptTokensPerSecond,
+        predictedTokensPerSecond = response.timings?.predictedTokensPerSecond,
+    )
 
     private fun postCompletion(port: Int?, payload: CompletionRequest): NativeCompletionResponse {
         val response = httpClient.send(
@@ -723,6 +768,7 @@ class LlamaCppGateway private constructor(
         @SerialName("stopped_limit") val stoppedLimit: Boolean = false,
         @SerialName("tokens_cached") val tokensCached: Int? = null,
         @SerialName("tokens_evaluated") val tokensEvaluated: Int? = null,
+        val timings: NativeTimings? = null,
     )
 
     @Serializable

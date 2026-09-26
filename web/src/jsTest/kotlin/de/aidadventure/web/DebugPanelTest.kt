@@ -38,6 +38,8 @@ class DebugPanelTest {
             assertEquals(2, cards.length)
             assertEquals(true, cards.item(0)?.textContent?.contains("Old turn"))
             assertEquals(true, cards.item(1)?.textContent?.contains("New turn"))
+            assertEquals(true, cards.item(0)?.getAttribute("class")?.contains("debug-event-turn-0"))
+            assertEquals(true, cards.item(1)?.getAttribute("class")?.contains("debug-event-turn-1"))
         } finally {
             flushSync { root.unmount() }
             container.remove()

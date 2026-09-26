@@ -114,14 +114,17 @@ class AdventureAppNavigationTest {
             container.clickButtonNamed(session.title)
             nextBrowserTick()
             assertNull(container.querySelector("#transcript-message-1"))
-            container.click("#transcript-message-0 button[aria-label='Show diagnostics']")
+            container.click("button[aria-label='Open debug panel']")
+            nextBrowserTick()
+            container.doubleClick("#transcript-message-0")
             nextBrowserTick()
             nextBrowserTick()
             assertEquals("debug-event-prior-intro", window.asDynamic().__lastScrolledId)
-            assertNull(container.querySelector("#debug-event-stale-intro button[aria-label='Show transcript message']"))
-            container.click("#debug-event-prior-intro button[aria-label='Show transcript message']")
+            assertNull(container.querySelector("#debug-event-stale-intro button"))
+            container.doubleClick("#debug-event-prior-intro")
             nextBrowserTick()
             assertEquals("transcript-message-0", window.asDynamic().__lastScrolledId)
+            assertNotNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
         } finally {
             elementPrototype.scrollIntoView = oldScrollIntoView
             container.remove()
@@ -157,13 +160,14 @@ class AdventureAppNavigationTest {
             nextBrowserTick()
             container.clickButtonNamed(session.title)
             nextBrowserTick()
-            container.click("#transcript-message-0 button[aria-label='Show diagnostics']")
+            container.click("button[aria-label='Open debug panel']")
+            nextBrowserTick()
+            container.doubleClick("#transcript-message-0")
             nextBrowserTick()
             nextBrowserTick()
             assertEquals("debug-event-retry", window.asDynamic().__lastScrolledId)
             assertNotNull(container.querySelector("#debug-event-retry"))
-            assertNull(container.querySelector("#debug-event-failed button[aria-label='Show transcript message']"))
-            assertNotNull(container.querySelector("#debug-event-retry button[aria-label='Show transcript message']"))
+            assertNull(container.querySelector("#debug-event-failed button"))
         } finally {
             elementPrototype.scrollIntoView = oldScrollIntoView
             container.remove()
@@ -203,17 +207,19 @@ class AdventureAppNavigationTest {
             nextBrowserTick()
             assertNull(container.querySelector("#transcript-message-3"))
             assertNotNull(container.querySelector("#transcript-message-1"))
-            container.click("#transcript-message-1 button[aria-label='Show diagnostics']")
+            container.click("button[aria-label='Open debug panel']")
+            nextBrowserTick()
+            container.doubleClick("#transcript-message-1")
             nextBrowserTick()
             assertNotNull(container.querySelector("#debug-event-player-event"))
             nextBrowserTick()
             assertEquals("debug-event-player-event", window.asDynamic().__lastScrolledId)
             assertNotNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
-            container.click("#debug-event-player-event button[aria-label='Show transcript message']")
+            container.doubleClick("#debug-event-player-event")
             nextBrowserTick()
             assertEquals("transcript-message-1", window.asDynamic().__lastScrolledId)
-            assertNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
-            assertNotNull(container.querySelector("#transcript-message-0 button[aria-label='Show diagnostics']"))
+            assertNotNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
+            assertNull(container.querySelector(".debug-navigation-button"))
         } finally {
             elementPrototype.scrollIntoView = oldScrollIntoView
             container.remove()
@@ -798,6 +804,12 @@ class AdventureAppNavigationTest {
         querySelector(selector)
             ?.asDynamic()
             ?.dispatchEvent(js("new MouseEvent('click', { bubbles: true })"))
+    }
+
+    private fun HTMLElement.doubleClick(selector: String) {
+        querySelector(selector)
+            ?.asDynamic()
+            ?.dispatchEvent(js("new MouseEvent('dblclick', { bubbles: true })"))
     }
 
     private fun HTMLElement.clickButtonNamed(label: String) {
