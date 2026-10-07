@@ -270,6 +270,16 @@ fun Application.adventureModule(
                                         "emittedSignals" to event.emittedSignals.joinToString(", "),
                                     ),
                                 ))
+                                if (event.emittedSignals.isNotEmpty()) {
+                                    val signalFlags = applyRuntimeSignals(request.flags, request.signals, event.emittedSignals)
+                                    diagnostic(StreamDiagnostic(
+                                        kind = "signal", stage = "emitted", transcriptRole = "player",
+                                        fields = mapOf("emittedSignals" to event.emittedSignals.joinToString(", ")) +
+                                            signalFlags.filter { (name, value) -> request.flags[name] != value }
+                                                .mapKeys { (name, _) -> "flag:${name}" }
+                                                .mapValues { (_, value) -> value.toString() },
+                                    ))
+                                }
                                 if (event.fragment.isNotBlank()) sse("fragment", eventJson.encodeToString(StreamFragment(event.fragment)))
                             }
                             is TurnStreamEvent.Diagnostic -> diagnostic(event.value)
