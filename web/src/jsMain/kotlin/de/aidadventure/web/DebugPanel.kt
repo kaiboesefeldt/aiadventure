@@ -55,10 +55,14 @@ internal val DebugPanel = FC<DebugPanelProps> { props ->
             ReactHTML.div {
                 className = ClassName("debug-header-tools")
                 listOf("flags" to "⚑", "frontmatter" to "{}", "prompt" to "¶").forEach { (tool, icon) ->
+                    val popoverId = "debug-header-popover-$tool"
+                    val label = when (tool) { "flags" -> "Current flags"; "frontmatter" -> "Frontmatter"; else -> "System prompt" }
                     ReactHTML.button {
                         className = ClassName("debug-icon-button")
-                        title = when (tool) { "flags" -> "Current flags"; "frontmatter" -> "Frontmatter"; else -> "System prompt" }
-                        ariaLabel = title
+                        title = label
+                        ariaLabel = label
+                        ariaControls = popoverId.unsafeCast<web.dom.ElementId>()
+                        ariaExpanded = headerPopover == tool
                         onClick = { headerPopover = if (headerPopover == tool) "" else tool }
                         +icon
                     }
@@ -71,18 +75,24 @@ internal val DebugPanel = FC<DebugPanelProps> { props ->
                 +"×"
             }
         }
-        if (headerPopover.isNotEmpty()) ReactHTML.div {
-            className = ClassName("debug-popover debug-header-popover")
-            if (headerPopover == "flags") {
-                ReactHTML.h3 { +"Current flags" }
-                renderFlagValues(props.session.flags)
-            } else if (headerPopover == "frontmatter") {
-                ReactHTML.h3 { +"Frontmatter" }
-                val yaml = frontmatterYaml(props.scenario.markdown)
-                if (yaml == null) ReactHTML.p { +"No frontmatter" } else renderYamlNode(yaml)
-            } else {
-                ReactHTML.h3 { +"System prompt" }
-                ReactHTML.pre { className = ClassName("debug-prompt"); +ScenarioFrontmatter.parse(props.scenario.markdown).promptMarkdown }
+        listOf("flags", "frontmatter", "prompt").forEach { tool ->
+            ReactHTML.div {
+                id = "debug-header-popover-$tool".unsafeCast<web.dom.ElementId>()
+                className = ClassName("debug-popover debug-header-popover")
+                asDynamic().hidden = headerPopover != tool
+                if (headerPopover == tool) {
+                    if (tool == "flags") {
+                        ReactHTML.h3 { +"Current flags" }
+                        renderFlagValues(props.session.flags)
+                    } else if (tool == "frontmatter") {
+                        ReactHTML.h3 { +"Frontmatter" }
+                        val yaml = frontmatterYaml(props.scenario.markdown)
+                        if (yaml == null) ReactHTML.p { +"No frontmatter" } else renderYamlNode(yaml)
+                    } else {
+                        ReactHTML.h3 { +"System prompt" }
+                        ReactHTML.pre { className = ClassName("debug-prompt"); +ScenarioFrontmatter.parse(props.scenario.markdown).promptMarkdown }
+                    }
+                }
             }
         }
         ReactHTML.div {

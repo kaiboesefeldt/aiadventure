@@ -31,7 +31,21 @@ class DebugPanelTest {
                 onClose = {}
                 onClear = {}
             }) }
-            assertEquals(3, container.querySelectorAll(".debug-panel-header button[title]").length)
+            val headerButtons = container.querySelectorAll(".debug-panel-header button[title]")
+            assertEquals(3, headerButtons.length)
+            repeat(headerButtons.length) { index ->
+                val button = assertNotNull(headerButtons.item(index))
+                val controlledId = assertNotNull(button.getAttribute("aria-controls"))
+                val controlledPopover = assertNotNull(document.getElementById(controlledId.unsafeCast<web.dom.ElementId>()))
+                assertEquals("false", button.getAttribute("aria-expanded"))
+                assertEquals(true, controlledPopover.asDynamic().hidden as Boolean)
+            }
+            val flagsButton = assertNotNull(container.querySelector("button[title='Current flags']"))
+            flushSync { flagsButton.asDynamic().click() }
+            assertEquals("true", flagsButton.getAttribute("aria-expanded"))
+            assertEquals(false, assertNotNull(document.getElementById("debug-header-popover-flags".unsafeCast<web.dom.ElementId>())).asDynamic().hidden as Boolean)
+            flushSync { flagsButton.asDynamic().click() }
+            assertEquals("false", flagsButton.getAttribute("aria-expanded"))
             assertEquals(2, container.querySelectorAll(".debug-event .debug-event-tools summary[title]").length)
             assertEquals(true, container.querySelector(".debug-markdown strong")?.textContent == "Done")
             assertEquals(false, container.querySelector(".debug-event-tools details[open]")?.textContent?.contains("Prompt tokens") == true)
