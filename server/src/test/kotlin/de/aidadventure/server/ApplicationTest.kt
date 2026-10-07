@@ -180,7 +180,10 @@ class ApplicationTest {
         assertEquals("found-map", diagnostics[2].getValue("fields").jsonObject.getValue("emittedSignals").jsonPrimitive.content)
         assertEquals("true", diagnostics[2].getValue("fields").jsonObject.getValue("flag:has-map").jsonPrimitive.content)
         assertFalse(diagnostics[2].getValue("fields").jsonObject.containsKey("flag:already-known"))
-        assertEquals("true", diagnostics[4].getValue("fields").jsonObject.getValue("flag:has-map").jsonPrimitive.content)
+        val appliedFields = diagnostics[4].getValue("fields").jsonObject
+        assertFalse(appliedFields.containsKey("flag:has-map"))
+        assertEquals("found-map", appliedFields.getValue("emittedSignals").jsonPrimitive.content)
+        assertEquals("has-map=true, already-known=false", appliedFields.getValue("appliedAssignments").jsonPrimitive.content)
         assertEquals("Harbour", diagnostics[5].getValue("fields").jsonObject.getValue("location").jsonPrimitive.content)
         assertFalse(diagnostics.joinToString().contains("SECRET_PLAYER_ACTION"))
         assertFalse(diagnostics.joinToString().contains("SECRET_GAME_MASTER_OUTPUT"))
