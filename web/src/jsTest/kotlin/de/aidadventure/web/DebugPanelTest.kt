@@ -19,6 +19,65 @@ import web.dom.document
 
 class DebugPanelTest {
     @Test
+    fun `header tools and event details are available in compact popovers`() {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        try {
+            flushSync { root.render(DebugPanel.create {
+                scenario = Scenario("scenario", "scenario.md", "---\ntitle: Harbor\n---\n# Prompt", 1)
+                session = GameSession("session", "scenario", "Harbor", flags = mapOf("door" to true), messages = emptyList(), createdAt = 1, updatedAt = 1)
+                events = listOf(DebugEvent("event", "session", "turn", 0, 1, "generation", "completed", fields = mapOf("output" to "**Done**", "operationId" to "op-1"), metrics = de.aidadventure.web.model.DiagnosticMetrics(promptTokens = 12)))
+                onClose = {}
+                onClear = {}
+            }) }
+            val headerButtons = container.querySelectorAll(".debug-panel-header button[title]")
+            assertEquals(3, headerButtons.length)
+            repeat(headerButtons.length) { index ->
+                val button = assertNotNull(headerButtons.item(index))
+                val controlledId = assertNotNull(button.getAttribute("aria-controls"))
+                val controlledPopover = assertNotNull(document.getElementById(controlledId.unsafeCast<web.dom.ElementId>()))
+                assertEquals("false", button.getAttribute("aria-expanded"))
+                assertEquals(true, controlledPopover.asDynamic().hidden as Boolean)
+            }
+            val flagsButton = assertNotNull(container.querySelector("button[title='Current flags']"))
+            flushSync { flagsButton.asDynamic().click() }
+            assertEquals("true", flagsButton.getAttribute("aria-expanded"))
+            assertEquals(false, assertNotNull(document.getElementById("debug-header-popover-flags".unsafeCast<web.dom.ElementId>())).asDynamic().hidden as Boolean)
+            flushSync { flagsButton.asDynamic().click() }
+            assertEquals("false", flagsButton.getAttribute("aria-expanded"))
+            assertEquals(2, container.querySelectorAll(".debug-event .debug-event-tools summary[title]").length)
+            assertEquals(true, container.querySelector(".debug-markdown strong")?.textContent == "Done")
+            assertEquals(false, container.querySelector(".debug-event-tools details[open]")?.textContent?.contains("Prompt tokens") == true)
+        } finally {
+            flushSync { root.unmount() }
+            container.remove()
+        }
+    }
+
+    @Test
+    fun `signal assignments and structured chat history are rendered as readable entries`() {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        try {
+            flushSync { root.render(DebugPanel.create {
+                scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+                session = GameSession("session", "scenario", "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+                events = listOf(DebugEvent("signal", "session", "turn", 0, 1, "signal", "emitted", fields = mapOf("emittedSignals" to "unlock", "flag:doorOpen" to "true", "history" to "<|turn>user\nGo north<turn|><|turn>assistant\nYou arrive.<turn|>")))
+                onClose = {}
+                onClear = {}
+            }) }
+            assertEquals(true, container.querySelector(".debug-flag-delta")?.textContent?.contains("doorOpen") == true)
+            assertEquals(2, container.querySelectorAll(".debug-chat-turn").length)
+            assertEquals(false, container.textContent?.contains("<|turn>") == true)
+        } finally {
+            flushSync { root.unmount() }
+            container.remove()
+        }
+    }
+
+    @Test
     fun `repository order survives a reset turn counter after reload`() {
         val container = document.createElement("div")
         document.body.appendChild(container)
@@ -59,6 +118,7 @@ class DebugPanelTest {
                 onClose = {}
                 onClear = {}
             }) }
+            flushSync { container.querySelector("button[title='Frontmatter']")?.asDynamic()?.click() }
             assertEquals(true, container.textContent?.contains("Circular reference"))
         } finally {
             flushSync { root.unmount() }

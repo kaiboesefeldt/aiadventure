@@ -270,6 +270,16 @@ fun Application.adventureModule(
                                         "emittedSignals" to event.emittedSignals.joinToString(", "),
                                     ),
                                 ))
+                                if (event.emittedSignals.isNotEmpty()) {
+                                    val signalFlags = applyRuntimeSignals(request.flags, request.signals, event.emittedSignals)
+                                    diagnostic(StreamDiagnostic(
+                                        kind = "signal", stage = "emitted", transcriptRole = "player",
+                                        fields = mapOf("emittedSignals" to event.emittedSignals.joinToString(", ")) +
+                                            signalFlags.filter { (name, value) -> request.flags[name] != value }
+                                                .mapKeys { (name, _) -> "flag:${name}" }
+                                                .mapValues { (_, value) -> value.toString() },
+                                    ))
+                                }
                                 if (event.fragment.isNotBlank()) sse("fragment", eventJson.encodeToString(StreamFragment(event.fragment)))
                             }
                             is TurnStreamEvent.Diagnostic -> diagnostic(event.value)
@@ -294,13 +304,11 @@ fun Application.adventureModule(
                         val completedFlags = applyRuntimeSignals(request.flags, request.signals, emittedSignals)
                         diagnostic(StreamDiagnostic(
                             kind = "flags", stage = "applied", transcriptRole = "player",
-                            fields = completedFlags.filter { (name, value) -> request.flags[name] != value }
-                                .mapKeys { (name, _) -> "flag:${name}" }.mapValues { it.value.toString() } +
-                                mapOf(
-                                    "emittedSignals" to emittedSignals.joinToString(", "),
-                                    "appliedAssignments" to emittedSignals.flatMap { request.signals[it].orEmpty() }
-                                        .joinToString(", ") { "${it.flag}=${it.value}" },
-                                ),
+                            fields = mapOf(
+                                "emittedSignals" to emittedSignals.joinToString(", "),
+                                "appliedAssignments" to emittedSignals.flatMap { request.signals[it].orEmpty() }
+                                    .joinToString(", ") { "${it.flag}=${it.value}" },
+                            ),
                         ))
                         val completedHistory = (appliedFragment?.takeIf { it.isNotBlank() }?.let { request.history + ChatEntry("runtime-fragment", it) } ?: request.history) +
                             ChatEntry("player", request.playerAction) +

@@ -28,6 +28,7 @@ internal external interface DebugPanelProps : Props {
 
 internal val DebugPanel = FC<DebugPanelProps> { props ->
     var readerAtBottom by useState(true)
+    var headerPopover by useState("")
     val ordered = props.events
     useEffect(dependencies = arrayOf(ordered.size)) {
         if (ordered.isEmpty()) readerAtBottom = true
@@ -51,6 +52,22 @@ internal val DebugPanel = FC<DebugPanelProps> { props ->
         ReactHTML.header {
             className = ClassName("debug-panel-header")
             ReactHTML.h2 { +"Debug panel" }
+            ReactHTML.div {
+                className = ClassName("debug-header-tools")
+                listOf("flags" to "⚑", "frontmatter" to "{}", "prompt" to "¶").forEach { (tool, icon) ->
+                    val popoverId = "debug-header-popover-$tool"
+                    val label = when (tool) { "flags" -> "Current flags"; "frontmatter" -> "Frontmatter"; else -> "System prompt" }
+                    ReactHTML.button {
+                        className = ClassName("debug-icon-button")
+                        title = label
+                        ariaLabel = label
+                        ariaControls = popoverId.unsafeCast<web.dom.ElementId>()
+                        ariaExpanded = headerPopover == tool
+                        onClick = { headerPopover = if (headerPopover == tool) "" else tool }
+                        +icon
+                    }
+                }
+            }
             ReactHTML.button {
                 className = ClassName("debug-close-button")
                 ariaLabel = "Close debug panel"
@@ -58,26 +75,24 @@ internal val DebugPanel = FC<DebugPanelProps> { props ->
                 +"×"
             }
         }
-        ReactHTML.div {
-            className = ClassName("debug-global")
-            ReactHTML.h3 { +"Current flags" }
-            if (props.session.flags.isEmpty()) ReactHTML.p { +"No flags" }
-            else ReactHTML.dl {
-                className = ClassName("debug-fields")
-                props.session.flags.toList().sortedBy { it.first }.forEach { (name, value) ->
-                    ReactHTML.dt { +name }
-                    ReactHTML.dd { +value.toString() }
+        listOf("flags", "frontmatter", "prompt").forEach { tool ->
+            ReactHTML.div {
+                id = "debug-header-popover-$tool".unsafeCast<web.dom.ElementId>()
+                className = ClassName("debug-popover debug-header-popover")
+                asDynamic().hidden = headerPopover != tool
+                if (headerPopover == tool) {
+                    if (tool == "flags") {
+                        ReactHTML.h3 { +"Current flags" }
+                        renderFlagValues(props.session.flags)
+                    } else if (tool == "frontmatter") {
+                        ReactHTML.h3 { +"Frontmatter" }
+                        val yaml = frontmatterYaml(props.scenario.markdown)
+                        if (yaml == null) ReactHTML.p { +"No frontmatter" } else renderYamlNode(yaml)
+                    } else {
+                        ReactHTML.h3 { +"System prompt" }
+                        ReactHTML.pre { className = ClassName("debug-prompt"); +ScenarioFrontmatter.parse(props.scenario.markdown).promptMarkdown }
+                    }
                 }
-            }
-            ReactHTML.details {
-                ReactHTML.summary { +"Frontmatter" }
-                val yaml = frontmatterYaml(props.scenario.markdown)
-                if (yaml == null) ReactHTML.p { +"No frontmatter" }
-                else renderYamlNode(yaml)
-            }
-            ReactHTML.details {
-                ReactHTML.summary { +"System prompt" }
-                ReactHTML.pre { className = ClassName("debug-prompt"); +ScenarioFrontmatter.parse(props.scenario.markdown).promptMarkdown }
             }
         }
         ReactHTML.div {
@@ -118,13 +133,13 @@ internal val DebugPanel = FC<DebugPanelProps> { props ->
                         val sameTurnId = sameTurn.transcriptMessageId ?: return@mapNotNull null
                         visibleMessages.indexOfFirst { it.messageId == sameTurnId && it.role == sameTurn.transcriptRole }.takeIf { it >= 0 }
                     }.firstOrNull()
-                renderDebugEvent(event, turnIndex, turnParity[event.turnId] ?: 0, props.onShowTranscript)
+                renderDebugEvent(event, turnIndex, turnParity[event.turnId] ?: 0, props.session.flags, props.onShowTranscript)
             }
         }
     }
 }
 
-private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex: Int?, turnParity: Int, onShowTranscript: (Int) -> Unit) {
+private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex: Int?, turnParity: Int, currentFlags: Map<String, Boolean>, onShowTranscript: (Int) -> Unit) {
     ReactHTML.article {
         key = event.id
         id = "debug-event-${event.id}".unsafeCast<web.dom.ElementId>()
@@ -139,21 +154,32 @@ private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex:
                 }
             }
         }
-        ReactHTML.details {
-            asDynamic().open = true
-            ReactHTML.summary {
-                ReactHTML.div {
-                    className = ClassName("debug-event-topline")
-                    ReactHTML.h4 { +humanLabel(event.kind) }
-                    ReactHTML.span { className = ClassName("debug-stage"); +humanLabel(event.stage) }
-                }
-            }
         val prompts = event.fields.filterKeys { it == "prompt" || it.endsWith("_prompt") }
         val outputs = event.fields.filterKeys { it == "output" || it.endsWith("_output") }
-        val flags = event.fields.filterKeys { key ->
-            key !in prompts.keys && key !in outputs.keys && key.lowercase().filter { it.isLetter() } !in setOf(
-                "playeraction", "gamemasteroutput", "generated", "generatedtext", "response", "responsetext", "history",
-            )
+        val histories = event.fields.filterKeys { it == "history" || it.endsWith("_history") }
+        val deltas = flagDeltas(event)
+        ReactHTML.div {
+            className = ClassName("debug-event-topline")
+            ReactHTML.h4 { +humanLabel(event.kind) }
+            ReactHTML.span { className = ClassName("debug-stage"); +humanLabel(event.stage) }
+            ReactHTML.div {
+                className = ClassName("debug-event-tools")
+                ReactHTML.details {
+                    ReactHTML.summary { className = ClassName("debug-icon-button"); title = "All status variables"; ariaLabel = "All status variables"; +"⚑" }
+                    ReactHTML.div { className = ClassName("debug-popover debug-event-popover"); renderFlagValues(currentFlags) }
+                }
+                if (event.metrics != null || event.fields.keys.any(::isDiagnosticMetadataField)) ReactHTML.details {
+                    ReactHTML.summary { className = ClassName("debug-icon-button"); title = "Event details"; ariaLabel = "Event details"; +"ⓘ" }
+                    ReactHTML.div {
+                        className = ClassName("debug-popover debug-event-popover")
+                        ReactHTML.dl {
+                            className = ClassName("debug-fields")
+                            renderDiagnosticMetadata(event)
+                            event.metrics?.let { renderDiagnosticMetrics(it) }
+                        }
+                    }
+                }
+            }
         }
         prompts.forEach { (key, prompt) -> ReactHTML.section {
             ReactHTML.h5 { +(if (key == "prompt") "Prompt" else "${humanLabel(key.removeSuffix("_prompt"))} prompt") }
@@ -161,17 +187,60 @@ private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex:
         } }
         outputs.forEach { (key, output) -> ReactHTML.section {
             ReactHTML.h5 { +(if (key == "output") "LLM output" else "${humanLabel(key.removeSuffix("_output"))} output") }
-            ReactHTML.pre { className = ClassName("debug-prompt"); +output }
+            ReactHTML.div { className = ClassName("debug-markdown"); MarkdownMessage { content = output } }
         } }
-            if (flags.isNotEmpty() || event.metrics != null) ReactHTML.dl {
-                className = ClassName("debug-fields")
-                flags.forEach { (key, value) ->
-                    if (key == "flags") value.split(", ").filter(String::isNotBlank).forEach { line -> field("Flag", line) }
-                    else if (key.startsWith("flag:")) field(key.removePrefix("flag:"), value)
-                    else field(humanLabel(key), if (key == "source") humanLabel(value) else value)
-                }
-                event.metrics?.let { renderDiagnosticMetrics(it) }
-            }
+        histories.forEach { (key, value) -> ReactHTML.section {
+            ReactHTML.h5 { +(if (key == "history") "Chat history" else humanLabel(key.removeSuffix("_history"))) }
+            renderChatHistory(value)
+        } }
+        event.fields["emittedSignals"]?.takeIf(String::isNotBlank)?.let { signals -> ReactHTML.div {
+            className = ClassName("debug-signal-name")
+            +"Signal: $signals"
+        } }
+        if (deltas.isNotEmpty()) ReactHTML.div {
+            className = ClassName("debug-flag-delta")
+            deltas.forEach { (name, value) -> ReactHTML.span { +"$name: $value" } }
+        }
+    }
+}
+
+private fun flagDeltas(event: DebugEvent): Map<String, String> = buildMap {
+    if (event.kind != "signal") return@buildMap
+    event.fields.filterKeys { it.startsWith("flag:") }.forEach { (key, value) -> put(key.removePrefix("flag:"), value) }
+}
+
+private fun ChildrenBuilder.renderFlagValues(flags: Map<String, Boolean>) {
+    if (flags.isEmpty()) ReactHTML.p { +"No flags" } else ReactHTML.dl {
+        className = ClassName("debug-fields")
+        flags.toList().sortedBy { it.first }.forEach { (name, value) -> field(name, value.toString()) }
+    }
+}
+
+private fun ChildrenBuilder.renderDiagnosticMetadata(event: DebugEvent) {
+    event.fields.filterKeys(::isDiagnosticMetadataField).forEach { (key, value) ->
+        if (key == "appliedAssignments") field("Applied assignments", value)
+        else if (!key.startsWith("flag:")) field(humanLabel(key), if (key == "source") humanLabel(value) else value)
+    }
+}
+
+private fun isDiagnosticMetadataField(key: String): Boolean =
+    key != "prompt" && !key.endsWith("_prompt") && key != "output" && !key.endsWith("_output") &&
+        key != "history" && !key.endsWith("_history") && !key.startsWith("flag:") &&
+        key.lowercase().filter { it.isLetter() } !in setOf(
+            "playeraction", "gamemasteroutput", "generated", "generatedtext", "response", "responsetext",
+        )
+
+private fun ChildrenBuilder.renderChatHistory(history: String) {
+    val turns = history.split(Regex("<\\|turn>")).flatMap { it.split(Regex("<turn\\|>")) }.map(String::trim).filter(String::isNotEmpty)
+    if (turns.size <= 1) ReactHTML.pre { className = ClassName("debug-prompt"); +history }
+    else turns.forEach { turn ->
+        val separator = turn.indexOf('\n')
+        val role = if (separator < 0) "Turn" else humanLabel(turn.substring(0, separator).trim())
+        val content = if (separator < 0) turn else turn.substring(separator + 1).trim()
+        ReactHTML.div {
+            className = ClassName("debug-chat-turn")
+            ReactHTML.strong { +role }
+            ReactHTML.div { className = ClassName("debug-markdown"); MarkdownMessage { this.content = content } }
         }
     }
 }
