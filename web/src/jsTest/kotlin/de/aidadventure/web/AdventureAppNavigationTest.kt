@@ -18,6 +18,7 @@ import de.aidadventure.web.persistence.ScenarioRepository
 import de.aidadventure.web.persistence.DebugEventRepository
 import de.aidadventure.web.persistence.SessionRepository
 import kotlin.js.Promise
+import kotlin.js.unsafeCast
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -544,21 +545,33 @@ class AdventureAppNavigationTest {
             nextBrowserTick()
             val panel = assertNotNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
             val text = panel.textContent.orEmpty()
-            assertEquals(true, text.contains("Current flags"), text)
-            assertEquals(true, text.contains("doorOpen"), text)
-            assertEquals(true, text.contains("true"), text)
-            assertEquals(true, text.contains("Frontmatter"), text)
-            assertEquals(true, text.contains("set-flag"), text)
-            assertEquals(true, text.contains("System prompt"), text)
-            assertEquals(true, text.contains("Prompt body"), text)
+            assertEquals(false, text.contains("Current flags"), text)
+            assertEquals(false, text.contains("Frontmatter"), text)
+            assertEquals(false, text.contains("System prompt"), text)
+            assertEquals(false, panel.querySelector(".debug-event details[open]")?.textContent?.contains("Prompt tokens") == true)
+            panel.unsafeCast<HTMLElement>().click("button[title='Current flags']")
+            nextBrowserTick()
+            assertEquals(true, panel.textContent?.contains("doorOpen") == true)
+            assertEquals(true, panel.textContent?.contains("true") == true)
+            panel.unsafeCast<HTMLElement>().click("button[title='Frontmatter']")
+            nextBrowserTick()
+            assertEquals(true, panel.textContent?.contains("set-flag") == true)
+            panel.unsafeCast<HTMLElement>().click("button[title='System prompt']")
+            nextBrowserTick()
+            assertEquals(true, panel.textContent?.contains("Prompt body") == true)
+            assertEquals(null, panel.querySelector("#debug-event-signal .debug-flag-delta"))
             assertEquals(true, text.contains("Background rerank"), text)
             assertEquals(true, text.contains("Prior turn"), text)
             assertEquals(true, text.contains("Context compression"), text)
-            assertEquals(true, text.contains("Applied assignments"), text)
-            assertEquals(true, text.contains("Prompt tokens"), text)
-            assertEquals(true, text.contains("Context tokens"), text)
-            assertEquals(true, text.contains("Predicted tokens per second"), text)
-            assertEquals(true, text.contains("300 ms"), text)
+            panel.querySelectorAll(".debug-event summary[title='Event details']").let { details ->
+                repeat(details.length) { index -> details.item(index)?.asDynamic()?.click() }
+            }
+            val withDetails = panel.textContent.orEmpty()
+            assertEquals(true, withDetails.contains("Applied assignments"), withDetails)
+            assertEquals(true, withDetails.contains("Prompt tokens"), withDetails)
+            assertEquals(true, withDetails.contains("Context tokens"), withDetails)
+            assertEquals(true, withDetails.contains("Predicted tokens per second"), withDetails)
+            assertEquals(true, withDetails.contains("300 ms"), withDetails)
             assertEquals(false, text.contains("player secret action"))
             assertEquals(false, text.contains("game master secret output"))
             val cards = panel.querySelectorAll(".debug-event")
