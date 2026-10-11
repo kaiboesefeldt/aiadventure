@@ -1,5 +1,6 @@
 package de.aidadventure.server.prefill
 
+import de.aidadventure.server.llamacpp.LlamaCppSlot
 import java.security.MessageDigest
 import org.slf4j.LoggerFactory
 
@@ -8,6 +9,7 @@ interface PrefillRegistry {
     fun coordinatorIfPresent(key: CoordinatorKey): PrefillCoordinator? = null
     suspend fun remove(key: CoordinatorKey)
     suspend fun removeIdle(nowMillis: Long)
+    suspend fun evictIdleLease(excluding: CoordinatorKey, slots: Set<LlamaCppSlot>): Boolean = false
 }
 
 internal class ExpiringPrefillRegistry(
@@ -65,6 +67,39 @@ internal class ExpiringPrefillRegistry(
             retries + expired
         }
         closeAll(removals, "expired")
+    }
+
+    override suspend fun evictIdleLease(excluding: CoordinatorKey, slots: Set<LlamaCppSlot>): Boolean {
+        if (slots.isEmpty()) return false
+        val candidates = synchronized(lock) {
+            entries.entries
+                .filter { (key, _) -> key != excluding && key.port == excluding.port }
+                .sortedBy { (_, entry) -> entry.lastUsedMillis }
+                .map { (key, entry) -> key to entry }
+        }
+
+        for ((key, entry) in candidates) {
+            val snapshot = entry.coordinator.diagnosticSnapshot() ?: continue
+            if (snapshot.slotId == null || LlamaCppSlot(snapshot.slotId) !in slots) continue
+
+            val selected = synchronized(lock) {
+                if (entries[key] !== entry || !entry.coordinator.tryBeginIdleCloseWithLease()) {
+                    false
+                } else {
+                    entries.remove(key)
+                    true
+                }
+            }
+            if (!selected) continue
+
+            closeAll(listOf(key to entry.coordinator), "evicted_idle_lease")
+            logger.debug(
+                "operation=prefill_registry result=evicted_idle_lease key={} coordinator={} slot={}",
+                opaqueKey(key), snapshot.coordinatorId, snapshot.slotId,
+            )
+            return true
+        }
+        return false
     }
 
     private suspend fun closeAll(

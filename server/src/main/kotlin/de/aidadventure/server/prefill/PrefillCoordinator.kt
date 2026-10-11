@@ -140,6 +140,7 @@ interface PrefillCoordinator {
     suspend fun beginTurn(request: TurnRequest, requestId: String): Flow<TurnStreamEvent> = beginTurn(request)
     suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent>
     fun tryBeginIdleClose(): Boolean
+    fun tryBeginIdleCloseWithLease(): Boolean = false
     suspend fun close()
 }
 
@@ -541,6 +542,23 @@ internal class SessionPrefillCoordinator(
         return try {
             pruneBackgroundReservationsLocked()
             if (closed || !state.isIdleForTtl() || backgroundReservations.isNotEmpty()) {
+                false
+            } else {
+                closed = true
+                generation++
+                true
+            }
+        } finally {
+            mutex.unlock()
+        }
+    }
+
+    override fun tryBeginIdleCloseWithLease(): Boolean {
+        if (!mutex.tryLock()) return false
+        return try {
+            pruneBackgroundReservationsLocked()
+            val lease = state.activeLeaseOrNull()
+            if (closed || lease == null || lease.released || !state.isIdleForTtl() || backgroundReservations.isNotEmpty()) {
                 false
             } else {
                 closed = true
