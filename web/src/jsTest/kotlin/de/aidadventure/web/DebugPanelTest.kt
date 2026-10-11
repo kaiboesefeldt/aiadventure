@@ -78,6 +78,44 @@ class DebugPanelTest {
     }
 
     @Test
+    fun `history snapshots show only messages appended since the previous snapshot`() {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        try {
+            val initial = "<|turn>system\nPrompt<turn|><|turn>model\nOpening<turn|>"
+            val later = "$initial<|turn>user\nGo north<turn|><|turn>model\nYou arrive.<turn|>"
+            val revised = "$initial<|turn>user\nGo north<turn|><|turn>model\nThe gate is locked.<turn|>"
+            flushSync { root.render(DebugPanel.create {
+                scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+                session = GameSession("session", "scenario", "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+                events = listOf(
+                    DebugEvent("initial", "session", "turn-1", 0, 1, "generation", "completed", fields = mapOf("history" to initial)),
+                    DebugEvent("next", "session", "turn-2", 1, 2, "generation", "completed", fields = mapOf("history" to later)),
+                    DebugEvent("repeat", "session", "turn-2", 1, 3, "generation", "completed", fields = mapOf("history" to later)),
+                    DebugEvent("revised", "session", "turn-2", 1, 4, "generation", "completed", fields = mapOf("history" to revised)),
+                )
+                onClose = {}
+                onClear = {}
+            }) }
+            val turns = container.querySelectorAll(".debug-chat-turn")
+            assertEquals(5, turns.length)
+            assertEquals(true, turns.item(0)?.textContent?.contains("System"))
+            assertEquals(true, turns.item(1)?.textContent?.contains("Opening"))
+            assertEquals(true, turns.item(2)?.textContent?.contains("Go north"))
+            assertEquals(true, turns.item(3)?.textContent?.contains("You arrive"))
+            assertEquals(2, container.querySelectorAll("#debug-event-next .debug-chat-turn").length)
+            assertEquals(0, container.querySelectorAll("#debug-event-repeat .debug-chat-turn").length)
+            assertEquals(0, container.querySelectorAll("#debug-event-repeat .debug-prompt").length)
+            assertEquals(1, container.querySelectorAll("#debug-event-revised .debug-chat-turn").length)
+            assertEquals(true, container.querySelector("#debug-event-revised")?.textContent?.contains("The gate is locked"))
+        } finally {
+            flushSync { root.unmount() }
+            container.remove()
+        }
+    }
+
+    @Test
     fun `repository order survives a reset turn counter after reload`() {
         val container = document.createElement("div")
         document.body.appendChild(container)

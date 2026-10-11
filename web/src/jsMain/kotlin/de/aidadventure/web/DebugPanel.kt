@@ -118,14 +118,22 @@ internal val DebugPanel = FC<DebugPanelProps> { props ->
                 .associateBy { it.fields["operationId"] }
             val scheduledOperationIds = ordered.filter { it.kind == "background_rerank" && it.stage == "scheduled" }
                 .mapNotNull { it.fields["operationId"] }.toSet()
+            val priorHistories = mutableMapOf<String, List<ChatHistoryMessage>>()
             ordered.filterNot {
                 it.kind == "background_rerank" && it.stage.startsWith("prior_") && it.fields["operationId"] in scheduledOperationIds
             }.forEach { storedEvent ->
-                val event = if (storedEvent.kind == "background_rerank" && storedEvent.stage == "scheduled") {
+                val completedEvent = if (storedEvent.kind == "background_rerank" && storedEvent.stage == "scheduled") {
                     backgroundOutcomes[storedEvent.fields["operationId"]]?.let { outcome ->
                         storedEvent.copy(stage = outcome.stage, fields = storedEvent.fields + outcome.fields, metrics = outcome.metrics ?: storedEvent.metrics)
                     } ?: storedEvent
                 } else storedEvent
+                val event = completedEvent.copy(fields = completedEvent.fields.mapValues { (key, value) ->
+                    if (key != "history" && !key.endsWith("_history")) return@mapValues value
+                    val messages = parseChatHistory(value) ?: return@mapValues value
+                    val previous = priorHistories[key]
+                    priorHistories[key] = messages
+                    if (previous == null) value else messages.drop(commonPrefixLength(previous, messages)).formatChatHistory()
+                })
                 val messageId = event.transcriptMessageId
                 val index = if (messageId == null) -1 else visibleMessages.indexOfFirst { it.messageId == messageId && it.role == event.transcriptRole }
                 val turnIndex = if (index >= 0) index else ordered.asSequence().filter { it.turnId == event.turnId }
@@ -230,17 +238,48 @@ private fun isDiagnosticMetadataField(key: String): Boolean =
             "playeraction", "gamemasteroutput", "generated", "generatedtext", "response", "responsetext",
         )
 
+private data class ChatHistoryMessage(val role: String, val content: String)
+
+private fun parseChatHistory(history: String): List<ChatHistoryMessage>? {
+    val startToken = "<|turn>"
+    val endToken = "<turn|>"
+    val messages = mutableListOf<ChatHistoryMessage>()
+    var cursor = 0
+    while (cursor < history.length) {
+        while (cursor < history.length && history[cursor].isWhitespace()) cursor++
+        if (cursor == history.length) break
+        if (!history.startsWith(startToken, cursor)) return null
+        val roleStart = cursor + startToken.length
+        val separator = history.indexOf('\n', roleStart)
+        if (separator < 0) return null
+        val end = history.indexOf(endToken, separator + 1)
+        if (end < 0) return null
+        val role = history.substring(roleStart, separator).trim()
+        if (role.isEmpty()) return null
+        val content = history.substring(separator + 1, end).trim()
+        messages += ChatHistoryMessage(role, content)
+        cursor = end + endToken.length
+    }
+    return messages.takeIf { it.isNotEmpty() }
+}
+
+private fun List<ChatHistoryMessage>.formatChatHistory(): String = joinToString("") { "<|turn>${it.role}\n${it.content}<turn|>" }
+
+private fun commonPrefixLength(first: List<ChatHistoryMessage>, second: List<ChatHistoryMessage>): Int {
+    var index = 0
+    while (index < first.size && index < second.size && first[index] == second[index]) index++
+    return index
+}
+
 private fun ChildrenBuilder.renderChatHistory(history: String) {
-    val turns = history.split(Regex("<\\|turn>")).flatMap { it.split(Regex("<turn\\|>")) }.map(String::trim).filter(String::isNotEmpty)
-    if (turns.size <= 1) ReactHTML.pre { className = ClassName("debug-prompt"); +history }
-    else turns.forEach { turn ->
-        val separator = turn.indexOf('\n')
-        val role = if (separator < 0) "Turn" else humanLabel(turn.substring(0, separator).trim())
-        val content = if (separator < 0) turn else turn.substring(separator + 1).trim()
+    if (history.isBlank()) return
+    val messages = parseChatHistory(history)
+    if (messages == null) ReactHTML.pre { className = ClassName("debug-prompt"); +history }
+    else messages.forEach { message ->
         ReactHTML.div {
             className = ClassName("debug-chat-turn")
-            ReactHTML.strong { +role }
-            ReactHTML.div { className = ClassName("debug-markdown"); MarkdownMessage { this.content = content } }
+            ReactHTML.strong { +humanLabel(message.role) }
+            ReactHTML.div { className = ClassName("debug-markdown"); MarkdownMessage { content = message.content } }
         }
     }
 }
