@@ -5,6 +5,8 @@ import de.aidadventure.server.game.ContextLimitException
 import de.aidadventure.server.model.ContextCompression
 import de.aidadventure.server.llamacpp.LlamaCppGateway
 import de.aidadventure.server.llamacpp.LlamaCppPort
+import de.aidadventure.server.llamacpp.LlamaCppSlot
+import de.aidadventure.server.llamacpp.NoIdleLlamaCppSlotException
 import de.aidadventure.server.model.ChatEntry
 import de.aidadventure.server.model.PrefillAccepted
 import de.aidadventure.server.model.PrefillRequest
@@ -176,6 +178,27 @@ fun Application.adventureModule(
     }
     routing {
         get("/api/health") { call.respond(HealthResponse()) }
+        post("/api/session/release") {
+            val request = call.receive<SessionReleaseRequest>()
+            if (request.sessionId.isBlank() || request.sessionId.length > MAX_SESSION_ID_LENGTH) {
+                call.respond(HttpStatusCode.BadRequest, invalidRequestError())
+                return@post
+            }
+            val key = CoordinatorKey(request.sessionId, CONFIGURED_MODEL_ID, llamaCppPort)
+            try {
+                prefillRegistry.remove(key)
+                call.respond(HttpStatusCode.NoContent)
+            } catch (failure: CancellationException) {
+                throw failure
+            } catch (failure: Exception) {
+                logger.warn(
+                    "requestId={} operation=session_release result=failed sessionId={} modelId={} port={} cause={} message={}",
+                    call.callId, request.sessionId, key.modelId, key.port,
+                    failure.javaClass.simpleName, failure.message, failure,
+                )
+                call.respond(HttpStatusCode.ServiceUnavailable, ApiError("session_release_failed", "The session could not be released."))
+            }
+        }
         post("/api/prefill") {
             val request = call.receive<PrefillRequest>().configuredFor(llamaCppPort)
             RequestValidator.validate(request)?.let { error ->
@@ -185,9 +208,12 @@ fun Application.adventureModule(
             val key = CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort)
             try {
                 prefillRegistry.removeIdle(clock())
+                val coordinator = prefillRegistry.coordinatorFor(key)
                 call.respond(
                     HttpStatusCode.Accepted,
-                    PrefillAccepted(prefillRegistry.coordinatorFor(key).submit(request)),
+                    PrefillAccepted(withIdleLeaseEvictionRetry(
+                        prefillRegistry, key, call.callId ?: "unknown", "prefill", logger,
+                    ) { coordinator.submit(request) }),
                 )
             } catch (failure: ContextLimitException) {
                 logger.warn("requestId={} operation=prefill result=context_limit", call.callId)
@@ -223,7 +249,9 @@ fun Application.adventureModule(
                 prefillRegistry.removeIdle(clock())
                 val activeCoordinator = prefillRegistry.coordinatorFor(key)
                 coordinator = activeCoordinator
-                call.respond(HttpStatusCode.Accepted, PrefillAccepted(activeCoordinator.warmup(request, call.callId ?: "unknown")))
+                call.respond(HttpStatusCode.Accepted, PrefillAccepted(withIdleLeaseEvictionRetry(
+                    prefillRegistry, key, call.callId ?: "unknown", "warmup", logger,
+                ) { activeCoordinator.warmup(request, call.callId ?: "unknown") }))
             } catch (failure: ContextLimitException) {
                 logger.warn("requestId={} operation=warmup result=context_limit", call.callId)
                 call.respond(HttpStatusCode.UnprocessableEntity, ApiError("context_limit", failure.message ?: "The model context is full."))
@@ -259,8 +287,9 @@ fun Application.adventureModule(
                         ) + request.flags.mapKeys { (name, _) -> "flag:${name}" }.mapValues { it.value.toString() } +
                             resolved.request.contextCompression.diagnosticFields(),
                     ))
-                    val stream = activeCoordinator
-                        .beginTurn(resolved.request, call.callId ?: "unknown")
+                    val stream = withIdleLeaseEvictionRetry(
+                        prefillRegistry, key, call.callId ?: "unknown", "turn", logger,
+                    ) { activeCoordinator.beginTurn(resolved.request, call.callId ?: "unknown") }
                     val generated = StringBuilder()
                     var completedMetrics: TurnMetrics? = null
                     var completedCompression = request.contextCompression
@@ -562,6 +591,29 @@ private suspend fun io.ktor.server.application.ApplicationCall.respondLlamaUnava
     respond(HttpStatusCode.ServiceUnavailable, ApiError("llama_cpp_unavailable", "The model service is unavailable."))
 }
 
+private suspend fun <T> withIdleLeaseEvictionRetry(
+    registry: PrefillRegistry,
+    key: CoordinatorKey,
+    requestId: String,
+    operation: String,
+    logger: org.slf4j.Logger,
+    action: suspend () -> T,
+): T = try {
+    action()
+} catch (failure: NoIdleLlamaCppSlotException) {
+    val evictableSlots = failure.idleSlotIds
+        .intersect(failure.excludedSlotIds)
+        .map(::LlamaCppSlot)
+        .toSet()
+    if (evictableSlots.isEmpty() || !registry.evictIdleLease(key, evictableSlots)) throw failure
+
+    logger.info(
+        "requestId={} operation={} result=evicted_idle_session_cache sessionId={} modelId={} port={} slots={}",
+        requestId, operation, key.sessionId, key.modelId, key.port, evictableSlots.map { it.id },
+    )
+    action()
+}
+
 private fun invalidRequestError(): ApiError = ApiError("invalid_request", "Request contains invalid data.")
 
 object RequestValidator {
@@ -694,6 +746,9 @@ data class HealthResponse(val status: String = "ok")
 
 @Serializable
 data class ModelsResponse(val models: List<String>)
+
+@Serializable
+data class SessionReleaseRequest(val sessionId: String)
 
 @Serializable
 data class ApiError(val code: String, val message: String)

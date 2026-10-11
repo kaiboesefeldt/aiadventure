@@ -110,7 +110,10 @@ internal val AdventureApp = FC<AdventureAppProps> { props ->
                     props.sessionRepository.save(session); view = View.Play(current.scenario, session)
                 } }
                 onResume = { session -> view = View.Play(current.scenario, session) }
-                onDeleteSession = { session -> props.sessionRepository.delete(session.id) }
+                onDeleteSession = { session ->
+                    runCatching { props.api.releaseSession(session.id) }
+                    props.sessionRepository.delete(session.id)
+                }
             }
             is View.Play -> +PlayView.create {
                 scenario = current.scenario; session = current.session; api = props.api; sessions = props.sessionRepository; debugEvents = props.debugEventRepository
@@ -175,7 +178,7 @@ private val DetailView = FC<DetailViewProps> { props ->
 
 private external interface PlayViewProps : Props { var scenario: Scenario; var session: GameSession; var api: AdventureApi; var sessions: SessionRepository; var debugEvents: DebugEventRepository; var onBack: () -> Unit; var onSessionChanged: (GameSession) -> Unit }
 private val PlayView = FC<PlayViewProps> { props ->
-    var action by useState(""); var pending by useState(props.session.introductionPending); var inputReady by useState(false); val (turnInput) = useState(TurnInputState(props.session)); var error by useState<String?>(null); var streamed by useState<GameSession?>(null)
+    var action by useState(""); var pending by useState(props.session.introductionPending); var leaving by useState(false); var inputReady by useState(false); val (turnInput) = useState(TurnInputState(props.session)); var error by useState<String?>(null); var streamed by useState<GameSession?>(null)
     var debugOpen by useState(false)
     var diagnosticEvents by useState(emptyList<DebugEvent>())
     var diagnosticsRevision by useState(0)
@@ -188,6 +191,17 @@ private val PlayView = FC<PlayViewProps> { props ->
         window.setTimeout({ document.querySelector("button[aria-label='Open debug panel']")?.asDynamic()?.focus() }, 0)
     }
     fun setTurnPhase(phase: TurnPhase) { turnInput.phase = phase }
+    fun leavePlay() {
+        if (leaving) return
+        leaving = true
+        scope.launch {
+            try {
+                runCatching { props.api.releaseSession(liveId) }
+            } finally {
+                props.onBack()
+            }
+        }
+    }
     fun introduce() {
         prefill.turnStarted()
         pending = true
@@ -335,7 +349,7 @@ private val PlayView = FC<PlayViewProps> { props ->
     }
     ReactHTML.div { className = ClassName(if (debugOpen) "play-layout play-layout--debug-open" else "play-layout")
     ReactHTML.section { className = ClassName("view-card")
-        ReactHTML.button { className = ClassName("secondary-button"); disabled = pending; onClick = { props.onBack() }; +"Back to sessions" }
+        ReactHTML.button { className = ClassName("secondary-button"); disabled = pending || leaving; onClick = { leavePlay() }; +"Back to sessions" }
         ReactHTML.h2 { className = ClassName("view-title"); +displayed.title }
         ReactHTML.div { className = ClassName("transcript"); displayed.messages.filter(::isVisibleTranscriptMessage).forEachIndexed { index, message ->
             ReactHTML.article {

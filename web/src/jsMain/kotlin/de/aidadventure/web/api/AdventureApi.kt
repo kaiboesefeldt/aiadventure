@@ -16,6 +16,7 @@ import kotlinx.serialization.json.Json
 interface AdventureApi {
     suspend fun prefill(request: PrefillRequest): PrefillAccepted
     suspend fun warmup(request: WarmupRequest): PrefillAccepted
+    suspend fun releaseSession(sessionId: String) = Unit
     suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion
     suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion =
         play(request, onInputReady, onFragment, onToken)
@@ -48,6 +49,11 @@ class AdventureApiClient(
         val response = browserFetch("/api/warmup", encodeWarmupRequest(request))
         if (response.status.unsafeCast<Int>() != 202) throw browserFailure(response)
         return streamJson.decodeFromString(response.text().unsafeCast<Promise<String>>().await())
+    }
+
+    override suspend fun releaseSession(sessionId: String) {
+        val response = browserFetch("/api/session/release", encodeSessionReleaseRequest(SessionReleaseRequest(sessionId)))
+        requireBrowserSuccess(response)
     }
 
     override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
@@ -158,6 +164,12 @@ internal fun encodePrefillRequest(request: PrefillRequest): String =
 
 internal fun encodeWarmupRequest(request: WarmupRequest): String =
     streamJson.encodeToString(WarmupRequest.serializer(), request)
+
+internal fun encodeSessionReleaseRequest(request: SessionReleaseRequest): String =
+    streamJson.encodeToString(SessionReleaseRequest.serializer(), request)
+
+@Serializable
+data class SessionReleaseRequest(val sessionId: String)
 
 internal fun processTurnStreamChunk(
     decoder: SseFrameDecoder,
