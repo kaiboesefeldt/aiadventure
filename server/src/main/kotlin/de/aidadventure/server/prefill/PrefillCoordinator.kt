@@ -77,6 +77,8 @@ class RerankReservation internal constructor(internal val generation: Long) {
 
 internal data class CoordinatorLeaseDiagnostic(
     val coordinatorId: String,
+    val sessionId: String,
+    val modelId: String,
     val transition: String,
     val slotId: Int,
     val port: Int,
@@ -101,6 +103,7 @@ private fun warmupFailure(requestId: String, operation: String, failure: Throwab
     WarmupFailure(requestId, operation, failure.javaClass.simpleName).also { it.exception = failure }
 
 interface PrefillCoordinator {
+    suspend fun diagnosticSnapshot(): CoordinatorStateDiagnostic? = null
     suspend fun submit(request: PrefillRequest): PrefillDisposition
     suspend fun submit(request: PrefillRequest, resolvedTurn: ResolvedTurn): PrefillDisposition = submit(request)
     suspend fun warmup(
@@ -139,6 +142,12 @@ interface PrefillCoordinator {
     fun tryBeginIdleClose(): Boolean
     suspend fun close()
 }
+
+data class CoordinatorStateDiagnostic(
+    val coordinatorId: String,
+    val state: String,
+    val slotId: Int?,
+)
 
 internal interface PrefillGateway {
     suspend fun prepare(request: TurnRequest, slot: LlamaCppSlot): TurnRequest = request
@@ -237,8 +246,10 @@ internal class SessionPrefillCoordinator(
     },
     private val diagnosticSink: (CoordinatorLeaseDiagnostic) -> Unit = { diagnostic ->
         coordinatorLogger.debug(
-            "coordinator={} transition={} slot={} port={}",
+            "coordinator={} sessionId={} modelId={} transition={} slot={} port={}",
             diagnostic.coordinatorId,
+            diagnostic.sessionId,
+            diagnostic.modelId,
             diagnostic.transition,
             diagnostic.slotId,
             diagnostic.port,
@@ -253,6 +264,7 @@ internal class SessionPrefillCoordinator(
         )
     },
     private val clock: () -> Long = System::currentTimeMillis,
+    private val coordinatorKey: CoordinatorKey? = null,
 ) : PrefillCoordinator {
     private val mutex = Mutex()
     private val coordinatorId = Integer.toHexString(System.identityHashCode(this))
@@ -265,6 +277,11 @@ internal class SessionPrefillCoordinator(
     private val pendingTurnDiagnostics = mutableListOf<StreamDiagnostic>()
     private val backgroundReservations = mutableMapOf<String, RerankReservation>()
     private var state: State = State.Idle
+
+    override suspend fun diagnosticSnapshot(): CoordinatorStateDiagnostic = mutex.withLock {
+        val activeLease = state.activeLeaseOrNull()
+        CoordinatorStateDiagnostic(coordinatorId, state.diagnosticName(), activeLease?.slot?.id)
+    }
 
     override suspend fun submit(request: PrefillRequest): PrefillDisposition = mutex.withLock {
         submitLocked(request, request.asTurnRequest().withNextFragment())
@@ -805,7 +822,16 @@ internal class SessionPrefillCoordinator(
     }
 
     private fun recordLeaseTransition(transition: String, lease: Lease) {
-        diagnosticSink(CoordinatorLeaseDiagnostic(coordinatorId, transition, lease.slot.id, lease.port))
+        diagnosticSink(
+            CoordinatorLeaseDiagnostic(
+                coordinatorId = coordinatorId,
+                sessionId = coordinatorKey?.sessionId ?: "unknown",
+                modelId = coordinatorKey?.modelId ?: "unknown",
+                transition = transition,
+                slotId = lease.slot.id,
+                port = lease.port,
+            ),
+        )
     }
 
     private fun releaseLeaseLocked(lease: Lease) {
@@ -1012,6 +1038,15 @@ internal class SessionPrefillCoordinator(
         }
 
         fun isIdleForTtl(): Boolean = this is Idle || this is Ready || this is ReleasePending
+
+        fun diagnosticName(): String = when (this) {
+            Idle -> "idle"
+            is Prefilling -> "prefilling"
+            is Ready -> "ready"
+            is TurnWaiting -> "turn_waiting"
+            is Turning -> "turning"
+            is ReleasePending -> "release_pending"
+        }
 
         fun resolvedTurnOrNull(): ResolvedTurn? = when (this) {
             is Prefilling -> resolvedTurn
