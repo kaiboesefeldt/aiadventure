@@ -178,9 +178,14 @@ class LlamaCppGateway private constructor(
             HttpResponse.BodyHandlers.ofString(),
         )
         check(response.statusCode() in 200..299) { "llama.cpp slot discovery failed: HTTP ${response.statusCode()}" }
-        val slot = json.decodeFromString<List<SlotResponse>>(response.body()).firstOrNull {
+        val slots = json.decodeFromString<List<SlotResponse>>(response.body())
+        val slot = slots.firstOrNull {
             !it.isProcessing && LlamaCppSlot(it.id) !in excludedSlots
-        } ?: throw IllegalStateException("llama.cpp has no idle slot.")
+        } ?: throw NoIdleLlamaCppSlotException(
+            processingSlotIds = slots.filter { it.isProcessing }.map { it.id },
+            excludedSlotIds = slots.filter { LlamaCppSlot(it.id) in excludedSlots }.map { it.id },
+            idleSlotIds = slots.filterNot { it.isProcessing }.map { it.id },
+        )
         val leasedSlot = LlamaCppSlot(slot.id)
         eraseSlot(port, leasedSlot)
         return leasedSlot
@@ -860,3 +865,9 @@ class LlamaCppGateway private constructor(
             .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
     }
 }
+
+class NoIdleLlamaCppSlotException(
+    val processingSlotIds: List<Int>,
+    val excludedSlotIds: List<Int>,
+    val idleSlotIds: List<Int>,
+) : IllegalStateException("llama.cpp has no idle slot.")

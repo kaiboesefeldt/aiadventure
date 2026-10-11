@@ -13,7 +13,7 @@ interface PrefillRegistry {
 internal class ExpiringPrefillRegistry(
     private val gateway: PrefillGateway = LlamaCppPrefillGateway(),
     private val coordinatorFactory: (CoordinatorKey, PrefillSlotLeaseManager) -> PrefillCoordinator =
-        { _, sharedLeases -> SessionPrefillCoordinator(gateway, sharedLeases) },
+        { key, sharedLeases -> SessionPrefillCoordinator(gateway, sharedLeases, coordinatorKey = key) },
     private val clock: () -> Long = System::currentTimeMillis,
     private val ttlMillis: Long = DEFAULT_TTL_MILLIS,
 ) : PrefillRegistry {

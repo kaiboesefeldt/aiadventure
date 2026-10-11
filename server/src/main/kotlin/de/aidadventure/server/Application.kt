@@ -23,6 +23,8 @@ import de.aidadventure.server.prefill.CoordinatorKey
 import de.aidadventure.server.prefill.ExpiringPrefillRegistry
 import de.aidadventure.server.prefill.LlamaCppPrefillGateway
 import de.aidadventure.server.prefill.PrefillRegistry
+import de.aidadventure.server.prefill.PrefillCoordinator
+import de.aidadventure.server.prefill.CoordinatorStateDiagnostic
 import de.aidadventure.server.runtimefragments.DefaultRuntimeFragmentResolver
 import de.aidadventure.server.runtimefragments.RuntimeFragmentResolver
 import de.aidadventure.server.runtimefragments.applyRuntimeSignals
@@ -216,17 +218,20 @@ fun Application.adventureModule(
                 )
             }
             val key = CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort)
+            var coordinator: PrefillCoordinator? = null
             try {
                 prefillRegistry.removeIdle(clock())
-                call.respond(HttpStatusCode.Accepted, PrefillAccepted(prefillRegistry.coordinatorFor(key).warmup(request, call.callId ?: "unknown")))
+                val activeCoordinator = prefillRegistry.coordinatorFor(key)
+                coordinator = activeCoordinator
+                call.respond(HttpStatusCode.Accepted, PrefillAccepted(activeCoordinator.warmup(request, call.callId ?: "unknown")))
             } catch (failure: ContextLimitException) {
                 logger.warn("requestId={} operation=warmup result=context_limit", call.callId)
                 call.respond(HttpStatusCode.UnprocessableEntity, ApiError("context_limit", failure.message ?: "The model context is full."))
             } catch (failure: IOException) {
-                call.respondLlamaUnavailable(logger, "warmup", failure)
+                call.respondLlamaUnavailable(logger, "warmup", failure, key, coordinator?.diagnosticSnapshot())
             } catch (failure: RuntimeException) {
                 if (failure is CancellationException) throw failure
-                call.respondLlamaUnavailable(logger, "warmup", failure)
+                call.respondLlamaUnavailable(logger, "warmup", failure, key, coordinator?.diagnosticSnapshot())
             }
         }
         post("/api/turn") {
@@ -235,13 +240,15 @@ fun Application.adventureModule(
                 call.respond(HttpStatusCode.BadRequest, error)
                 return@post
             }
+            val key = CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort)
+            var coordinator: PrefillCoordinator? = null
             call.respondTextWriter(contentType = ContentType.Text.EventStream) {
                 try {
                     sseComment("connected")
                     prefillRegistry.removeIdle(clock())
-                    val coordinator = prefillRegistry
-                        .coordinatorFor(CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort))
-                    val resolved = coordinator.resolvedTurnFor(request) ?: ResolvedTurn(request, null)
+                    val activeCoordinator = prefillRegistry.coordinatorFor(key)
+                    coordinator = activeCoordinator
+                    val resolved = activeCoordinator.resolvedTurnFor(request) ?: ResolvedTurn(request, null)
                     fun diagnostic(value: StreamDiagnostic) = sse("diagnostic", eventJson.encodeToString(value))
                     diagnostic(StreamDiagnostic(
                         kind = "turn_state", stage = "initial", transcriptRole = "player",
@@ -252,7 +259,7 @@ fun Application.adventureModule(
                         ) + request.flags.mapKeys { (name, _) -> "flag:${name}" }.mapValues { it.value.toString() } +
                             resolved.request.contextCompression.diagnosticFields(),
                     ))
-                    val stream = coordinator
+                    val stream = activeCoordinator
                         .beginTurn(resolved.request, call.callId ?: "unknown")
                     val generated = StringBuilder()
                     var completedMetrics: TurnMetrics? = null
@@ -333,7 +340,7 @@ fun Application.adventureModule(
                             signals = request.signals,
                         )
                         val operationDiagnostics = mutableListOf<StreamDiagnostic>()
-                        val acceptedWorldState = coordinator.resolveWorldStateAndWarmup(
+                        val acceptedWorldState = activeCoordinator.resolveWorldStateAndWarmup(
                             resolved.request.copy(contextCompression = completedCompression),
                             generated.toString(),
                             warmupRequest,
@@ -361,7 +368,7 @@ fun Application.adventureModule(
                         var reservation: de.aidadventure.server.prefill.RerankReservation? = null
                         try {
                             reservation = try {
-                                coordinator.reserveRerank(acceptedWarmupRequest, requestId)
+                                activeCoordinator.reserveRerank(acceptedWarmupRequest, requestId)
                             } catch (failure: Exception) {
                                 if (failure is CancellationException) throw failure
                                 logger.warn(
@@ -401,7 +408,7 @@ fun Application.adventureModule(
                                         )
                                     } finally {
                                         withContext(NonCancellable) {
-                                            coordinator.completeReservedRerank(rerankReservation, candidate)
+                                            activeCoordinator.completeReservedRerank(rerankReservation, candidate)
                                         }
                                     }
                                 }.invokeOnCompletion { rerankReservation.complete(null) }
@@ -409,7 +416,7 @@ fun Application.adventureModule(
                         } catch (failure: Exception) {
                             reservation?.let { rerankReservation ->
                                 withContext(NonCancellable) {
-                                    coordinator.completeReservedRerank(rerankReservation, null)
+                                    activeCoordinator.completeReservedRerank(rerankReservation, null)
                                 }
                             }
                             throw failure
@@ -435,12 +442,17 @@ fun Application.adventureModule(
                         logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)
                     }
                 } catch (failure: Exception) {
+                    val coordinatorDiagnostic = coordinator?.diagnosticSnapshot()
                     logger.warn(
-                        "requestId={} operation=turn result=llama_cpp_unavailable cause={} message={}",
-                        call.callId,
-                        failure.javaClass.simpleName,
-                        failure.message,
-                        failure,
+                        "requestId={} operation=turn result=llama_cpp_unavailable sessionId={} modelId={} port={} coordinator={} coordinatorState={} coordinatorSlot={} slotProcessing={} slotExcludedByLease={} slotNotProcessing={} cause={} message={}",
+                        call.callId, request.sessionId, request.modelId, request.llamaCppPort,
+                        coordinatorDiagnostic?.coordinatorId,
+                        coordinatorDiagnostic?.state,
+                        coordinatorDiagnostic?.slotId,
+                        (failure as? de.aidadventure.server.llamacpp.NoIdleLlamaCppSlotException)?.processingSlotIds,
+                        (failure as? de.aidadventure.server.llamacpp.NoIdleLlamaCppSlotException)?.excludedSlotIds,
+                        (failure as? de.aidadventure.server.llamacpp.NoIdleLlamaCppSlotException)?.idleSlotIds,
+                        failure.javaClass.simpleName, failure.message, failure,
                     )
                     try {
                         sse("diagnostic", eventJson.encodeToString(StreamDiagnostic("turn_status", "failed", fields = mapOf("code" to "llama_cpp_unavailable"))))
@@ -527,11 +539,22 @@ private suspend fun io.ktor.server.application.ApplicationCall.respondLlamaUnava
     logger: org.slf4j.Logger,
     operation: String,
     failure: Throwable,
+    key: CoordinatorKey? = null,
+    coordinatorDiagnostic: CoordinatorStateDiagnostic? = null,
 ) {
     logger.warn(
-        "requestId={} operation={} result=llama_cpp_unavailable cause={} message={}",
+        "requestId={} operation={} result=llama_cpp_unavailable sessionId={} modelId={} port={} coordinator={} coordinatorState={} coordinatorSlot={} slotProcessing={} slotExcludedByLease={} slotNotProcessing={} cause={} message={}",
         callId,
         operation,
+        key?.sessionId,
+        key?.modelId,
+        key?.port,
+        coordinatorDiagnostic?.coordinatorId,
+        coordinatorDiagnostic?.state,
+        coordinatorDiagnostic?.slotId,
+        (failure as? de.aidadventure.server.llamacpp.NoIdleLlamaCppSlotException)?.processingSlotIds,
+        (failure as? de.aidadventure.server.llamacpp.NoIdleLlamaCppSlotException)?.excludedSlotIds,
+        (failure as? de.aidadventure.server.llamacpp.NoIdleLlamaCppSlotException)?.idleSlotIds,
         failure.javaClass.simpleName,
         failure.message,
         failure,
