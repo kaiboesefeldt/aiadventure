@@ -92,7 +92,13 @@ internal data class WarmupFailure(
     val requestId: String,
     val operation: String,
     val failureCategory: String,
-)
+) {
+    // Keep exception details out of value equality while carrying them to the logger.
+    internal var exception: Throwable? = null
+}
+
+private fun warmupFailure(requestId: String, operation: String, failure: Throwable) =
+    WarmupFailure(requestId, operation, failure.javaClass.simpleName).also { it.exception = failure }
 
 interface PrefillCoordinator {
     suspend fun submit(request: PrefillRequest): PrefillDisposition
@@ -221,10 +227,12 @@ internal class SessionPrefillCoordinator(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val onWarmupFailure: (WarmupFailure) -> Unit = { failure ->
         logger.warn(
-            "requestId={} operation={} result=llama_cpp_unavailable cause={}",
+            "requestId={} operation={} result=llama_cpp_unavailable cause={} message={}",
             failure.requestId,
             failure.operation,
             failure.failureCategory,
+            failure.exception?.message,
+            failure.exception,
         )
     },
     private val diagnosticSink: (CoordinatorLeaseDiagnostic) -> Unit = { diagnostic ->
@@ -371,7 +379,7 @@ internal class SessionPrefillCoordinator(
                     onDiagnostic(StreamDiagnostic("world_state", "cancelled", transcriptRole = "game-master"))
                     throw CancellationException("World-State resolution cancelled.")
                 } catch (failure: Throwable) {
-                    onWarmupFailure(WarmupFailure(requestId, "world_state", failure.javaClass.simpleName))
+                    onWarmupFailure(warmupFailure(requestId, "world_state", failure))
                     onDiagnostic(StreamDiagnostic("world_state", "failed",
                         fields = mapOf("failureCategory" to failure.javaClass.simpleName), transcriptRole = "game-master"))
                     onDiagnostic(StreamDiagnostic("world_state", "fallback_accepted", transcriptRole = "game-master",
@@ -387,7 +395,7 @@ internal class SessionPrefillCoordinator(
                         metrics = DiagnosticMetrics(cacheTokens = metrics.cachedTokens, evaluatedTokens = metrics.evaluatedTokens)))
                 } catch (failure: Throwable) {
                     if (failure is CancellationException) throw failure
-                    onWarmupFailure(WarmupFailure(requestId, "warmup", failure.javaClass.simpleName))
+                    onWarmupFailure(warmupFailure(requestId, "warmup", failure))
                     onDiagnostic(StreamDiagnostic("warmup", "failed",
                         fields = mapOf("failureCategory" to failure.javaClass.simpleName), transcriptRole = "game-master"))
                 } finally {
@@ -598,7 +606,7 @@ internal class SessionPrefillCoordinator(
                 failure
             }
             prefillFinished(lease, operation, failure)
-            failure?.let { onWarmupFailure(WarmupFailure(requestId, "warmup", it.javaClass.simpleName)) }
+            failure?.let { onWarmupFailure(warmupFailure(requestId, "warmup", it)) }
         }
         operation.job.start()
     }
@@ -682,7 +690,7 @@ internal class SessionPrefillCoordinator(
                     failure
                 }
                 prefillFinished(lease, operation, failure)
-                failure?.let { onWarmupFailure(WarmupFailure(requestId, "rerank", it.javaClass.simpleName)) }
+                failure?.let { onWarmupFailure(warmupFailure(requestId, "rerank", it)) }
             } finally {
                 operation.reservation.completeDiagnostic(
                     operation.diagnostic ?: StreamDiagnostic("background_rerank", "prior_cancelled",
@@ -899,7 +907,7 @@ internal class SessionPrefillCoordinator(
                             gateway.maintain(warmup, lease.slot, maintenanceDiagnostics::add)
                         } catch (cancelled: CancellationException) { throw cancelled }
                         catch (failure: Exception) {
-                            onWarmupFailure(WarmupFailure(requestId, "context_recap", failure.javaClass.simpleName))
+                            onWarmupFailure(warmupFailure(requestId, "context_recap", failure))
                             request.contextCompression
                         }
                         maintenanceDiagnostics.forEach { output.send(TurnStreamEvent.Diagnostic(it)) }
