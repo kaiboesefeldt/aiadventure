@@ -207,7 +207,13 @@ fun Application.adventureModule(
                 runtimeFragmentResolver.prepare(eligibleRuntimeFragments(request.runtimeFragments, request.flags))
             } catch (failure: Exception) {
                 if (failure is CancellationException) throw failure
-                logger.warn("requestId={} operation={} failure={}", call.callId, "warmup", failure.javaClass.simpleName)
+                logger.warn(
+                    "requestId={} operation=warmup result=runtime_fragment_prepare_failed cause={} message={}",
+                    call.callId,
+                    failure.javaClass.simpleName,
+                    failure.message,
+                    failure,
+                )
             }
             val key = CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort)
             try {
@@ -429,7 +435,13 @@ fun Application.adventureModule(
                         logger.debug("requestId={} operation=turn result=client_disconnected", call.callId)
                     }
                 } catch (failure: Exception) {
-                    logger.warn("requestId={} operation=turn result=llama_cpp_unavailable cause={}", call.callId, failure.javaClass.simpleName)
+                    logger.warn(
+                        "requestId={} operation=turn result=llama_cpp_unavailable cause={} message={}",
+                        call.callId,
+                        failure.javaClass.simpleName,
+                        failure.message,
+                        failure,
+                    )
                     try {
                         sse("diagnostic", eventJson.encodeToString(StreamDiagnostic("turn_status", "failed", fields = mapOf("code" to "llama_cpp_unavailable"))))
                         sse("error", eventJson.encodeToString(StreamError("llama_cpp_unavailable", "The model service is unavailable.")))
@@ -516,7 +528,14 @@ private suspend fun io.ktor.server.application.ApplicationCall.respondLlamaUnava
     operation: String,
     failure: Throwable,
 ) {
-    logger.warn("requestId={} operation={} result=llama_cpp_unavailable cause={}", callId, operation, failure.javaClass.simpleName)
+    logger.warn(
+        "requestId={} operation={} result=llama_cpp_unavailable cause={} message={}",
+        callId,
+        operation,
+        failure.javaClass.simpleName,
+        failure.message,
+        failure,
+    )
     respond(HttpStatusCode.ServiceUnavailable, ApiError("llama_cpp_unavailable", "The model service is unavailable."))
 }
 
