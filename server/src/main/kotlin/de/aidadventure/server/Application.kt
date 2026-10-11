@@ -180,7 +180,9 @@ fun Application.adventureModule(
         get("/api/health") { call.respond(HealthResponse()) }
         post("/api/session/release") {
             val request = call.receive<SessionReleaseRequest>()
-            if (request.sessionId.isBlank() || request.sessionId.length > MAX_SESSION_ID_LENGTH) {
+            if (request.sessionId.isBlank() ||
+                request.sessionId.length > RequestValidator.MAX_SESSION_ID_LENGTH
+            ) {
                 call.respond(HttpStatusCode.BadRequest, invalidRequestError())
                 return@post
             }
@@ -730,7 +732,7 @@ object RequestValidator {
 
     private fun invalid() = invalidRequestError()
 
-    private const val MAX_SESSION_ID_LENGTH = 256
+    const val MAX_SESSION_ID_LENGTH = 256
     private const val MAX_MODEL_ID_LENGTH = 256
     private const val MAX_NAME_LENGTH = 256
     private const val MAX_SCENARIO_LENGTH = 200_000
