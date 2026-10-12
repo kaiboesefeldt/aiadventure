@@ -116,6 +116,59 @@ class DebugPanelTest {
     }
 
     @Test
+    fun `actual prompt fields show only new occurrences across calls and changed world state`() {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        fun message(role: String, content: String) = "<|turn>$role\n$content<turn|>\n"
+        fun prompt(vararg messages: String) = messages.joinToString("") + "<|turn>model\n"
+        fun event(id: String, fields: Map<String, String>) = DebugEvent(id, "session", id, 0, 1, "llm_call", "completed", fields = fields)
+        val system = message("system", "# Harbor rules")
+        val initial = message("user", "INITIAL SITUATION: At the harbor")
+        val state = message("user", "AUTHORITATIVE CURRENT LOCATION: Kai")
+        val opening = message("model", "The fog rolls in.")
+        val action = message("user", "Look around")
+        try {
+            flushSync { root.render(DebugPanel.create {
+                scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+                session = GameSession("session", "scenario", "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+                events = listOf(
+                    event("warmup", mapOf("prompt" to prompt(system, state, initial))),
+                    event("introduction", mapOf("prompt" to prompt(system, state, initial))).copy(kind = "llama_completion"),
+                    event("combined", mapOf("prompt" to prompt(system, state, initial, opening, message("user", "Update world state")), "output" to "At the harbor")),
+                    event("analysis", mapOf("world_state_prompt" to prompt(system, state, initial, opening, message("user", "Update world state")))),
+                    event("action", mapOf("prompt" to prompt(system, state, initial, opening, action), "output" to "You see a boat.")),
+                    event("changed", mapOf("rerank_prompt" to prompt(system, message("user", "AUTHORITATIVE CURRENT LOCATION: Steg"), initial, opening, action, message("assistant", "You see a boat."), action))),
+                    event("duplicate", mapOf("prompt" to prompt(system, state, initial, opening, action).removeSuffix("\n"))),
+                    event("cue", mapOf("prompt" to "<|turn>assistant")),
+                    event("plain", mapOf("prompt" to "Unstructured diagnostic prompt")),
+                )
+                onClose = {}
+                onClear = {}
+            }) }
+            assertEquals(3, container.querySelectorAll("#debug-event-warmup .debug-chat-turn").length)
+            assertEquals(0, container.querySelectorAll("#debug-event-introduction .debug-chat-turn").length)
+            assertEquals(2, container.querySelectorAll("#debug-event-combined .debug-chat-turn").length)
+            assertEquals(true, container.querySelector("#debug-event-combined")?.textContent?.contains("The fog rolls in"))
+            assertEquals(0, container.querySelectorAll("#debug-event-analysis .debug-chat-turn").length)
+            assertEquals(1, container.querySelectorAll("#debug-event-action .debug-chat-turn").length)
+            assertEquals("UserLook around", container.querySelector("#debug-event-action .debug-chat-turn")?.textContent)
+            assertEquals(2, container.querySelectorAll("#debug-event-changed .debug-chat-turn").length)
+            assertEquals(true, container.querySelector("#debug-event-changed")?.textContent?.contains("Steg"))
+            assertEquals(true, container.querySelector("#debug-event-changed")?.textContent?.contains("Look around"))
+            assertEquals(false, container.querySelector("#debug-event-changed")?.textContent?.contains("You see a boat"))
+            assertEquals(0, container.querySelectorAll("#debug-event-duplicate .debug-chat-turn").length)
+            assertEquals(0, container.querySelectorAll("#debug-event-duplicate .debug-prompt").length)
+            assertEquals(0, container.querySelectorAll("#debug-event-cue .debug-chat-turn, #debug-event-cue .debug-prompt").length)
+            assertEquals(false, container.textContent?.contains("<|turn>"))
+            assertEquals("Unstructured diagnostic prompt", container.querySelector("#debug-event-plain .debug-prompt")?.textContent)
+        } finally {
+            flushSync { root.unmount() }
+            container.remove()
+        }
+    }
+
+    @Test
     fun `repository order survives a reset turn counter after reload`() {
         val container = document.createElement("div")
         document.body.appendChild(container)
