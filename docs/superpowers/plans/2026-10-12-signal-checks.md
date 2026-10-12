@@ -53,8 +53,8 @@ Interfaces: server `SignalCheckDefinition` and request `signalChecks` matching T
 
 ### Task 3: Whole-branch verification and integration
 
-- [ ] Independently review full diff against spec including error/cancellation paths and browser persistence.
-- [ ] Address review findings through implementer; run full serialized `./gradlew check`.
+- [x] Independently review full diff against spec including error/cancellation paths and browser persistence.
+- [x] Address review findings through implementer; run full serialized `./gradlew check`.
 - [ ] Verify runtime process state, commit docs, merge main, remove task worktree/branch, report verification and live-measurement limits.
 
 ## Verification evidence
