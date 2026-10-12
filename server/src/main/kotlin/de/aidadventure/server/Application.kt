@@ -283,18 +283,25 @@ fun Application.adventureModule(
                     finalSignalFlags = request.flags
                     val resolved = activeCoordinator.resolvedTurnFor(request) ?: ResolvedTurn(request, null)
                     fun diagnostic(value: StreamDiagnostic) = sse("diagnostic", eventJson.encodeToString(value))
-                    diagnostic(StreamDiagnostic(
-                        kind = "turn_state", stage = "initial", transcriptRole = "player",
-                        fields = mapOf(
-                            "location" to resolved.request.worldState.location,
-                            "narrativeFocus" to resolved.request.worldState.narrativeFocus,
-                            "signals" to request.signals.keys.joinToString(", "),
-                        ) + request.flags.mapKeys { (name, _) -> "flag:${name}" }.mapValues { it.value.toString() } +
-                            resolved.request.contextCompression.diagnosticFields(),
-                    ))
+                    var admittedPrimaryRequest = resolved.request
                     val stream = withIdleLeaseEvictionRetry(
                         prefillRegistry, key, call.callId ?: "unknown", "turn", logger,
-                    ) { activeCoordinator.beginTurn(resolved.request, call.callId ?: "unknown") }
+                    ) {
+                        activeCoordinator.beginTurn(resolved.request, call.callId ?: "unknown") { admitted ->
+                            request = request.copy(flags = admitted.flags, worldState = admitted.worldState, contextCompression = admitted.contextCompression)
+                            finalSignalFlags = request.flags
+                            admittedPrimaryRequest = admitted
+                            diagnostic(StreamDiagnostic(
+                                kind = "turn_state", stage = "initial", transcriptRole = "player",
+                                fields = mapOf(
+                                    "location" to admitted.worldState.location,
+                                    "narrativeFocus" to admitted.worldState.narrativeFocus,
+                                    "signals" to request.signals.keys.joinToString(", "),
+                                ) + request.flags.mapKeys { (name, _) -> "flag:${name}" }.mapValues { it.value.toString() } +
+                                    admitted.contextCompression.diagnosticFields(),
+                            ))
+                        }
+                    }
                     val generated = StringBuilder()
                     var completedMetrics: TurnMetrics? = null
                     var completedCompression = request.contextCompression
@@ -356,7 +363,7 @@ fun Application.adventureModule(
                         )
                         val operationDiagnostics = mutableListOf<StreamDiagnostic>()
                         val acceptedWorldState = activeCoordinator.resolveWorldStateAndWarmup(
-                            resolved.request.copy(contextCompression = completedCompression),
+                            admittedPrimaryRequest.copy(contextCompression = completedCompression),
                             generated.toString(),
                             warmupRequest,
                             WorldStateResolutionRequest(request.sessionId, request.scenarioMarkdown, request.worldState, request.playerAction, generated.toString(), request.locations),

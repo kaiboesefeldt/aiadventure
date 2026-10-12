@@ -145,6 +145,10 @@ interface PrefillCoordinator {
         onDiagnostic: (StreamDiagnostic) -> Unit,
     ): WorldState = resolveWorldStateAndWarmup(primaryRequest, gameMasterResponse, request, resolution, requestId)
     suspend fun resolvedTurnFor(request: TurnRequest): ResolvedTurn? = null
+    suspend fun beginTurn(request: TurnRequest, requestId: String, onAdmitted: (TurnRequest) -> Unit): Flow<TurnStreamEvent> {
+        onAdmitted(request)
+        return beginTurn(request, requestId)
+    }
     suspend fun beginTurn(request: TurnRequest, requestId: String): Flow<TurnStreamEvent> = beginTurn(request)
     suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent>
     fun tryBeginIdleClose(): Boolean
@@ -298,14 +302,18 @@ internal class SessionPrefillCoordinator(
     }
 
     override suspend fun finishPostTurn(requestId: String, flags: Map<String, Boolean>) {
+        val gate = mutex.withLock { postTurnGate?.takeIf { it.requestId == requestId } } ?: return
+        // Coordinator work survives a disconnected HTTP waiter. Settle it before releasing successors.
+        val operation = gate.operation
+        operation?.job?.join()
+        val settledFlags = (operation as? RerankingOperation)?.signalOutcome?.flags ?: flags
         mutex.withLock {
-            postTurnGate?.takeIf { it.requestId == requestId }?.let { gate ->
+            if (postTurnGate === gate) {
                 postTurnGate = null
-                gate.flags.complete(flags)
+                gate.flags.complete(settledFlags)
             }
         }
     }
-
 
     override suspend fun diagnosticSnapshot(): CoordinatorStateDiagnostic = mutex.withLock {
         val activeLease = state.activeLeaseOrNull()
@@ -410,6 +418,7 @@ internal class SessionPrefillCoordinator(
             check(!closed) { "Prefill coordinator is closed." }
             val current = state as? State.Ready ?: error("World-State resolution requires a retained turn slot.")
             val worldStateOperation = WorldStateOperation(++generation)
+            postTurnGate?.takeIf { it.requestId == requestId }?.operation = worldStateOperation
             state = State.Prefilling(current.lease, worldStateOperation, resolvedTurn = null, pending = null)
             worldStateOperation.job = scope.launch(start = CoroutineStart.LAZY) {
                 val accepted = try {
@@ -541,18 +550,29 @@ internal class SessionPrefillCoordinator(
 
     override suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent> = beginTurn(request, "unknown")
 
-    override suspend fun beginTurn(request: TurnRequest, requestId: String): Flow<TurnStreamEvent> {
-        val readyRequest = awaitPostTurn(request)
-        return beginReadyTurn(readyRequest, requestId)
+    override suspend fun beginTurn(request: TurnRequest, requestId: String): Flow<TurnStreamEvent> =
+        beginTurn(request, requestId) {}
+
+    override suspend fun beginTurn(request: TurnRequest, requestId: String, onAdmitted: (TurnRequest) -> Unit): Flow<TurnStreamEvent> {
+        var followingRequest = request
+        while (true) {
+            var gate: PostTurnGate? = null
+            val admitted = mutex.withLock {
+                gate = postTurnGate
+                if (gate == null) beginReadyTurnLocked(followingRequest, requestId, onAdmitted) else null
+            }
+            if (admitted != null) return admitted
+            followingRequest = followingRequest.copy(flags = requireNotNull(gate).flags.await())
+        }
     }
 
-    private suspend fun beginReadyTurn(request: TurnRequest, requestId: String): Flow<TurnStreamEvent> = mutex.withLock {
-        if (closed) return@withLock rejectedTurn("Prefill coordinator is closed.")
+    private fun beginReadyTurnLocked(request: TurnRequest, requestId: String, onAdmitted: (TurnRequest) -> Unit): Flow<TurnStreamEvent> {
+        if (closed) return rejectedTurn("Prefill coordinator is closed.")
 
-        when (val current = state) {
-            State.Idle -> startTurnLocked(request.withNextFragment(), requestId = requestId)
+        return when (val current = state) {
+            State.Idle -> startTurnLocked(request.withNextFragment(), requestId = requestId, onAdmitted = onAdmitted)
             is State.Prefilling -> {
-                val execution = TurnExecution(requestId).also(TurnExecution::initialize)
+                val execution = TurnExecution(requestId, onAdmitted).also(TurnExecution::initialize)
                 state = State.TurnWaiting(current.lease, current.operation, current.resolvedTurn, request, execution)
                 execution.flow()
             }
@@ -560,12 +580,12 @@ internal class SessionPrefillCoordinator(
             is State.Ready -> {
                 val resolved = current.resolvedTurn?.takeIf { it.matches(request) }?.forRequest(request)
                     ?: request.withNextFragment()
-                startTurnLocked(resolved, current.lease, requestId)
+                startTurnLocked(resolved, current.lease, requestId, onAdmitted)
             }
             is State.ReleasePending -> {
                 releaseLeaseLocked(current.lease)
                 state = State.Idle
-                startTurnLocked(request.withNextFragment(), requestId = requestId)
+                startTurnLocked(request.withNextFragment(), requestId = requestId, onAdmitted = onAdmitted)
             }
 
             is State.TurnWaiting, is State.Turning -> rejectedTurn("A turn is already in progress for this coordinator.")
@@ -691,6 +711,7 @@ internal class SessionPrefillCoordinator(
         nextFragment = null
         val lease = existingLease ?: acquireLease(request.llamaCppPort)
         val operation = RerankingOperation(RerankReservation(++generation))
+        postTurnGate?.takeIf { it.requestId == requestId }?.operation = operation
         pruneBackgroundReservationsLocked()
         backgroundReservations[operation.reservation.operationId] = operation.reservation
         state = State.Prefilling(lease, operation, resolvedTurn = null, pending = null)
@@ -805,9 +826,9 @@ internal class SessionPrefillCoordinator(
         return operation
     }
 
-    private fun startTurnLocked(resolvedTurn: ResolvedTurn, existingLease: Lease? = null, requestId: String = "unknown"): Flow<TurnStreamEvent> {
+    private fun startTurnLocked(resolvedTurn: ResolvedTurn, existingLease: Lease? = null, requestId: String = "unknown", onAdmitted: (TurnRequest) -> Unit = {}): Flow<TurnStreamEvent> {
         val lease = existingLease ?: acquireLease(resolvedTurn.request.llamaCppPort)
-        val execution = TurnExecution(requestId).also(TurnExecution::initialize)
+        val execution = TurnExecution(requestId, onAdmitted).also(TurnExecution::initialize)
         state = State.Turning(lease, execution)
         recordLeaseTransition("turn_handoff", lease)
         execution.handoff(lease, resolvedTurn, drainTurnDiagnostics())
@@ -979,7 +1000,7 @@ internal class SessionPrefillCoordinator(
         }
     }
 
-    private inner class TurnExecution(private val requestId: String) {
+    private inner class TurnExecution(private val requestId: String, private val onAdmitted: (TurnRequest) -> Unit = {}) {
         private val ready = CompletableDeferred<Lease>()
         private val output = Channel<TurnStreamEvent>(Channel.RENDEZVOUS)
         private val collected = AtomicBoolean()
@@ -1050,7 +1071,14 @@ internal class SessionPrefillCoordinator(
             check(collected.compareAndSet(false, true)) { "Turn flow can only be collected once." }
             job.start()
             try {
-                for (event in output) emit(event)
+                var admitted = false
+                for (event in output) {
+                    if (!admitted && this@TurnExecution::request.isInitialized) {
+                        onAdmitted(request)
+                        admitted = true
+                    }
+                    emit(event)
+                }
             } finally {
                 withContext(NonCancellable) {
                     cancelAndJoin(CancellationException("Turn collector stopped."))
@@ -1147,6 +1175,7 @@ internal class SessionPrefillCoordinator(
 
     private class PostTurnGate(val requestId: String, val initialFlags: Map<String, Boolean>) {
         val flags = CompletableDeferred<Map<String, Boolean>>()
+        var operation: Operation? = null
     }
 
     private class Lease(val port: Int, val slot: LlamaCppSlot) {
