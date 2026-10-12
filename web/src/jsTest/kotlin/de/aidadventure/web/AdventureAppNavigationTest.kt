@@ -38,6 +38,78 @@ import web.html.HTMLElement
 
 class AdventureAppNavigationTest {
     @OptIn(DelicateCoroutinesApi::class)
+    @Test fun `action queued after input readiness waits for final flags without aborting checks`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        val scenario = Scenario("scenario", "Harbor", "---\nflags: {visited: false}\n---\n# Harbor", 1)
+        val session = GameSession("session", scenario.id, "Saved game", messages = listOf(GameMessage("game-master", "Welcome", 1)), createdAt = 1, updatedAt = 1)
+        val firstReady = CompletableDeferred<Unit>()
+        val finishChecks = CompletableDeferred<Unit>()
+        val nextRequest = CompletableDeferred<TurnRequest>()
+        val saved = mutableListOf<GameSession>()
+        var stops = 0
+        var turns = 0
+        val sessions = object : SessionRepository {
+            override suspend fun list() = listOf(session)
+            override suspend fun save(session: GameSession) { saved += session }
+            override suspend fun find(id: String) = session
+            override suspend fun delete(id: String) = Unit
+        }
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+            override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+            override fun stopActiveTurn() { stops++ }
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
+                turns++
+                onToken("You enter.")
+                onInputReady()
+                if (turns == 1) {
+                    firstReady.complete(Unit)
+                    finishChecks.await()
+                } else nextRequest.complete(request)
+                return TurnCompletion(TurnMetrics(null, null, null), WorldState(), flags = mapOf("visited" to true))
+            }
+        }
+        suspend fun enterAction(value: String) {
+            val input = container.querySelector("#player-action").asDynamic()
+            js("Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, value)")
+            input.dispatchEvent(js("new Event('input', { bubbles: true })"))
+            nextBrowserTick()
+            container.click(".action-form button.primary-button")
+            nextBrowserTick()
+        }
+        try {
+            flushSync { root.render(AdventureApp.create {
+                scenarioRepository = scenarioRepository(scenario)
+                sessionRepository = sessions
+                this.api = api
+                initialScenarios = listOf(scenario)
+            }) }
+            container.clickButtonNamed(scenario.name)
+            nextBrowserTick()
+            container.clickButtonNamed(session.title)
+            nextBrowserTick()
+            enterAction("enter")
+            withTimeout(2000) { firstReady.await() }
+            nextBrowserTick()
+            enterAction("look around")
+            assertEquals(0, stops, "Background event checks must keep their active stream")
+            assertEquals(false, nextRequest.isCompleted)
+            finishChecks.complete(Unit)
+            val following = withTimeout(2000) { nextRequest.await() }
+            assertEquals("look around", following.playerAction)
+            assertEquals(true, following.flags["visited"])
+            assertEquals(true, saved.any { it.flags["visited"] == true })
+        } finally {
+            finishChecks.complete(Unit)
+            nextBrowserTick()
+            flushSync { root.unmount() }
+            container.remove()
+        }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
     @Test
     fun `opening debug panel recovers a persisted scheduled outcome after reload`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")

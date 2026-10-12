@@ -266,6 +266,7 @@ object TurnRequestMapper {
             initialSituation = if (includeInitialSituation) parsed.initialSituationSetting else "",
             flags = parsed.initialFlags + session.flags,
             signals = parsed.signals.mapValues { (_, assignments) -> assignments.map { FlagAssignment(it.flag, it.value) } },
+            signalChecks = parsed.signalChecks.map { SignalCheckDefinition(it.name, it.description, it.conditions.map { condition -> FlagCondition(condition.flag, condition.value) }) },
         )
     }
 }
@@ -287,6 +288,7 @@ object PrefillRequestMapper {
             locations = parsed.locations,
             flags = parsed.initialFlags + session.flags,
             signals = parsed.signals.mapValues { (_, assignments) -> assignments.map { FlagAssignment(it.flag, it.value) } },
+            signalChecks = parsed.signalChecks.map { SignalCheckDefinition(it.name, it.description, it.conditions.map { condition -> FlagCondition(condition.flag, condition.value) }) },
         )
     }
 }
@@ -306,6 +308,7 @@ object WarmupRequestMapper {
             locations = parsed.locations,
             flags = parsed.initialFlags + session.flags,
             signals = parsed.signals.mapValues { (_, assignments) -> assignments.map { FlagAssignment(it.flag, it.value) } },
+            signalChecks = parsed.signalChecks.map { SignalCheckDefinition(it.name, it.description, it.conditions.map { condition -> FlagCondition(condition.flag, condition.value) }) },
         )
     }
 }
@@ -325,6 +328,9 @@ data class RuntimeFragmentDefinition(
 data class FlagCondition(val flag: String, val value: Boolean)
 
 @Serializable
+data class SignalCheckDefinition(val name: String, val description: String, val conditions: List<FlagCondition> = emptyList())
+
+@Serializable
 data class FlagAssignment(val flag: String, val value: Boolean)
 
 @Serializable
@@ -340,6 +346,7 @@ data class TurnRequest(
     val initialSituation: String = "",
     val flags: Map<String, Boolean> = emptyMap(),
     val signals: Map<String, List<FlagAssignment>> = emptyMap(),
+    val signalChecks: List<SignalCheckDefinition> = emptyList(),
 )
 
 @Serializable
@@ -355,6 +362,7 @@ data class PrefillRequest(
     val locations: Map<String, String> = emptyMap(),
     val flags: Map<String, Boolean> = emptyMap(),
     val signals: Map<String, List<FlagAssignment>> = emptyMap(),
+    val signalChecks: List<SignalCheckDefinition> = emptyList(),
 )
 
 @Serializable
@@ -368,6 +376,7 @@ data class WarmupRequest(
     val locations: Map<String, String> = emptyMap(),
     val flags: Map<String, Boolean> = emptyMap(),
     val signals: Map<String, List<FlagAssignment>> = emptyMap(),
+    val signalChecks: List<SignalCheckDefinition> = emptyList(),
 )
 
 @Serializable

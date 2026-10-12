@@ -7,6 +7,46 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertContains
 
 class ScenarioFrontmatterTest {
+    @Test fun `legacy signal without fragments uses its name as event fallback`() {
+        val parsed = ScenarioFrontmatter.parse("---\nflags: {visited: false}\nsignals:\n  visit:\n    condition: {visited: false}\n    triggers:\n      - set-flag: {visited: true}\n---\n# Harbor")
+        assertEquals(listOf(SignalCheckDefinition("visit", "visit", listOf(FlagCondition("visited", false)))), parsed.signalChecks)
+    }
+
+    @Test fun `rejects malformed event descriptions and signal conditions with field paths`() {
+        listOf(
+            "description: ''" to "signals.visit.description",
+            "description: true" to "signals.visit.description",
+            "condition: {missing: true}" to "signals.visit.condition.missing",
+            "condition: {visited: unknown}" to "signals.visit.condition.visited",
+        ).forEach { (field, path) ->
+            val error = assertFailsWith<IllegalArgumentException> {
+                ScenarioFrontmatter.parse("---\nflags: {visited: false}\nsignals:\n  visit:\n    $field\n    triggers:\n      - set-flag: {visited: true}\n---\n# Harbor")
+            }
+            assertContains(error.message.orEmpty(), path)
+        }
+    }
+
+    @Test fun `accepts explicit event description independently of fragment conditions`() {
+        val parsed = ScenarioFrontmatter.parse("""---
+flags: {visited: false, ready: true}
+signals:
+  visit:
+    description: The player actually enters the tower.
+    condition: {visited: false}
+    triggers:
+      - set-flag: {visited: true}
+runtime-fragments:
+  unrelated guidance:
+    condition: {ready: true}
+    signal: visit
+    emit-text: Describe the weather.
+---
+# Harbor
+""")
+        assertEquals(listOf(FlagAssignment("visited", true)), parsed.signals["visit"])
+        assertEquals(listOf(SignalCheckDefinition("visit", "The player actually enters the tower.", listOf(FlagCondition("visited", false)))), parsed.signalChecks)
+    }
+
     @Test fun `parses flags signals and inherited fragment emissions`() {
         val parsed = ScenarioFrontmatter.parse("""---
 flags:
@@ -33,6 +73,7 @@ runtime-fragments:
 
         assertEquals(mapOf("visited" to false, "has-map" to true), parsed.initialFlags)
         assertEquals(mapOf("visit" to listOf(FlagAssignment("visited", true))), parsed.signals)
+        assertEquals(listOf(SignalCheckDefinition("visit", "lighthouse\ndrawing", listOf(FlagCondition("has-map", true))), SignalCheckDefinition("visit", "lighthouse\nchart", listOf(FlagCondition("has-map", true)))), parsed.signalChecks)
         assertEquals(
             listOf(
                 RuntimeFragmentDefinition("lighthouse\ndrawing", "A tower stands ahead.\nA cross marks the coast.", listOf(FlagCondition("has-map", true)), listOf("visit")),
