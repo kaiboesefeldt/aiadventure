@@ -37,6 +37,33 @@ class LlamaCppGatewayTest {
         filterNot { it is TurnStreamEvent.Diagnostic }
 
     @Test
+    fun `signal checks use cached single token grammar on the held slot and share completed context`() = runBlocking {
+        nativeServer(completionContent = "Y").use { server ->
+            val gateway = LlamaCppGateway()
+            val completed = warmup(server.port).copy(history = listOf(ChatEntry("player", "Enter"),
+                ChatEntry("game-master", "You enter the lighthouse.")), worldState = WorldState("Lighthouse", "Talk to keeper"))
+            val diagnostics = mutableListOf<de.aidadventure.server.model.StreamDiagnostic>()
+            for (description in listOf("Player entered lighthouse", "Player met keeper")) {
+                assertEquals("Y", gateway.checkSignal(completed,
+                    de.aidadventure.server.model.SignalCheckDefinition("event", description), LlamaCppSlot(2), diagnostics::add))
+            }
+            val messages = server.templateBodies.map { it.jsonObject.getValue("messages").jsonArray }
+            assertEquals(messages[0].dropLast(1), messages[1].dropLast(1))
+            assertTrue(messages[0].toString().contains("You enter the lighthouse."))
+            assertTrue(messages[0].toString().contains("Talk to keeper"))
+            assertTrue(messages[0].dropLast(1).toString().contains("actual"))
+            server.completionBodies.forEach { body ->
+                val json = body.jsonObject
+                assertEquals(2, json.getValue("id_slot").jsonPrimitive.int)
+                assertEquals(1, json.getValue("n_predict").jsonPrimitive.int)
+                assertEquals("root ::= \"Y\" | \"N\"", json.getValue("grammar").jsonPrimitive.content)
+                assertTrue(json.getValue("cache_prompt").jsonPrimitive.boolean)
+            }
+            assertEquals(listOf(17, 17), diagnostics.map { it.metrics?.cacheTokens })
+        }
+    }
+
+    @Test
     fun `native final timings become measured diagnostic metrics while absent values stay absent`() = runBlocking {
         nativeServer(finalTimingFields = ",\"tokens_predicted\":7,\"timings\":{\"prompt_n\":3,\"prompt_ms\":12.5,\"prompt_per_second\":240.0,\"predicted_n\":7,\"predicted_ms\":35.0,\"predicted_per_second\":200.0}").use { server ->
             val events = LlamaCppGateway().stream(request(server.port), LlamaCppSlot(2)).toList()

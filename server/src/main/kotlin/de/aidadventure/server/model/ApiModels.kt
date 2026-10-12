@@ -24,6 +24,9 @@ data class RuntimeFragmentDefinition(
 data class FlagCondition(val flag: String, val value: Boolean)
 
 @Serializable
+data class SignalCheckDefinition(val name: String, val description: String, val conditions: List<FlagCondition> = emptyList())
+
+@Serializable
 data class FlagAssignment(val flag: String, val value: Boolean)
 
 data class FragmentRelevanceRequest(
@@ -53,6 +56,7 @@ data class TurnRequest(
     val initialSituation: String = "",
     val flags: Map<String, Boolean> = emptyMap(),
     val signals: Map<String, List<FlagAssignment>> = emptyMap(),
+    val signalChecks: List<SignalCheckDefinition> = emptyList(),
 )
 
 @Serializable
@@ -70,6 +74,7 @@ data class PrefillRequest(
     val locations: Map<String, String> = emptyMap(),
     val flags: Map<String, Boolean> = emptyMap(),
     val signals: Map<String, List<FlagAssignment>> = emptyMap(),
+    val signalChecks: List<SignalCheckDefinition> = emptyList(),
 )
 
 @Serializable
@@ -85,6 +90,7 @@ data class WarmupRequest(
     val locations: Map<String, String> = emptyMap(),
     val flags: Map<String, Boolean> = emptyMap(),
     val signals: Map<String, List<FlagAssignment>> = emptyMap(),
+    val signalChecks: List<SignalCheckDefinition> = emptyList(),
 )
 
 @Serializable
