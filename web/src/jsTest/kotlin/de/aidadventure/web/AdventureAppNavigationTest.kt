@@ -188,7 +188,7 @@ class AdventureAppNavigationTest {
             GameMessage("game-master", "At the pier", 4, messageId = "player-output"),
         ), createdAt = 1, updatedAt = 4)
         val events = recordingDebugEvents(
-            DebugEvent("intro-event", "session", "intro", 0, 2, "turn_status", "completed", transcriptRole = "game-master", transcriptIndex = 0, transcriptMessageId = "intro-output"),
+            DebugEvent("intro-event", "session", "intro", 0, 2, "turn_status", "completed", fields = mapOf("output" to "Welcome"), transcriptRole = "game-master", transcriptIndex = 0, transcriptMessageId = "intro-output"),
             DebugEvent("player-event", "session", "turn", 0, 3, "turn_state", "initial", fields = mapOf("location" to "Harbor"), transcriptRole = "player", transcriptIndex = 1, transcriptMessageId = "player-action"),
         )
         val elementPrototype = js("Element.prototype")
@@ -525,7 +525,7 @@ class AdventureAppNavigationTest {
         val session = GameSession("session", scenario.id, "Harbor", "local-model", emptyList(), 1, 1, flags = mapOf("doorOpen" to true))
         val events = recordingDebugEvents(
             DebugEvent("earlier", "session", "turn", 1, 1, "background_rerank", "prior_completed", fields = mapOf("source" to "prior_turn", "result" to "accepted", "fragment" to "Hidden fragment", "matchText" to "lighthouse", "playerAction" to "player secret action", "gameMasterOutput" to "game master secret output"), turnOrder = 1),
-            DebugEvent("later", "session", "turn", 2, 2, "turn_metrics", "completed", metrics = DiagnosticMetrics(promptTokens = 21, contextTokens = 4096, predictedTokens = 12, cacheTokens = 15, evaluatedTokens = 6, promptDurationMs = 100.0, predictedDurationMs = 200.0, promptTokensPerSecond = 210.0, predictedTokensPerSecond = 60.0, totalDurationMs = 300), turnOrder = 1),
+            DebugEvent("later", "session", "turn", 2, 2, "llama_completion", "completed", metrics = DiagnosticMetrics(promptTokens = 21, contextTokens = 4096, predictedTokens = 12, cacheTokens = 15, evaluatedTokens = 6, promptDurationMs = 100.0, predictedDurationMs = 200.0, promptTokensPerSecond = 210.0, predictedTokensPerSecond = 60.0, totalDurationMs = 300), turnOrder = 1),
             DebugEvent("compression", "session", "turn", 3, 3, "context_compression", "completed", fields = mapOf("epoch" to "2", "activeCoversThroughTurn" to "4"), turnOrder = 1),
             DebugEvent("signal", "session", "turn", 4, 4, "signal", "emitted", fields = mapOf("emittedSignals" to "unlock", "flag:doorOpen" to "true"), turnOrder = 1),
             DebugEvent("applied", "session", "turn", 5, 5, "flags", "applied", fields = mapOf("emittedSignals" to "unlock", "appliedAssignments" to "doorOpen=true"), turnOrder = 1),
@@ -556,7 +556,9 @@ class AdventureAppNavigationTest {
             assertEquals(true, panel.textContent?.contains("true") == true)
             panel.unsafeCast<HTMLElement>().click("button[title='Frontmatter']")
             nextBrowserTick()
-            assertEquals(true, panel.textContent?.contains("set-flag") == true)
+            assertEquals(false, panel.textContent?.contains("unlock") == true)
+            assertEquals(false, panel.textContent?.contains("set-flag") == true)
+            assertEquals(true, panel.querySelector("#debug-header-popover-frontmatter")?.textContent?.contains("doorOpen") == true)
             panel.unsafeCast<HTMLElement>().click("button[title='System prompt']")
             nextBrowserTick()
             assertEquals(true, panel.textContent?.contains("Prompt body") == true)
@@ -590,7 +592,7 @@ class AdventureAppNavigationTest {
         val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
         val session = GameSession("session", scenario.id, "Harbor", "local-model", emptyList(), 1, 1)
         val events = recordingDebugEvents(
-            DebugEvent("active", "session", "turn", 0, 1, "turn_status", "completed"),
+            DebugEvent("active", "session", "turn", 0, 1, "turn_status", "completed", fields = mapOf("result" to "accepted")),
             DebugEvent("other", "other", "turn", 0, 1, "turn_status", "completed"),
         )
         try {
@@ -638,7 +640,7 @@ class AdventureAppNavigationTest {
             container.click("button[aria-label='Open debug panel']")
             nextBrowserTick()
             assertEquals(0, container.querySelectorAll(".debug-event").length)
-            events.append(DebugEvent("new", "session", "turn", 0, 1, "turn_status", "completed"))
+            events.append(DebugEvent("new", "session", "turn", 0, 1, "turn_status", "completed", fields = mapOf("result" to "accepted")))
             Promise<Unit> { resolve, _ -> window.setTimeout({ resolve(Unit) }, 650) }.await()
             assertEquals(1, container.querySelectorAll(".debug-event").length)
         } finally { container.remove() }
@@ -793,7 +795,7 @@ class AdventureAppNavigationTest {
             GameMessage("game-master", "Long narrative paragraph. ".repeat(30), it.toLong(), messageId = "message-$it")
         }, createdAt = 1, updatedAt = 60)
         val events = recordingDebugEvents(*Array(60) {
-            DebugEvent("layout-$it", session.id, "turn-$it", it, it.toLong(), "turn_status", "completed",
+            DebugEvent("layout-$it", session.id, "turn-$it", it, it.toLong(), "turn_status", "completed", fields = mapOf("result" to "accepted"),
                 transcriptRole = "game-master", transcriptMessageId = "message-$it")
         })
         try {
