@@ -29,9 +29,15 @@ config.plugins.push(
   require('karma-webpack'),
 );
 
+const appStylesheetPath = path.resolve(__dirname, '../../../../web/src/jsMain/resources/app.css');
 const lighthouseExamplePath = path.resolve(__dirname, '../../../../examples/test-game.md');
 function createLighthouseExampleMiddleware() {
   return (request, response, next) => {
+    if (request.url.split('?')[0] == '/app.css') {
+      response.setHeader('Content-Type', 'text/css');
+      response.end(fs.readFileSync(appStylesheetPath));
+      return;
+    }
     if (request.url.split('?')[0] != '/examples/test-game.md') return next();
     response.setHeader('Content-Type', 'text/markdown; charset=utf-8');
     response.end(fs.readFileSync(lighthouseExamplePath));
