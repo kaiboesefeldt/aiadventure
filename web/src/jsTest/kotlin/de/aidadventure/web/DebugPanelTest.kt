@@ -19,6 +19,126 @@ import web.dom.document
 
 class DebugPanelTest {
     @Test
+    fun `each card title toggles its body without triggering transcript navigation`() {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        var navigation = -1
+        try {
+            flushSync { root.render(DebugPanel.create {
+                scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+                session = GameSession("session", "scenario", "Harbor", messages = listOf(
+                    de.aidadventure.web.model.GameMessage("player", "Look", 1, messageId = "player-1")
+                ), createdAt = 1, updatedAt = 1)
+                events = listOf(
+                    DebugEvent("content", "session", "turn", 0, 1, "fragment", "selected", fields = mapOf("fragment" to "A locked gate"), transcriptRole = "player", transcriptMessageId = "player-1"),
+                    DebugEvent("status", "session", "turn", 1, 2, "turn_status", "completed"),
+                )
+                onClose = {}
+                onClear = {}
+                onShowTranscript = { navigation = it }
+            }) }
+            for (id in listOf("content", "status")) {
+                val toggle = assertNotNull(container.querySelector("#debug-event-$id .debug-event-toggle"))
+                val bodyId = assertNotNull(toggle.getAttribute("aria-controls"))
+                val body = assertNotNull(document.getElementById(bodyId.unsafeCast<web.dom.ElementId>()))
+                assertEquals("BUTTON", toggle.tagName)
+                assertEquals("true", toggle.getAttribute("aria-expanded"))
+                assertEquals(false, body.asDynamic().hidden as Boolean)
+                flushSync { toggle.asDynamic().click() }
+                assertEquals("false", toggle.getAttribute("aria-expanded"))
+                assertEquals(true, body.asDynamic().hidden as Boolean)
+                toggle.asDynamic().dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })"))
+                assertEquals(-1, navigation, "Title keyboard activation must not navigate")
+                flushSync { toggle.asDynamic().click() }
+                assertEquals("true", toggle.getAttribute("aria-expanded"))
+                assertEquals(false, body.asDynamic().hidden as Boolean)
+                toggle.asDynamic().dispatchEvent(js("new MouseEvent('dblclick', { bubbles: true })"))
+                assertEquals(-1, navigation, "Title double click must not navigate")
+            }
+            container.querySelector("#debug-event-content .debug-event-body")?.asDynamic()?.dispatchEvent(js("new MouseEvent('dblclick', { bubbles: true })"))
+            assertEquals(0, navigation, "Card content keeps its transcript cross-link")
+        } finally {
+            flushSync { root.unmount() }
+            container.remove()
+        }
+    }
+
+    @Test
+    fun `empty and repeated diagnostics are hidden while lifecycle and real flag changes remain`() {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        val history = "<|turn>user\nLook<turn|>"
+        fun event(id: String, kind: String, stage: String, fields: Map<String, String> = emptyMap()) =
+            DebugEvent(id, "session", "turn", 0, 1, kind, stage, fields = fields)
+        try {
+            flushSync { root.render(DebugPanel.create {
+                scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+                session = GameSession("session", "scenario", "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+                events = listOf(
+                    event("initial", "llm_call", "completed", mapOf("history" to history)),
+                    event("duplicate", "llm_call", "completed", mapOf("history" to history, "output" to " ")),
+                    event("cue", "llm_call", "completed", mapOf("prompt" to "<|turn>model\n")),
+                    event("empty-fragment", "fragment", "selected", mapOf("fragment" to "", "emittedSignals" to "")),
+                    event("flags", "flags", "applied", mapOf("emittedSignals" to "unlock", "appliedAssignments" to "door=true")),
+                    event("blank-delta", "flags", "applied", mapOf("flag:door" to " ")),
+                    event("empty-metrics", "llm_call", "completed").copy(metrics = de.aidadventure.web.model.DiagnosticMetrics()),
+                    event("zero-metrics", "turn_metrics", "completed").copy(metrics = de.aidadventure.web.model.DiagnosticMetrics(cacheTokens = 0)),
+                    event("delta", "flags", "applied", mapOf("flag:door" to "true")),
+                    event("completed", "turn_status", "completed"),
+                    event("cancelled", "world_state", "cancelled"),
+                    event("failed", "warmup", "failed"),
+                )
+                onClose = {}
+                onClear = {}
+            }) }
+            for (id in listOf("duplicate", "cue", "empty-fragment", "flags", "blank-delta", "empty-metrics")) {
+                assertEquals(null, container.querySelector("#debug-event-$id"), "$id has no additional information")
+            }
+            for (id in listOf("initial", "delta", "completed", "cancelled", "failed", "zero-metrics")) {
+                assertNotNull(container.querySelector("#debug-event-$id"), "$id remains meaningful")
+            }
+            assertEquals(true, container.querySelector("#debug-event-delta .debug-flag-delta")?.textContent?.contains("door: true"))
+            assertEquals(1, container.querySelectorAll(".debug-event section").length)
+        } finally {
+            flushSync { root.unmount() }
+            container.remove()
+        }
+    }
+
+    @Test
+    fun `domain state and fragment decisions are inline while technical details stay in popovers`() {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        try {
+            flushSync { root.render(DebugPanel.create {
+                scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+                session = GameSession("session", "scenario", "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+                events = listOf(DebugEvent("domain", "session", "turn", 0, 1, "turn_state", "initial", fields = mapOf(
+                    "location" to "Harbor", "narrativeFocus" to "Find the captain", "signals" to "unlock",
+                    "fragment" to "A locked gate", "matchText" to "gate", "result" to "accepted", "flag:door" to "false",
+                    "failureCategory" to "GatewayUnavailable", "operationId" to "op-1", "warmup_cache_tokens" to "42",
+                )))
+                onClose = {}
+                onClear = {}
+            }) }
+            val body = assertNotNull(container.querySelector(".debug-event-body"))
+            for (value in listOf("Harbor", "Find the captain", "unlock", "A locked gate", "gate", "accepted", "door: false", "GatewayUnavailable")) {
+                assertEquals(true, body.textContent?.contains(value), "$value must be readable without a popover")
+            }
+            assertEquals(false, body.textContent?.contains("op-1"))
+            assertEquals(false, body.textContent?.contains("42"))
+            assertEquals(true, container.querySelector(".debug-event-tools details:last-child .debug-event-popover")?.textContent?.contains("op-1"))
+        } finally {
+            flushSync { root.unmount() }
+            container.remove()
+        }
+    }
+
+
+    @Test
     fun `header tools and event details are available in compact popovers`() {
         val container = document.createElement("div")
         document.body.appendChild(container)

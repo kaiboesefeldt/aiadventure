@@ -90,7 +90,6 @@ internal val AdventureApp = FC<AdventureAppProps> { props ->
     }
     ReactHTML.main {
         className = ClassName("app-shell")
-        ReactHTML.h1 { className = ClassName("app-title"); +"AI Adventure" }
         when (val current = view) {
             View.Library -> libraryView(scenarios, importError, { file -> scope.launch {
                 runCatching { file.asDynamic().text().unsafeCast<kotlin.js.Promise<String>>().await() }
