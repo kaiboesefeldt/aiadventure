@@ -104,15 +104,14 @@ characters, independently of the much smaller effective model prompt.
 
 ## Test-Spiel laden
 
-Wenn du nur ein direkt ladbares Beispiel willst, importiere diese Datei in der
-Browser-Oberfläche:
+Importiere ein Beispiel in der Browser-Oberfläche:
 
-```text
-examples/test-game.md
-```
-
-Das Szenario heißt "Test Spiel: Der Leuchtturm von Nebelhafen" und ist so
-geschrieben, dass du es sofort als kleines Smoke-Test-Spiel starten kannst.
+- [`examples/test-game.md`](examples/test-game.md): komplexes Leuchtturm-Spiel
+  mit bedingten Runtime-Fragmenten und älteren Signalzuordnungen.
+- [`examples/signal-test-game.md`](examples/signal-test-game.md): **Signal-Test:
+  Der Leuchtturm von Nebelhafen**, mit drei Flags und vier unabhängigen
+  Ereignisprüfungen. Die [manuelle Prüfanleitung](examples/signal-test-game-testing.md)
+  beschreibt Ereignisse, Gegenchecks, Zustandswechsel und Debug-Metriken.
 
 ## Verify
 

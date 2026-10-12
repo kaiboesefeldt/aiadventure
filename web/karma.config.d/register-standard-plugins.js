@@ -30,7 +30,10 @@ config.plugins.push(
 );
 
 const appStylesheetPath = path.resolve(__dirname, '../../../../web/src/jsMain/resources/app.css');
-const lighthouseExamplePath = path.resolve(__dirname, '../../../../examples/test-game.md');
+const lighthouseExamplePaths = {
+  '/examples/test-game.md': path.resolve(__dirname, '../../../../examples/test-game.md'),
+  '/examples/signal-test-game.md': path.resolve(__dirname, '../../../../examples/signal-test-game.md'),
+};
 function createLighthouseExampleMiddleware() {
   return (request, response, next) => {
     if (request.url.split('?')[0] == '/app.css') {
@@ -38,9 +41,10 @@ function createLighthouseExampleMiddleware() {
       response.end(fs.readFileSync(appStylesheetPath));
       return;
     }
-    if (request.url.split('?')[0] != '/examples/test-game.md') return next();
+    const examplePath = lighthouseExamplePaths[request.url.split('?')[0]];
+    if (!examplePath) return next();
     response.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-    response.end(fs.readFileSync(lighthouseExamplePath));
+    response.end(fs.readFileSync(examplePath));
   };
 }
 createLighthouseExampleMiddleware.$inject = [];
