@@ -97,7 +97,7 @@ class AdventureAppNavigationTest {
         ), createdAt = 1, updatedAt = 2)
         val events = recordingDebugEvents(
             DebugEvent("stale-intro", "session", "failed-intro", 0, 1, "turn_status", "started", transcriptRole = "game-master", transcriptIndex = 0, transcriptMessageId = "discarded-intro-output"),
-            DebugEvent("prior-intro", "session", "next-turn", 0, 3, "background_rerank", "prior_completed", fields = mapOf("source" to "prior_turn"), transcriptRole = "game-master", transcriptIndex = 0, transcriptMessageId = "saved-intro-output"),
+            DebugEvent("prior-intro", "session", "next-turn", 0, 3, "background_rerank", "prior_completed", fields = mapOf("source" to "prior_turn", "result" to "accepted"), transcriptRole = "game-master", transcriptIndex = 0, transcriptMessageId = "saved-intro-output"),
         )
         val elementPrototype = js("Element.prototype")
         val oldBounds = elementPrototype.getBoundingClientRect
