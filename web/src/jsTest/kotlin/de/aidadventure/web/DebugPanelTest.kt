@@ -149,6 +149,65 @@ class DebugPanelTest {
     }
 
     @Test
+    fun `technical only warmups and empty compression disappear while useful bodies and completion metrics remain`() {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        fun event(id: String, kind: String, stage: String, fields: Map<String, String> = emptyMap()) =
+            DebugEvent(id, "session", "turn", 0, 1, kind, stage, fields = fields)
+        val metrics = de.aidadventure.web.model.DiagnosticMetrics(cacheTokens = 15, evaluatedTokens = 6)
+        val prompt = "<|turn>user\nExplore the harbor<turn|><|turn>model\n"
+        try {
+            flushSync { root.render(DebugPanel.create {
+                scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+                session = GameSession("session", "scenario", "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+                events = listOf(
+                    event("warmup-ids", "warmup", "completed", mapOf("operationId" to "op-1", "source" to "prior_turn")),
+                    event("warmup-metrics", "warmup", "completed").copy(metrics = metrics),
+                    event("warmup-prompt", "llm_call", "warmup", mapOf("prompt" to prompt, "output" to "Suppressed warmup output")).copy(metrics = metrics),
+                    event("warmup-replay", "llm_call", "warmup", mapOf("prompt" to prompt)).copy(metrics = metrics),
+                    event("compression-empty", "context_compression", "completed", mapOf("epoch" to "0", "active" to "false", "pending" to "false")),
+                    event("compression-zero", "context_compression", "completed", mapOf("activeRecapChars" to "0", "activeCoversThroughTurn" to "0")),
+                    event("compression-real", "context_compression", "completed", mapOf(
+                        "epoch" to "2", "active" to "true", "pending" to "true",
+                        "activeCoversThroughTurn" to "4", "activeCoversThroughEntry" to "8", "activeRecapChars" to "320",
+                        "pendingCoversThroughTurn" to "6", "pendingCoversThroughEntry" to "12", "pendingRecapChars" to "480",
+                    )),
+                    event("compression-recap", "context_compression", "completed", mapOf("recap" to "The captain has left the harbor.")),
+                    event("warmup-error", "warmup", "failed", mapOf("failureCategory" to "NoIdleLlamaCppSlotException")),
+                    event("compression-error", "context_compression", "failed", mapOf("reason" to "Recap exceeds the context limit")),
+                    event("completion", "llama_completion", "completed").copy(metrics = metrics),
+                )
+                onClose = {}
+                onClear = {}
+            }) }
+            for (id in listOf("warmup-ids", "warmup-metrics", "warmup-replay", "compression-empty", "compression-zero")) {
+                assertEquals(null, container.querySelector("#debug-event-$id"), "$id has no visible body information")
+            }
+            for ((id, content) in mapOf(
+                "warmup-prompt" to "Explore the harbor", "compression-recap" to "The captain has left the harbor.",
+                "warmup-error" to "NoIdleLlamaCppSlotException", "compression-error" to "Recap exceeds the context limit",
+            )) {
+                val body = assertNotNull(container.querySelector("#debug-event-$id .debug-event-body"))
+                assertEquals(true, body.textContent?.contains(content), "$id preserves useful content")
+            }
+            assertEquals(false, container.textContent?.contains("Suppressed warmup output"))
+            val compression = assertNotNull(container.querySelector("#debug-event-compression-real .debug-event-body"))
+            val values = compression.querySelectorAll(".debug-domain-fields dd")
+            assertEquals(listOf("true", "true", "4", "8", "320", "6", "12", "480"),
+                List(values.length) { index -> values.item(index)?.textContent },
+                "All real compression checkpoint values remain inline")
+            val completionDetails = assertNotNull(container.querySelector("#debug-event-completion summary[title='Event details']"))
+            completionDetails.asDynamic().click()
+            assertEquals(true, container.querySelector("#debug-event-completion details[open]")?.textContent?.contains("15"))
+            assertEquals(true, container.querySelector("#debug-event-completion details[open]")?.textContent?.contains("6"))
+        } finally {
+            flushSync { root.unmount() }
+            container.remove()
+        }
+    }
+
+    @Test
     fun `domain state and fragment decisions are inline while technical details stay in popovers`() {
         val container = document.createElement("div")
         document.body.appendChild(container)

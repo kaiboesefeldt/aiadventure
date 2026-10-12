@@ -214,7 +214,7 @@ private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex:
             className = ClassName("debug-event-body")
             asDynamic().hidden = !expanded
             val domainFields = event.fields.filter { (key, value) ->
-                isDiagnosticMetadataField(key) && !isTechnicalDetailField(key) && value.isNotBlank()
+                event.isInlineDomainField(key, value)
             }
             if (domainFields.isNotEmpty()) ReactHTML.dl {
                 className = ClassName("debug-fields debug-domain-fields")
@@ -272,15 +272,33 @@ private fun DebugEvent.hasDisplayInformation(): Boolean {
     if (kind == "turn_metrics") return false
     // The signal event already reports changed flags. Repeated assignments are not new state.
     if (kind == "flags" && stage == "applied") return flagDeltas(this).isNotEmpty()
-    if (metrics.hasInformation()) return true
-    if (fields.any { (key, value) ->
-            when {
-                isChatSnapshotField(key) -> value.hasChatContent()
-                key == "output" || key.endsWith("_output") -> isVisibleOutputField(key) && value.isNotBlank()
-                else -> (isDiagnosticMetadataField(key) || key.startsWith("flag:")) && value.isNotBlank()
-            }
-        }) return true
-    return false
+    // Completion metrics are useful on their own; other cards need visible body content.
+    return hasBodyInformation() || (kind == "llama_completion" && metrics.hasInformation())
+}
+
+private fun DebugEvent.hasBodyInformation(): Boolean =
+    fields.any { (key, value) ->
+        when {
+            isChatSnapshotField(key) -> value.hasChatContent()
+            key == "output" || key.endsWith("_output") -> isVisibleOutputField(key) && value.isNotBlank()
+            key.startsWith("flag:") -> value.isNotBlank()
+            else -> isInlineDomainField(key, value)
+        }
+    }
+
+private fun DebugEvent.isInlineDomainField(key: String, value: String): Boolean {
+    if (!isDiagnosticMetadataField(key) || value.isBlank()) return false
+    if (!isTechnicalDetailField(key)) return true
+    // The server reports real compression through checkpoint coverage and recap size.
+    // Empty active/pending bookkeeping should not create an otherwise empty card.
+    if (kind != "context_compression") return false
+    return when (key) {
+        "active", "pending" -> value == "true"
+        "activeCoversThroughTurn", "activeCoversThroughEntry", "activeRecapChars",
+        "pendingCoversThroughTurn", "pendingCoversThroughEntry", "pendingRecapChars" ->
+            (value.toIntOrNull() ?: 0) > 0
+        else -> false
+    }
 }
 
 private fun isTechnicalDetailField(key: String): Boolean {
