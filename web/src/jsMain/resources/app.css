@@ -127,7 +127,6 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .debug-fields dt { color: var(--muted-ink); }
 .debug-fields dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .debug-flag-delta { display: flex; flex-wrap: wrap; gap: 0.25rem 0.6rem; margin: 0.25rem 0; font-size: 0.78rem; color: var(--muted-ink); }
-.debug-signal-name { margin-top: 0.2rem; font-size: 0.78rem; font-weight: 650; }
 .debug-markdown { font-size: 0.86rem; }
 .debug-markdown > :first-child { margin-top: 0.15rem; }
 .debug-markdown > :last-child { margin-bottom: 0.15rem; }

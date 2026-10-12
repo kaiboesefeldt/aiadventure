@@ -88,7 +88,9 @@ internal val DebugPanel = FC<DebugPanelProps> { props ->
                     } else if (tool == "frontmatter") {
                         ReactHTML.h3 { +"Frontmatter" }
                         val yaml = frontmatterYaml(props.scenario.markdown)
-                        if (yaml == null) ReactHTML.p { +"No frontmatter" } else renderYamlNode(yaml)
+                        if (yaml == null) ReactHTML.p { +"No frontmatter" } else renderYamlNode(
+                            yaml, hideFragmentSignals = yaml.flags != null || yaml.signals != null,
+                        )
                     } else {
                         ReactHTML.h3 { +"System prompt" }
                         ReactHTML.pre { className = ClassName("debug-prompt"); +ScenarioFrontmatter.parse(props.scenario.markdown).promptMarkdown }
@@ -183,7 +185,7 @@ private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex:
                     ariaControls = "debug-event-body-${event.id}".unsafeCast<web.dom.ElementId>()
                     onClick = { onToggle() }
                     onDoubleClick = { it.stopPropagation() }
-                    +humanLabel(event.kind)
+                    +(if (event.kind == "signal" && deltas.isNotEmpty()) "Flag changes" else humanLabel(event.kind))
                 }
             }
             ReactHTML.span { className = ClassName("debug-stage"); +humanLabel(event.stage) }
@@ -212,7 +214,7 @@ private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex:
             className = ClassName("debug-event-body")
             asDynamic().hidden = !expanded
             val domainFields = event.fields.filter { (key, value) ->
-                isDiagnosticMetadataField(key) && !isTechnicalDetailField(key) && key != "emittedSignals" && value.isNotBlank()
+                isDiagnosticMetadataField(key) && !isTechnicalDetailField(key) && value.isNotBlank()
             }
             if (domainFields.isNotEmpty()) ReactHTML.dl {
                 className = ClassName("debug-fields debug-domain-fields")
@@ -229,10 +231,6 @@ private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex:
             histories.forEach { (key, value) -> ReactHTML.section {
                 ReactHTML.h5 { +(if (key == "history") "Chat history" else humanLabel(key.removeSuffix("_history"))) }
                 renderChatHistory(value)
-            } }
-            event.fields["emittedSignals"]?.takeIf(String::isNotBlank)?.let { signals -> ReactHTML.div {
-                className = ClassName("debug-signal-name")
-                +"Signal: $signals"
             } }
             if (deltas.isNotEmpty()) ReactHTML.div {
                 className = ClassName("debug-flag-delta")
@@ -270,6 +268,8 @@ private fun String.hasChatContent(): Boolean =
     isNotBlank() && (parseChatHistory(this)?.any { it.content.isNotBlank() } ?: true)
 
 private fun DebugEvent.hasDisplayInformation(): Boolean {
+    // Completion events already expose these metrics; the aggregate repeats them.
+    if (kind == "turn_metrics") return false
     // The signal event already reports changed flags. Repeated assignments are not new state.
     if (kind == "flags" && stage == "applied") return flagDeltas(this).isNotEmpty()
     if (metrics.hasInformation()) return true
@@ -280,9 +280,7 @@ private fun DebugEvent.hasDisplayInformation(): Boolean {
                 else -> (isDiagnosticMetadataField(key) || key.startsWith("flag:")) && value.isNotBlank()
             }
         }) return true
-    // Lifecycle stages themselves carry information even when there is no payload.
-    return kind in setOf("turn_status", "world_state", "warmup", "background_rerank") ||
-        stage.endsWith("failed") || stage.endsWith("cancelled") || stage == "incomplete"
+    return false
 }
 
 private fun isTechnicalDetailField(key: String): Boolean {
@@ -298,6 +296,7 @@ private fun isTechnicalDetailField(key: String): Boolean {
 private fun isDiagnosticMetadataField(key: String): Boolean =
     key != "prompt" && !key.endsWith("_prompt") && key != "output" && !key.endsWith("_output") &&
         key != "history" && !key.endsWith("_history") && !key.startsWith("flag:") &&
+        key != "signals" && key != "emittedSignals" &&
         key.lowercase().filter { it.isLetter() } !in setOf(
             "playeraction", "gamemasteroutput", "generated", "generatedtext", "response", "responsetext",
         )
@@ -411,7 +410,12 @@ private fun frontmatterYaml(markdown: String): dynamic {
     return if (end < 0) null else DebugYaml.load(normalized.substring(4, end))
 }
 
-private fun ChildrenBuilder.renderYamlNode(value: dynamic, ancestors: dynamic = js("new WeakSet()")) {
+private fun ChildrenBuilder.renderYamlNode(
+    value: dynamic,
+    ancestors: dynamic = js("new WeakSet()"),
+    path: List<String> = emptyList(),
+    hideFragmentSignals: Boolean = false,
+) {
     val container = value != null && js("typeof value === 'object'") as Boolean
     if (container) {
         if (ancestors.has(value) as Boolean) {
@@ -423,14 +427,19 @@ private fun ChildrenBuilder.renderYamlNode(value: dynamic, ancestors: dynamic = 
     when {
         value == null -> ReactHTML.span { +"null" }
         js("Array.isArray(value)") as Boolean -> ReactHTML.ol {
-            value.unsafeCast<Array<dynamic>>().forEach { item -> ReactHTML.li { renderYamlNode(item, ancestors) } }
+            value.unsafeCast<Array<dynamic>>().forEach { item -> ReactHTML.li { renderYamlNode(item, ancestors, path, hideFragmentSignals) } }
         }
         js("typeof value === 'object'") as Boolean -> ReactHTML.ul {
             js("Object.entries(value)").unsafeCast<Array<Array<dynamic>>>().forEach { entry ->
-                ReactHTML.li {
-                    ReactHTML.strong { +entry[0].toString() }
+                val key = entry[0].toString()
+                // Filter schema fields only: custom metadata and original text remain intact.
+                val signalDefinition = path.isEmpty() && key == "signals"
+                val fragmentEmission = hideFragmentSignals && path.firstOrNull() == "runtime-fragments" &&
+                    path.size > 1 && key == "signal" && js("typeof entry[1] === 'string'") as Boolean
+                if (!signalDefinition && !fragmentEmission) ReactHTML.li {
+                    ReactHTML.strong { +key }
                     +": "
-                    renderYamlNode(entry[1], ancestors)
+                    renderYamlNode(entry[1], ancestors, path + key, hideFragmentSignals)
                 }
             }
         }

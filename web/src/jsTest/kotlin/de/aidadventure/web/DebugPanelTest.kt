@@ -32,7 +32,7 @@ class DebugPanelTest {
                 ), createdAt = 1, updatedAt = 1)
                 events = listOf(
                     DebugEvent("content", "session", "turn", 0, 1, "fragment", "selected", fields = mapOf("fragment" to "A locked gate"), transcriptRole = "player", transcriptMessageId = "player-1"),
-                    DebugEvent("status", "session", "turn", 1, 2, "turn_status", "completed"),
+                    DebugEvent("status", "session", "turn", 1, 2, "turn_status", "completed", fields = mapOf("result" to "accepted")),
                 )
                 onClose = {}
                 onClear = {}
@@ -65,7 +65,7 @@ class DebugPanelTest {
     }
 
     @Test
-    fun `empty and repeated diagnostics are hidden while lifecycle and real flag changes remain`() {
+    fun `empty and repeated diagnostics are hidden while payloads and real flag changes remain`() {
         val container = document.createElement("div")
         document.body.appendChild(container)
         val root = createRoot(container)
@@ -81,19 +81,21 @@ class DebugPanelTest {
                     event("duplicate", "llm_call", "completed", mapOf("history" to history, "output" to " ")),
                     event("cue", "llm_call", "completed", mapOf("prompt" to "<|turn>model\n")),
                     event("empty-fragment", "fragment", "selected", mapOf("fragment" to "", "emittedSignals" to "")),
+                    event("static-signals", "turn_state", "initial", mapOf("signals" to "unlock")),
+                    event("emitted-signals", "signal", "emitted", mapOf("emittedSignals" to "unlock")),
                     event("flags", "flags", "applied", mapOf("emittedSignals" to "unlock", "appliedAssignments" to "door=true")),
                     event("blank-delta", "flags", "applied", mapOf("flag:door" to " ")),
                     event("empty-metrics", "llm_call", "completed").copy(metrics = de.aidadventure.web.model.DiagnosticMetrics()),
-                    event("zero-metrics", "turn_metrics", "completed").copy(metrics = de.aidadventure.web.model.DiagnosticMetrics(cacheTokens = 0)),
+                    event("zero-metrics", "llama_completion", "completed").copy(metrics = de.aidadventure.web.model.DiagnosticMetrics(cacheTokens = 0)),
                     event("delta", "flags", "applied", mapOf("flag:door" to "true")),
-                    event("completed", "turn_status", "completed"),
-                    event("cancelled", "world_state", "cancelled"),
-                    event("failed", "warmup", "failed"),
+                    event("completed", "turn_status", "completed", mapOf("result" to "accepted")),
+                    event("cancelled", "world_state", "cancelled", mapOf("reason" to "Newer turn")),
+                    event("failed", "warmup", "failed", mapOf("code" to "GatewayUnavailable")),
                 )
                 onClose = {}
                 onClear = {}
             }) }
-            for (id in listOf("duplicate", "cue", "empty-fragment", "flags", "blank-delta", "empty-metrics")) {
+            for (id in listOf("duplicate", "cue", "empty-fragment", "flags", "blank-delta", "empty-metrics", "static-signals", "emitted-signals")) {
                 assertEquals(null, container.querySelector("#debug-event-$id"), "$id has no additional information")
             }
             for (id in listOf("initial", "delta", "completed", "cancelled", "failed", "zero-metrics")) {
@@ -101,6 +103,45 @@ class DebugPanelTest {
             }
             assertEquals(true, container.querySelector("#debug-event-delta .debug-flag-delta")?.textContent?.contains("door: true"))
             assertEquals(1, container.querySelectorAll(".debug-event section").length)
+        } finally {
+            flushSync { root.unmount() }
+            container.remove()
+        }
+    }
+
+    @Test
+    fun `stage only cards disappear while payload errors and completion metrics remain`() {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        fun event(id: String, kind: String, stage: String, fields: Map<String, String> = emptyMap()) =
+            DebugEvent(id, "session", "turn", 0, 1, kind, stage, fields = fields)
+        try {
+            val metrics = de.aidadventure.web.model.DiagnosticMetrics(cacheTokens = 15, evaluatedTokens = 6)
+            flushSync { root.render(DebugPanel.create {
+                scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+                session = GameSession("session", "scenario", "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+                events = listOf(
+                    event("status", "turn_status", "completed"),
+                    event("warmup", "warmup", "completed"),
+                    event("background", "background_rerank", "scheduled"),
+                    event("world-state", "world_state", "cancelled"),
+                    event("failure", "generation", "failed"),
+                    event("incomplete", "generation", "incomplete"),
+                    event("aggregate", "turn_metrics", "completed").copy(metrics = metrics),
+                    event("completion", "llama_completion", "completed").copy(metrics = metrics),
+                    event("error", "turn_status", "failed", mapOf("code" to "GatewayUnavailable")),
+                )
+                onClose = {}
+                onClear = {}
+            }) }
+            for (id in listOf("status", "warmup", "background", "world-state", "failure", "incomplete", "aggregate")) {
+                assertEquals(null, container.querySelector("#debug-event-$id"), "$id has no additional information")
+            }
+            val completion = assertNotNull(container.querySelector("#debug-event-completion"))
+            assertEquals(true, completion.textContent?.contains("15"), "Completion cache metrics remain accessible")
+            assertEquals(true, completion.textContent?.contains("6"), "Completion evaluation metrics remain accessible")
+            assertEquals(true, container.querySelector("#debug-event-error")?.textContent?.contains("GatewayUnavailable"))
         } finally {
             flushSync { root.unmount() }
             container.remove()
@@ -125,9 +166,10 @@ class DebugPanelTest {
                 onClear = {}
             }) }
             val body = assertNotNull(container.querySelector(".debug-event-body"))
-            for (value in listOf("Harbor", "Find the captain", "unlock", "A locked gate", "gate", "accepted", "door: false", "GatewayUnavailable")) {
+            for (value in listOf("Harbor", "Find the captain", "A locked gate", "gate", "accepted", "door: false", "GatewayUnavailable")) {
                 assertEquals(true, body.textContent?.contains(value), "$value must be readable without a popover")
             }
+            assertEquals(false, container.textContent?.contains("unlock"), "Static signal names must be absent from cards and popovers")
             assertEquals(false, body.textContent?.contains("op-1"))
             assertEquals(false, body.textContent?.contains("42"))
             assertEquals(true, container.querySelector(".debug-event-tools details:last-child .debug-event-popover")?.textContent?.contains("op-1"))
@@ -176,7 +218,7 @@ class DebugPanelTest {
     }
 
     @Test
-    fun `signal assignments and structured chat history are rendered as readable entries`() {
+    fun `signal flag changes and structured chat history remain without signal listings`() {
         val container = document.createElement("div")
         document.body.appendChild(container)
         val root = createRoot(container)
@@ -189,6 +231,8 @@ class DebugPanelTest {
                 onClear = {}
             }) }
             assertEquals(true, container.querySelector(".debug-flag-delta")?.textContent?.contains("doorOpen") == true)
+            assertEquals(false, container.textContent?.contains("unlock"), "Emitted signal names must be absent from cards and popovers")
+            assertEquals("Flag changes", container.querySelector("#debug-event-signal h4")?.textContent)
             assertEquals(2, container.querySelectorAll(".debug-chat-turn").length)
             assertEquals(false, container.textContent?.contains("<|turn>") == true)
         } finally {
@@ -261,7 +305,7 @@ class DebugPanelTest {
                     event("changed", mapOf("rerank_prompt" to prompt(system, message("user", "AUTHORITATIVE CURRENT LOCATION: Steg"), initial, opening, action, message("assistant", "You see a boat."), action))),
                     event("duplicate", mapOf("prompt" to prompt(system, state, initial, opening, action).removeSuffix("\n"))),
                     event("cue", mapOf("prompt" to "<|turn>assistant")),
-                    event("plain", mapOf("prompt" to "Unstructured diagnostic prompt")),
+                    event("plain", mapOf("prompt" to "Unstructured diagnostic prompt: signals: unlock", "output" to "Signal unlock triggered.")),
                 )
                 onClose = {}
                 onClear = {}
@@ -281,7 +325,8 @@ class DebugPanelTest {
             assertEquals(0, container.querySelectorAll("#debug-event-duplicate .debug-prompt").length)
             assertEquals(0, container.querySelectorAll("#debug-event-cue .debug-chat-turn, #debug-event-cue .debug-prompt").length)
             assertEquals(false, container.textContent?.contains("<|turn>"))
-            assertEquals("Unstructured diagnostic prompt", container.querySelector("#debug-event-plain .debug-prompt")?.textContent)
+            assertEquals("Unstructured diagnostic prompt: signals: unlock", container.querySelector("#debug-event-plain .debug-prompt")?.textContent)
+            assertEquals("Signal unlock triggered.", container.querySelector("#debug-event-plain .debug-markdown")?.textContent)
         } finally {
             flushSync { root.unmount() }
             container.remove()
@@ -298,8 +343,8 @@ class DebugPanelTest {
                 scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
                 session = GameSession("session", "scenario", "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
                 events = listOf(
-                    DebugEvent("old", "session", "before-reload", 0, 10, "turn_status", "old turn", turnOrder = 12),
-                    DebugEvent("new", "session", "after-reload", 0, 20, "turn_status", "new turn", turnOrder = 0),
+                    DebugEvent("old", "session", "before-reload", 0, 10, "turn_status", "old turn", fields = mapOf("result" to "accepted"), turnOrder = 12),
+                    DebugEvent("new", "session", "after-reload", 0, 20, "turn_status", "new turn", fields = mapOf("result" to "accepted"), turnOrder = 0),
                 )
                 onClose = {}
                 onClear = {}
@@ -310,6 +355,40 @@ class DebugPanelTest {
             assertEquals(true, cards.item(1)?.textContent?.contains("New turn"))
             assertEquals(true, cards.item(0)?.getAttribute("class")?.contains("debug-event-turn-0"))
             assertEquals(true, cards.item(1)?.getAttribute("class")?.contains("debug-event-turn-1"))
+        } finally {
+            flushSync { root.unmount() }
+            container.remove()
+        }
+    }
+
+    @Test
+    fun `frontmatter hides signal declarations and fragment emissions while keeping flags and fragment text`() {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        try {
+            // Signal declarations accept both mappings and lists of named signals.
+            for (declarations in listOf(
+                "  unlock:\n    triggers:\n      - set-flag: {door: true}",
+                "  - unlock:\n      triggers:\n        - set-flag: {door: true}",
+            )) {
+                flushSync { root.render(DebugPanel.create {
+                    scenario = Scenario("scenario", "scenario.md", "---\nflags: {door: false}\nsignals:\n$declarations\nruntime-fragments:\n  gate:\n    signal: unlock\n    emit-text: A locked gate\ncustom:\n  signal: Weather observation\n---\n# Harbor", 1)
+                    session = GameSession("session", "scenario", "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+                    events = emptyList()
+                    onClose = {}
+                    onClear = {}
+                }) }
+                val button = assertNotNull(container.querySelector("button[title='Frontmatter']"))
+                if (button.getAttribute("aria-expanded") != "true") flushSync { button.asDynamic().click() }
+                val text = assertNotNull(container.querySelector("#debug-header-popover-frontmatter")).textContent.orEmpty()
+                assertEquals(false, text.contains("unlock"), text)
+                assertEquals(false, text.contains("signals"), text)
+                assertEquals(false, text.contains("triggers"), text)
+                for (value in listOf("flags", "door", "false", "runtime-fragments", "gate", "emit-text", "A locked gate", "Weather observation")) {
+                    assertEquals(true, text.contains(value), "$value must remain in frontmatter: $text")
+                }
+            }
         } finally {
             flushSync { root.unmount() }
             container.remove()
@@ -345,7 +424,7 @@ class DebugPanelTest {
         val root = createRoot(container)
         val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
         val session = GameSession("session", "scenario", "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
-        val first = DebugEvent("first", "session", "turn", 0, 1, "turn_status", "completed")
+        val first = DebugEvent("first", "session", "turn", 0, 1, "turn_status", "completed", fields = mapOf("result" to "accepted"))
         val second = first.copy(id = "second", sequence = 1)
         val third = first.copy(id = "third", sequence = 2)
         fun render(events: List<DebugEvent>) = flushSync {
