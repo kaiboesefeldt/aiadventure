@@ -118,7 +118,7 @@ internal val DebugPanel = FC<DebugPanelProps> { props ->
                 .associateBy { it.fields["operationId"] }
             val scheduledOperationIds = ordered.filter { it.kind == "background_rerank" && it.stage == "scheduled" }
                 .mapNotNull { it.fields["operationId"] }.toSet()
-            val priorHistories = mutableMapOf<String, List<ChatHistoryMessage>>()
+            val displayedMessages = DisplayedChatMessages()
             ordered.filterNot {
                 it.kind == "background_rerank" && it.stage.startsWith("prior_") && it.fields["operationId"] in scheduledOperationIds
             }.forEach { storedEvent ->
@@ -128,12 +128,14 @@ internal val DebugPanel = FC<DebugPanelProps> { props ->
                     } ?: storedEvent
                 } else storedEvent
                 val event = completedEvent.copy(fields = completedEvent.fields.mapValues { (key, value) ->
-                    if (key != "history" && !key.endsWith("_history")) return@mapValues value
-                    val messages = parseChatHistory(value) ?: return@mapValues value
-                    val previous = priorHistories[key]
-                    priorHistories[key] = messages
-                    if (previous == null) value else messages.drop(commonPrefixLength(previous, messages)).formatChatHistory()
+                    if (!isChatSnapshotField(key)) value else displayedMessages.onlyNewMessages(value)
                 })
+                // Outputs are already visible in their own section. Count their next model
+                // occurrence so a subsequent prompt does not display them again as context.
+                completedEvent.fields.filterKeys { it == "output" || it.endsWith("_output") }.forEach { (key, output) ->
+                    val promptKey = if (key == "output") "prompt" else key.removeSuffix("_output") + "_prompt"
+                    displayedMessages.recordOutput(output, completedEvent.fields[promptKey])
+                }
                 val messageId = event.transcriptMessageId
                 val index = if (messageId == null) -1 else visibleMessages.indexOfFirst { it.messageId == messageId && it.role == event.transcriptRole }
                 val turnIndex = if (index >= 0) index else ordered.asSequence().filter { it.turnId == event.turnId }
@@ -191,7 +193,7 @@ private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex:
         }
         prompts.forEach { (key, prompt) -> ReactHTML.section {
             ReactHTML.h5 { +(if (key == "prompt") "Prompt" else "${humanLabel(key.removeSuffix("_prompt"))} prompt") }
-            ReactHTML.pre { className = ClassName("debug-prompt"); +prompt }
+            renderChatHistory(prompt)
         } }
         outputs.forEach { (key, output) -> ReactHTML.section {
             ReactHTML.h5 { +(if (key == "output") "LLM output" else "${humanLabel(key.removeSuffix("_output"))} output") }
@@ -251,24 +253,56 @@ private fun parseChatHistory(history: String): List<ChatHistoryMessage>? {
         if (!history.startsWith(startToken, cursor)) return null
         val roleStart = cursor + startToken.length
         val separator = history.indexOf('\n', roleStart)
-        if (separator < 0) return null
+        if (separator < 0) {
+            if (history.substring(roleStart).trim() in setOf("model", "assistant")) break
+            return null
+        }
         val end = history.indexOf(endToken, separator + 1)
-        if (end < 0) return null
         val role = history.substring(roleStart, separator).trim()
         if (role.isEmpty()) return null
+        if (end < 0) {
+            // llama.cpp templates end with an empty, open assistant generation cue.
+            if (role in setOf("model", "assistant") && history.substring(separator + 1).isBlank()) break
+            return null
+        }
         val content = history.substring(separator + 1, end).trim()
         messages += ChatHistoryMessage(role, content)
         cursor = end + endToken.length
     }
-    return messages.takeIf { it.isNotEmpty() }
+    return messages
 }
 
 private fun List<ChatHistoryMessage>.formatChatHistory(): String = joinToString("") { "<|turn>${it.role}\n${it.content}<turn|>" }
 
-private fun commonPrefixLength(first: List<ChatHistoryMessage>, second: List<ChatHistoryMessage>): Int {
-    var index = 0
-    while (index < first.size && index < second.size && first[index] == second[index]) index++
-    return index
+private fun isChatSnapshotField(key: String): Boolean =
+    key == "prompt" || key.endsWith("_prompt") || key == "history" || key.endsWith("_history")
+
+private fun ChatHistoryMessage.identity(): ChatHistoryMessage =
+    if (role == "assistant") copy(role = "model") else this
+
+/** Maximum occurrences in any snapshot: identical actions appended later remain visible. */
+private class DisplayedChatMessages {
+    private val seen = mutableMapOf<ChatHistoryMessage, Int>()
+
+    fun onlyNewMessages(snapshot: String): String {
+        val messages = parseChatHistory(snapshot) ?: return snapshot
+        val occurrences = mutableMapOf<ChatHistoryMessage, Int>()
+        val newMessages = messages.filter { message ->
+            val identity = message.identity()
+            val occurrence = (occurrences[identity] ?: 0) + 1
+            occurrences[identity] = occurrence
+            occurrence > (seen[identity] ?: 0)
+        }
+        occurrences.forEach { (message, count) -> seen[message] = maxOf(seen[message] ?: 0, count) }
+        return newMessages.formatChatHistory()
+    }
+
+    fun recordOutput(output: String, prompt: String?) {
+        if (output.isBlank()) return
+        val message = ChatHistoryMessage("model", output.trim())
+        val priorOccurrences = prompt?.let(::parseChatHistory)?.count { it.identity() == message } ?: 0
+        seen[message] = maxOf(seen[message] ?: 0, priorOccurrences + 1)
+    }
 }
 
 private fun ChildrenBuilder.renderChatHistory(history: String) {
