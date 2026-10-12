@@ -295,6 +295,22 @@ class LlamaCppGateway private constructor(
         return content
     }
 
+    suspend fun checkSignal(request: WarmupRequest, definition: de.aidadventure.server.model.SignalCheckDefinition,
+        slot: LlamaCppSlot, onCall: (StreamDiagnostic) -> Unit): String = runInterruptible {
+        val port = requirePort(request.llamaCppPort)
+        val started = System.nanoTime()
+        val prompt = applyTemplate(request.sessionId, "signal_check", port, promptFactory.buildSignalCheck(request, definition.description))
+        guard(port, slot, prompt, 1)
+        val response = postCompletion(port, CompletionRequest(prompt, slot.id, predictedTokens = 1, stream = false, grammar = YES_NO_GRAMMAR))
+        requireNotNull(response.content) { "llama.cpp signal response did not include content." }.also { content ->
+            onCall(StreamDiagnostic("llm_call", "signal_check", transcriptRole = "game-master",
+                fields = mapOf("signal" to definition.name, "prompt" to prompt, "output" to content),
+                metrics = diagnosticMetrics(response).copy(totalDurationMs = (System.nanoTime() - started) / 1_000_000)))
+            traceCompletion("signal_check", request.sessionId, CacheMetrics(response.tokensCached, response.tokensEvaluated))
+            traceFinalResponse("signal_check", request.sessionId, content)
+        }
+    }
+
     suspend fun classifyFragment(request: FragmentRelevanceRequest, slot: LlamaCppSlot): String =
         classifyFragment(request, slot) {}
 

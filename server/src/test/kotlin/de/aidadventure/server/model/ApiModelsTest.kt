@@ -12,6 +12,27 @@ import kotlin.test.assertNull
 
 class ApiModelsTest {
     @Test
+    fun `independent check validation rejects unknown signals flags and blank descriptions`() {
+        val request = TurnRequest("live", modelId = "configured-llama-cpp", scenarioMarkdown = "# S", history = emptyList(), playerAction = "look",
+            flags = mapOf("visited" to false), signals = mapOf("enter" to listOf(FlagAssignment("visited", true))))
+        for (check in listOf(SignalCheckDefinition("unknown", "Event"), SignalCheckDefinition("enter", " "),
+            SignalCheckDefinition("enter", "Event", listOf(FlagCondition("unknown", true))))) {
+            assertNotNull(RequestValidator.validate(request.copy(signalChecks = listOf(check))))
+        }
+    }
+
+    @Test
+    fun `turn accepts independent event predicates without fragment references`() {
+        val request = Json.decodeFromString<TurnRequest>("""
+            {"sessionId":"live-1","scenarioMarkdown":"# S","history":[],"playerAction":"enter",
+             "flags":{"visited":false},"signals":{"enter":[{"flag":"visited","value":true}]},
+             "signalChecks":[{"name":"enter","description":"The player entered the lighthouse.","conditions":[{"flag":"visited","value":false}]}]}
+        """.trimIndent())
+        assertNull(RequestValidator.validate(request.copy(modelId = "configured-llama-cpp")))
+        assertContains(Json.encodeToString(request), "The player entered the lighthouse.")
+    }
+
+    @Test
     fun `diagnostic metrics omit measurements that were not supplied`() {
         val payload = Json { encodeDefaults = true }.encodeToString(
             StreamDiagnostic("llama_completion", "completed", metrics = DiagnosticMetrics(cacheTokens = 17))

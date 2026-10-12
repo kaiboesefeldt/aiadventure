@@ -1,5 +1,8 @@
 package de.aidadventure.server.prefill
 
+import de.aidadventure.server.runtimefragments.SignalCheckOutcome
+import de.aidadventure.server.runtimefragments.runSignalChecks
+import de.aidadventure.server.model.SignalCheckDefinition
 import de.aidadventure.server.ResolvedTurn
 import de.aidadventure.server.llamacpp.CacheMetrics
 import de.aidadventure.server.llamacpp.LlamaCppGateway
@@ -56,12 +59,14 @@ private fun PrefillRequest.asTurnRequest() = TurnRequest(
     locations = locations,
     flags = flags,
     signals = signals,
+    signalChecks = signalChecks,
 )
 
 data class CoordinatorKey(val sessionId: String, val modelId: String, val port: Int)
 
 class RerankReservation internal constructor(internal val generation: Long) {
     val operationId: String = UUID.randomUUID().toString()
+    internal val signalOutcome = CompletableDeferred<SignalCheckOutcome>()
     private val candidate = CompletableDeferred<RuntimeFragmentDefinition?>()
     private val diagnostic = CompletableDeferred<StreamDiagnostic>()
     @Volatile internal var diagnosticCompletedAtMillis: Long? = null
@@ -104,6 +109,8 @@ private fun warmupFailure(requestId: String, operation: String, failure: Throwab
 
 interface PrefillCoordinator {
     suspend fun diagnosticSnapshot(): CoordinatorStateDiagnostic? = null
+    suspend fun awaitPostTurn(request: TurnRequest): TurnRequest = request
+    suspend fun finishPostTurn(requestId: String, flags: Map<String, Boolean>) {}
     suspend fun submit(request: PrefillRequest): PrefillDisposition
     suspend fun submit(request: PrefillRequest, resolvedTurn: ResolvedTurn): PrefillDisposition = submit(request)
     suspend fun warmup(
@@ -120,6 +127,7 @@ interface PrefillCoordinator {
         reservation: RerankReservation,
         candidate: RuntimeFragmentDefinition?,
     ): Boolean = false
+    suspend fun awaitSignalChecks(reservation: RerankReservation): SignalCheckOutcome? = null
     suspend fun awaitBackgroundDiagnostic(operationId: String): StreamDiagnostic? = null
     suspend fun resolveWorldStateAndWarmup(
         primaryRequest: TurnRequest,
@@ -137,6 +145,10 @@ interface PrefillCoordinator {
         onDiagnostic: (StreamDiagnostic) -> Unit,
     ): WorldState = resolveWorldStateAndWarmup(primaryRequest, gameMasterResponse, request, resolution, requestId)
     suspend fun resolvedTurnFor(request: TurnRequest): ResolvedTurn? = null
+    suspend fun beginTurn(request: TurnRequest, requestId: String, onAdmitted: (TurnRequest) -> Unit): Flow<TurnStreamEvent> {
+        onAdmitted(request)
+        return beginTurn(request, requestId)
+    }
     suspend fun beginTurn(request: TurnRequest, requestId: String): Flow<TurnStreamEvent> = beginTurn(request)
     suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent>
     fun tryBeginIdleClose(): Boolean
@@ -183,6 +195,7 @@ internal interface PrefillGateway {
         slot: LlamaCppSlot,
         onCall: (StreamDiagnostic) -> Unit,
     ): WorldState? = resolveWorldState(primaryRequest, gameMasterResponse, request, slot)
+    suspend fun checkSignal(request: WarmupRequest, definition: SignalCheckDefinition, slot: LlamaCppSlot, onCall: (StreamDiagnostic) -> Unit): String = error("Signal checks unsupported")
     fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent>
 }
 
@@ -227,6 +240,9 @@ internal class LlamaCppPrefillGateway(
         slot: LlamaCppSlot,
         onCall: (StreamDiagnostic) -> Unit,
     ): WorldState? = gateway.resolveWorldState(primaryRequest, gameMasterResponse, request, slot, onCall)
+
+    override suspend fun checkSignal(request: WarmupRequest, definition: SignalCheckDefinition, slot: LlamaCppSlot,
+        onCall: (StreamDiagnostic) -> Unit): String = gateway.checkSignal(request, definition, slot, onCall)
 
     override fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> = gateway.stream(request, slot)
 }
@@ -278,6 +294,26 @@ internal class SessionPrefillCoordinator(
     private val pendingTurnDiagnostics = mutableListOf<StreamDiagnostic>()
     private val backgroundReservations = mutableMapOf<String, RerankReservation>()
     private var state: State = State.Idle
+    private var postTurnGate: PostTurnGate? = null
+
+    override suspend fun awaitPostTurn(request: TurnRequest): TurnRequest {
+        val gate = mutex.withLock { postTurnGate } ?: return request
+        return request.copy(flags = gate.flags.await())
+    }
+
+    override suspend fun finishPostTurn(requestId: String, flags: Map<String, Boolean>) {
+        val gate = mutex.withLock { postTurnGate?.takeIf { it.requestId == requestId } } ?: return
+        // Coordinator work survives a disconnected HTTP waiter. Settle it before releasing successors.
+        val operation = gate.operation
+        operation?.job?.join()
+        val settledFlags = (operation as? RerankingOperation)?.signalOutcome?.flags ?: flags
+        mutex.withLock {
+            if (postTurnGate === gate) {
+                postTurnGate = null
+                gate.flags.complete(settledFlags)
+            }
+        }
+    }
 
     override suspend fun diagnosticSnapshot(): CoordinatorStateDiagnostic = mutex.withLock {
         val activeLease = state.activeLeaseOrNull()
@@ -294,7 +330,7 @@ internal class SessionPrefillCoordinator(
 
     private fun submitLocked(request: PrefillRequest, resolvedTurn: ResolvedTurn): PrefillDisposition {
         if (request.contextCompression.epoch < latestContextCompression.epoch) return PrefillDisposition.STALE
-        if (closed || state is State.Turning || state is State.TurnWaiting) {
+        if (closed || postTurnGate != null || state is State.Turning || state is State.TurnWaiting) {
             return PrefillDisposition.TURN_IN_PROGRESS
         }
         if (request.revision <= latestRevision) return PrefillDisposition.STALE
@@ -334,7 +370,7 @@ internal class SessionPrefillCoordinator(
 
     override suspend fun warmup(request: WarmupRequest, requestId: String): PrefillDisposition = mutex.withLock {
         if (request.contextCompression.epoch < latestContextCompression.epoch) return@withLock PrefillDisposition.STALE
-        if (closed || state is State.Turning || state is State.TurnWaiting) {
+        if (closed || postTurnGate != null || state is State.Turning || state is State.TurnWaiting) {
             return@withLock PrefillDisposition.TURN_IN_PROGRESS
         }
 
@@ -382,6 +418,7 @@ internal class SessionPrefillCoordinator(
             check(!closed) { "Prefill coordinator is closed." }
             val current = state as? State.Ready ?: error("World-State resolution requires a retained turn slot.")
             val worldStateOperation = WorldStateOperation(++generation)
+            postTurnGate?.takeIf { it.requestId == requestId }?.operation = worldStateOperation
             state = State.Prefilling(current.lease, worldStateOperation, resolvedTurn = null, pending = null)
             worldStateOperation.job = scope.launch(start = CoroutineStart.LAZY) {
                 val accepted = try {
@@ -417,8 +454,8 @@ internal class SessionPrefillCoordinator(
                     onDiagnostic(StreamDiagnostic("warmup", "failed",
                         fields = mapOf("failureCategory" to failure.javaClass.simpleName), transcriptRole = "game-master"))
                 } finally {
-                    worldStateOperation.result.complete(accepted)
                     prefillFinished(current.lease, worldStateOperation, null)
+                    worldStateOperation.result.complete(accepted)
                 }
             }
             worldStateOperation.job.start()
@@ -492,6 +529,8 @@ internal class SessionPrefillCoordinator(
         reservation.complete(candidate)
     }
 
+    override suspend fun awaitSignalChecks(reservation: RerankReservation): SignalCheckOutcome = reservation.signalOutcome.await()
+
     override suspend fun awaitBackgroundDiagnostic(operationId: String): StreamDiagnostic? {
         val reservation = mutex.withLock {
             pruneBackgroundReservationsLocked()
@@ -511,13 +550,29 @@ internal class SessionPrefillCoordinator(
 
     override suspend fun beginTurn(request: TurnRequest): Flow<TurnStreamEvent> = beginTurn(request, "unknown")
 
-    override suspend fun beginTurn(request: TurnRequest, requestId: String): Flow<TurnStreamEvent> = mutex.withLock {
-        if (closed) return@withLock rejectedTurn("Prefill coordinator is closed.")
+    override suspend fun beginTurn(request: TurnRequest, requestId: String): Flow<TurnStreamEvent> =
+        beginTurn(request, requestId) {}
 
-        when (val current = state) {
-            State.Idle -> startTurnLocked(request.withNextFragment(), requestId = requestId)
+    override suspend fun beginTurn(request: TurnRequest, requestId: String, onAdmitted: (TurnRequest) -> Unit): Flow<TurnStreamEvent> {
+        var followingRequest = request
+        while (true) {
+            var gate: PostTurnGate? = null
+            val admitted = mutex.withLock {
+                gate = postTurnGate
+                if (gate == null) beginReadyTurnLocked(followingRequest, requestId, onAdmitted) else null
+            }
+            if (admitted != null) return admitted
+            followingRequest = followingRequest.copy(flags = requireNotNull(gate).flags.await())
+        }
+    }
+
+    private fun beginReadyTurnLocked(request: TurnRequest, requestId: String, onAdmitted: (TurnRequest) -> Unit): Flow<TurnStreamEvent> {
+        if (closed) return rejectedTurn("Prefill coordinator is closed.")
+
+        return when (val current = state) {
+            State.Idle -> startTurnLocked(request.withNextFragment(), requestId = requestId, onAdmitted = onAdmitted)
             is State.Prefilling -> {
-                val execution = TurnExecution(requestId).also(TurnExecution::initialize)
+                val execution = TurnExecution(requestId, onAdmitted).also(TurnExecution::initialize)
                 state = State.TurnWaiting(current.lease, current.operation, current.resolvedTurn, request, execution)
                 execution.flow()
             }
@@ -525,12 +580,12 @@ internal class SessionPrefillCoordinator(
             is State.Ready -> {
                 val resolved = current.resolvedTurn?.takeIf { it.matches(request) }?.forRequest(request)
                     ?: request.withNextFragment()
-                startTurnLocked(resolved, current.lease, requestId)
+                startTurnLocked(resolved, current.lease, requestId, onAdmitted)
             }
             is State.ReleasePending -> {
                 releaseLeaseLocked(current.lease)
                 state = State.Idle
-                startTurnLocked(request.withNextFragment(), requestId = requestId)
+                startTurnLocked(request.withNextFragment(), requestId = requestId, onAdmitted = onAdmitted)
             }
 
             is State.TurnWaiting, is State.Turning -> rejectedTurn("A turn is already in progress for this coordinator.")
@@ -541,7 +596,7 @@ internal class SessionPrefillCoordinator(
         if (!mutex.tryLock()) return false
         return try {
             pruneBackgroundReservationsLocked()
-            if (closed || !state.isIdleForTtl() || backgroundReservations.isNotEmpty()) {
+            if (closed || postTurnGate != null || !state.isIdleForTtl() || backgroundReservations.isNotEmpty()) {
                 false
             } else {
                 closed = true
@@ -558,7 +613,7 @@ internal class SessionPrefillCoordinator(
         return try {
             pruneBackgroundReservationsLocked()
             val lease = state.activeLeaseOrNull()
-            if (closed || lease == null || lease.released || !state.isIdleForTtl() || backgroundReservations.isNotEmpty()) {
+            if (closed || postTurnGate != null || lease == null || lease.released || !state.isIdleForTtl() || backgroundReservations.isNotEmpty()) {
                 false
             } else {
                 closed = true
@@ -577,6 +632,8 @@ internal class SessionPrefillCoordinator(
                 closed = true
                 generation++
             }
+            postTurnGate?.let { it.flags.complete(it.initialFlags) }
+            postTurnGate = null
             Shutdown(state.activeLeaseOrNull(), state.activeJobs(), state.turnExecutionOrNull())
         }
 
@@ -654,6 +711,7 @@ internal class SessionPrefillCoordinator(
         nextFragment = null
         val lease = existingLease ?: acquireLease(request.llamaCppPort)
         val operation = RerankingOperation(RerankReservation(++generation))
+        postTurnGate?.takeIf { it.requestId == requestId }?.operation = operation
         pruneBackgroundReservationsLocked()
         backgroundReservations[operation.reservation.operationId] = operation.reservation
         state = State.Prefilling(lease, operation, resolvedTurn = null, pending = null)
@@ -675,14 +733,36 @@ internal class SessionPrefillCoordinator(
                             contextCompression = prepared.contextCompression,
                             locations = request.locations,
                         )
-                        gateway.classifyFragment(relevanceRequest, lease.slot, callDiagnostics::add)
+                        try {
+                            gateway.classifyFragment(relevanceRequest, lease.slot, callDiagnostics::add)
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) {
+                            if (request.signals.isEmpty()) throw failure
+                            logger.warn("requestId={} operation=fragment_relevance failure={}", requestId, failure.javaClass.simpleName)
+                            callDiagnostics += StreamDiagnostic("background_rerank", "failed", transcriptRole = "game-master",
+                                fields = mapOf("failureCategory" to failure.javaClass.simpleName))
+                            null
+                        }
                     }
                     val decision = response?.let(::parseFragmentDecision)
                     val accepted = candidate != null && decision == true
                     operation.resolvedFragment = candidate?.takeIf { accepted }
                     rerankDiagnosticSink(RerankDiagnostic(response, decision, accepted))
+                    if (request.signals.isNotEmpty()) {
+                        operation.signalOutcome = runSignalChecks(prepared) { definition ->
+                            gateway.checkSignal(prepared, definition, lease.slot, callDiagnostics::add)
+                        }.let { outcome -> outcome.copy(diagnostics = callDiagnostics.filter { it.stage == "signal_check" } + outcome.diagnostics) }
+                        operation.signalOutcome?.diagnostics?.filter { it.stage == "failed" }?.forEach {
+                            logger.warn("requestId={} operation=signal_check failure={}", requestId, it.fields["failureCategory"])
+                        }
+                    }
+                    val finalFlags = operation.signalOutcome?.flags ?: prepared.flags
+                    operation.resolvedFragment = operation.resolvedFragment?.takeIf { fragment ->
+                        fragment.conditions.all { finalFlags[it.flag] == it.value }
+                    }
                     val canonicalWarmup = prepared.copy(
-                        history = candidate?.takeIf { accepted && it.fragment.isNotBlank() }
+                        flags = finalFlags,
+                        history = operation.resolvedFragment?.takeIf { it.fragment.isNotBlank() }
                             ?.let { request.history + ChatEntry("runtime-fragment", it.fragment) }
                             ?: request.history,
                     )
@@ -702,8 +782,15 @@ internal class SessionPrefillCoordinator(
                             "warmup" to "completed",
                         ) + (response?.takeIf { it == "Y" || it == "N" }
                             ?.let { mapOf("classifierResponse" to it) } ?: emptyMap()) +
+                            operation.signalOutcome?.diagnostics.orEmpty().filter { it.kind == "signal_check" }.associate { diagnostic ->
+                                "signal_${diagnostic.fields["signal"].orEmpty()}_result" to (diagnostic.fields["result"] ?: diagnostic.stage)
+                            } +
                             callDiagnostics.fold(emptyMap()) { fields, diagnostic ->
-                                val prefix = if (diagnostic.stage == "fragment_relevance") "classifier" else "warmup"
+                                val prefix = when (diagnostic.stage) {
+                                    "fragment_relevance" -> "classifier"
+                                    "signal_check" -> "signal_${diagnostic.fields["signal"].orEmpty()}"
+                                    else -> "warmup"
+                                }
                                 fields + diagnostic.fields.mapKeys { (key, _) -> "${prefix}_${key}" } +
                                     diagnostic.metrics.toDebugFields(prefix)
                             },
@@ -727,6 +814,7 @@ internal class SessionPrefillCoordinator(
                 prefillFinished(lease, operation, failure)
                 failure?.let { onWarmupFailure(warmupFailure(requestId, "rerank", it)) }
             } finally {
+                operation.reservation.signalOutcome.complete(operation.signalOutcome ?: SignalCheckOutcome(request.flags))
                 operation.reservation.completeDiagnostic(
                     operation.diagnostic ?: StreamDiagnostic("background_rerank", "prior_cancelled",
                         fields = mapOf("source" to "prior_turn", "operationId" to operation.reservation.operationId)),
@@ -738,9 +826,9 @@ internal class SessionPrefillCoordinator(
         return operation
     }
 
-    private fun startTurnLocked(resolvedTurn: ResolvedTurn, existingLease: Lease? = null, requestId: String = "unknown"): Flow<TurnStreamEvent> {
+    private fun startTurnLocked(resolvedTurn: ResolvedTurn, existingLease: Lease? = null, requestId: String = "unknown", onAdmitted: (TurnRequest) -> Unit = {}): Flow<TurnStreamEvent> {
         val lease = existingLease ?: acquireLease(resolvedTurn.request.llamaCppPort)
-        val execution = TurnExecution(requestId).also(TurnExecution::initialize)
+        val execution = TurnExecution(requestId, onAdmitted).also(TurnExecution::initialize)
         state = State.Turning(lease, execution)
         recordLeaseTransition("turn_handoff", lease)
         execution.handoff(lease, resolvedTurn, drainTurnDiagnostics())
@@ -761,7 +849,7 @@ internal class SessionPrefillCoordinator(
                         val pending = current.pending
                         if (operation is RerankingOperation) nextFragment = operation.resolvedFragment
                         val resolved = if (operation is RerankingOperation) {
-                            pending.request.asTurnRequest().withNextFragment()
+                            pending.request.asTurnRequest().copy(flags = operation.signalOutcome?.flags ?: pending.request.flags).withNextFragment()
                         } else if (operation is WorldStateOperation) {
                             val acceptedState = operation.acceptedState ?: pending.resolvedTurn.request.worldState
                             pending.resolvedTurn.copy(
@@ -784,8 +872,10 @@ internal class SessionPrefillCoordinator(
                         current.execution.fail(releaseFailure ?: failure, drainTurnDiagnostics())
                     } else {
                         if (operation is RerankingOperation) nextFragment = operation.resolvedFragment
-                        val resolved = current.resolvedTurn?.takeIf { it.matches(current.request) }?.forRequest(current.request)
-                            ?: current.request.withNextFragment()
+                        val followingRequest = if (operation is RerankingOperation && operation.signalOutcome != null)
+                            current.request.copy(flags = operation.signalOutcome!!.flags) else current.request
+                        val resolved = current.resolvedTurn?.takeIf { it.matches(followingRequest) }?.forRequest(followingRequest)
+                            ?: followingRequest.withNextFragment()
                         state = State.Turning(lease, current.execution)
                         recordLeaseTransition("turn_handoff", lease)
                         current.execution.handoff(lease, resolved, drainTurnDiagnostics())
@@ -874,6 +964,7 @@ internal class SessionPrefillCoordinator(
             this.request.runtimeFragments == request.runtimeFragments &&
             this.request.flags == request.flags &&
             this.request.signals == request.signals &&
+            this.request.signalChecks == request.signalChecks &&
             this.request.worldState == request.worldState &&
             this.request.contextCompression == request.contextCompression
     }
@@ -888,7 +979,6 @@ internal class SessionPrefillCoordinator(
         ResolvedTurn(
             if (candidate.fragment.isBlank()) this else copy(history = history + ChatEntry("runtime-fragment", candidate.fragment)),
             candidate.fragment,
-            candidate.emittedSignals,
         )
     } ?: ResolvedTurn(this, null)
 
@@ -910,7 +1000,7 @@ internal class SessionPrefillCoordinator(
         }
     }
 
-    private inner class TurnExecution(private val requestId: String) {
+    private inner class TurnExecution(private val requestId: String, private val onAdmitted: (TurnRequest) -> Unit = {}) {
         private val ready = CompletableDeferred<Lease>()
         private val output = Channel<TurnStreamEvent>(Channel.RENDEZVOUS)
         private val collected = AtomicBoolean()
@@ -945,7 +1035,7 @@ internal class SessionPrefillCoordinator(
                         output.send(TurnStreamEvent.InputReady)
                         val warmup = WarmupRequest(request.sessionId, request.modelId, request.llamaCppPort,
                             request.scenarioMarkdown, request.history + listOf(ChatEntry("player", request.playerAction), ChatEntry("game-master", generated.toString())),
-                            request.runtimeFragments, request.worldState, request.contextCompression, request.locations, request.flags, request.signals)
+                            request.runtimeFragments, request.worldState, request.contextCompression, request.locations, request.flags, request.signals, request.signalChecks)
                         val maintenanceDiagnostics = mutableListOf<StreamDiagnostic>()
                         val artifact = try {
                             gateway.maintain(warmup, lease.slot, maintenanceDiagnostics::add)
@@ -972,6 +1062,7 @@ internal class SessionPrefillCoordinator(
                     turnFinished(this@TurnExecution, lease)
                 }
                 val terminalFailure = streamFailure ?: releaseFailure
+                if (terminalFailure != null && this@TurnExecution::request.isInitialized) withContext(NonCancellable) { finishPostTurn(requestId, request.flags) }
                 if (terminalFailure == null) output.close() else output.close(terminalFailure)
             }
         }
@@ -980,7 +1071,14 @@ internal class SessionPrefillCoordinator(
             check(collected.compareAndSet(false, true)) { "Turn flow can only be collected once." }
             job.start()
             try {
-                for (event in output) emit(event)
+                var admitted = false
+                for (event in output) {
+                    if (!admitted && this@TurnExecution::request.isInitialized) {
+                        onAdmitted(request)
+                        admitted = true
+                    }
+                    emit(event)
+                }
             } finally {
                 withContext(NonCancellable) {
                     cancelAndJoin(CancellationException("Turn collector stopped."))
@@ -990,6 +1088,7 @@ internal class SessionPrefillCoordinator(
 
         fun handoff(lease: Lease, resolvedTurn: ResolvedTurn, diagnostics: List<StreamDiagnostic>) {
             this.request = resolvedTurn.request
+            if (request.signals.isNotEmpty()) postTurnGate = PostTurnGate(requestId, request.flags)
             selectedFragment = resolvedTurn.fragment
             emittedSignals = resolvedTurn.emittedSignals
             priorDiagnostics = diagnostics
@@ -1074,6 +1173,11 @@ internal class SessionPrefillCoordinator(
         }
     }
 
+    private class PostTurnGate(val requestId: String, val initialFlags: Map<String, Boolean>) {
+        val flags = CompletableDeferred<Map<String, Boolean>>()
+        var operation: Operation? = null
+    }
+
     private class Lease(val port: Int, val slot: LlamaCppSlot) {
         var released = false
     }
@@ -1090,6 +1194,7 @@ internal class SessionPrefillCoordinator(
     private class RerankingOperation(val reservation: RerankReservation) : Operation {
         override val generation: Long get() = reservation.generation
         override lateinit var job: Job
+        var signalOutcome: SignalCheckOutcome? = null
         var resolvedFragment: RuntimeFragmentDefinition? = null
         var diagnostic: StreamDiagnostic? = null
     }

@@ -274,7 +274,7 @@ private val PlayView = FC<PlayViewProps> { props ->
         when (turnInput.phase) {
             TurnPhase.STREAMING -> {
                 turnInput.queuedAction = listOfNotNull(turnInput.queuedAction, text).joinToString("\n")
-                props.api.stopActiveTurn()
+                if (!inputReady) props.api.stopActiveTurn()
             }
             TurnPhase.READY -> {
                 turnInput.action = listOfNotNull(turnInput.action, text).joinToString("\n")

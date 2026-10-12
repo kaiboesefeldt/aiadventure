@@ -175,3 +175,30 @@ disposable frontmatter template and covers the first turn (no fragment), a
 later hidden fragment, reload/resume, and a following cache-reusing turn. Its
 evidence record contains only request IDs, the retained slot identity, and
 `tokens_cached` / `tokens_evaluated`.
+
+### Signal event checks
+
+Scenario frontmatter can declare signals independently of retrieval guidance:
+
+```yaml
+flags: {visited: false}
+signals:
+  enters-tower:
+    description: The player actually entered the tower during this exchange.
+    condition: {visited: false}
+    triggers:
+      - set-flag: {visited: true}
+```
+
+`description` is optional nonblank text describing an actual event, rather than
+an intention or a relevant fragment. `condition` optionally requires one declared
+flag value. Explicit event descriptions use only this signal condition, regardless
+of conditions on fragments referencing the signal. Checks run after the completed
+exchange, using flags from the start of the turn; successful assignments apply in
+declaration order without triggering further checks in that same turn.
+
+Older signals without descriptions use their signal-bearing fragment paths and
+inherited flag conditions as fallback event predicates, or the signal name when
+no fragment references it. Equivalent predicates are deduplicated; eligible paths
+for the same signal form one event question. Existing `signal` references and
+`triggers` assignment maps remain supported.

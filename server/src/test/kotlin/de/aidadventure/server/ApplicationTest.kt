@@ -58,6 +58,25 @@ import kotlin.test.assertTrue
 
 class ApplicationTest {
     @Test
+    fun `selected guidance never commits an event flag`() = testApplication {
+        val registry = FakeRegistry()
+        registry.coordinator.turnEvents = flowOf(
+            TurnStreamEvent.Fragment("Enter the lighthouse if possible.", listOf("enter")),
+            TurnStreamEvent.Token("The locked door remains shut."),
+            TurnStreamEvent.Done(TurnMetrics(42, 24, 18)),
+        )
+        application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolving(null)) }
+        configureJsonClient()
+        val body = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest().copy(flags = mapOf("visited" to false),
+                signals = mapOf("enter" to listOf(FlagAssignment("visited", true)))))
+        }.bodyAsText()
+        val done = body.split("\n\n").single { it.startsWith("event: done\n") }
+        assertContains(done, "\"visited\":false")
+    }
+
+    @Test
     fun `latest turn background outcome is available through follow up SSE without another turn`() = testApplication {
         val registry = FakeRegistry()
         application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolving(null)) }
@@ -171,23 +190,15 @@ class ApplicationTest {
         val diagnostics = body.split("\n\n").filter { it.startsWith("event: diagnostic\n") }
             .map { Json.parseToJsonElement(it.substringAfter("data: ")).jsonObject }
         assertEquals(
-            listOf("turn_state", "fragment", "signal", "turn_metrics", "flags", "world_state", "context_compression", "background_rerank", "turn_status"),
+            listOf("turn_state", "fragment", "turn_metrics", "world_state", "context_compression", "background_rerank", "turn_status"),
             diagnostics.map { it.getValue("kind").jsonPrimitive.content },
         )
         assertEquals("Quay", diagnostics.first().getValue("fields").jsonObject.getValue("location").jsonPrimitive.content)
-        assertEquals("42", diagnostics[3].getValue("metrics").jsonObject.getValue("totalDurationMs").jsonPrimitive.content)
-        assertEquals("emitted", diagnostics[2].getValue("stage").jsonPrimitive.content)
-        assertEquals("found-map", diagnostics[2].getValue("fields").jsonObject.getValue("emittedSignals").jsonPrimitive.content)
-        assertEquals("true", diagnostics[2].getValue("fields").jsonObject.getValue("flag:has-map").jsonPrimitive.content)
-        assertFalse(diagnostics[2].getValue("fields").jsonObject.containsKey("flag:already-known"))
-        val appliedFields = diagnostics[4].getValue("fields").jsonObject
-        assertFalse(appliedFields.containsKey("flag:has-map"))
-        assertEquals("found-map", appliedFields.getValue("emittedSignals").jsonPrimitive.content)
-        assertEquals("has-map=true, already-known=false", appliedFields.getValue("appliedAssignments").jsonPrimitive.content)
-        assertEquals("Harbour", diagnostics[5].getValue("fields").jsonObject.getValue("location").jsonPrimitive.content)
+        assertEquals("42", diagnostics[2].getValue("metrics").jsonObject.getValue("totalDurationMs").jsonPrimitive.content)
+        assertEquals("Harbour", diagnostics[3].getValue("fields").jsonObject.getValue("location").jsonPrimitive.content)
         assertFalse(diagnostics.joinToString().contains("SECRET_PLAYER_ACTION"))
         assertFalse(diagnostics.joinToString().contains("SECRET_GAME_MASTER_OUTPUT"))
-        assertTrue(body.indexOf("\"kind\":\"signal\"") < body.indexOf("event: token"))
+        assertFalse(diagnostics.any { it.getValue("kind").jsonPrimitive.content == "signal" })
         assertContains(body, "event: token\ndata: {\"text\":\"SECRET_GAME_MASTER_OUTPUT\"}")
         assertContains(body, "event: done\n")
     }
@@ -358,7 +369,7 @@ class ApplicationTest {
     }
 
     @Test
-    fun `selected signal-only fragment updates flags before next retrieval`() = testApplication {
+    fun `selected signal-only guidance leaves flags unchanged during next retrieval`() = testApplication {
         val registry = FakeRegistry()
         registry.coordinator.turnEvents = flowOf(
             TurnStreamEvent.Fragment("", listOf("found-map")),
@@ -384,11 +395,11 @@ class ApplicationTest {
             ))
         }
 
-        assertContains(response.bodyAsText(), "\"flags\":{\"has-map\":true}")
+        assertContains(response.bodyAsText(), "\"flags\":{\"has-map\":false}")
         assertFalse(response.bodyAsText().contains("event: fragment"))
         runBlocking { withTimeout(1_000) { registry.coordinator.rerankCompleted.await() } }
-        assertEquals(mapOf("has-map" to true), registry.coordinator.rerankRequests.single().flags)
-        assertEquals(available, registry.coordinator.rerankCandidates.single())
+        assertEquals(mapOf("has-map" to false), registry.coordinator.rerankRequests.single().flags)
+        assertEquals(unavailable, registry.coordinator.rerankCandidates.single())
     }
 
     @Test

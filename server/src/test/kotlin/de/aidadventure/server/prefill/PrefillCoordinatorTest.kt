@@ -40,6 +40,94 @@ import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
     @Test
+    fun `failed primary signal turn clears transient postturn gate`() = runBlocking {
+        val fake = ControllableGateway(stream = { flow { throw java.io.IOException("unavailable") } })
+        val coordinator = SessionPrefillCoordinator(fake)
+        val request = turn("enter").copy(flags = mapOf("visited" to false),
+            signals = mapOf("enter" to listOf(de.aidadventure.server.model.FlagAssignment("visited", true))))
+        assertFailsWith<java.io.IOException> { coordinator.beginTurn(request, "origin").toList() }
+        assertEquals(request, withTimeout(1_000) { coordinator.awaitPostTurn(request) })
+        coordinator.close()
+    }
+
+    @Test
+    fun `closing between signal primary and postprocessing unblocks waiting callers`() = runBlocking {
+        val fake = ControllableGateway(stream = { flowOf(TurnStreamEvent.Token("Entered"), TurnStreamEvent.Done(TurnMetrics(1, 2, 1))) })
+        val coordinator = SessionPrefillCoordinator(fake)
+        val request = turn("enter").copy(flags = mapOf("visited" to false),
+            signals = mapOf("enter" to listOf(de.aidadventure.server.model.FlagAssignment("visited", true))))
+        coordinator.beginTurn(request, "origin").toList()
+        assertEquals(PrefillDisposition.TURN_IN_PROGRESS, coordinator.submit(prefill(1, "look")))
+        assertFalse(coordinator.tryBeginIdleCloseWithLease())
+        val awaiting = async { coordinator.awaitPostTurn(request) }
+        yield()
+        assertFalse(awaiting.isCompleted)
+        coordinator.close()
+        assertEquals(request.flags, withTimeout(1_000) { awaiting.await() }.flags)
+        assertEquals(1, fake.releasedSlots.size)
+    }
+
+    @Test
+    fun `direct following turn waits across worldstate before checks final flags`() = runBlocking {
+        val worldEntered = CompletableDeferred<Unit>()
+        val worldRelease = CompletableDeferred<Unit>()
+        val fake = ControllableGateway(stream = { flowOf(TurnStreamEvent.Token("Entered"), TurnStreamEvent.Done(TurnMetrics(1, 2, 1))) },
+            worldState = { worldEntered.complete(Unit); worldRelease.await(); WorldState("Lighthouse", "Keeper") },
+            warmup = { CacheMetrics(8, 2) }, signalCheck = { _, _ -> "Y" })
+        val coordinator = SessionPrefillCoordinator(fake)
+        val primary = turn("enter").copy(flags = mapOf("visited" to false),
+            signals = mapOf("enter" to listOf(de.aidadventure.server.model.FlagAssignment("visited", true))))
+        coordinator.beginTurn(primary, "origin").toList()
+        val completed = warmup().copy(flags = primary.flags, signals = primary.signals)
+        val resolving = async { coordinator.resolveWorldStateAndWarmup(primary, "Entered", completed,
+            WorldStateResolutionRequest("session", "# Game", WorldState(), "enter", "Entered", emptyMap()), "origin") }
+        worldEntered.await()
+        val next = async { coordinator.beginTurn(primary.copy(playerAction = "look"), "next").toList() }
+        yield()
+        worldRelease.complete(Unit)
+        val accepted = resolving.await()
+        yield()
+        assertEquals(1, fake.turnRequests.size)
+        val reservation = coordinator.reserveRerank(completed.copy(worldState = accepted), "origin")!!
+        coordinator.completeReservedRerank(reservation, null)
+        val outcome = coordinator.awaitSignalChecks(reservation)
+        coordinator.finishPostTurn("origin", outcome.flags)
+        withTimeout(1_000) { next.await() }
+        assertEquals(mapOf("visited" to true), fake.turnRequests.last().flags)
+        coordinator.finishPostTurn("next", outcome.flags)
+        coordinator.close()
+    }
+
+    @Test
+    fun `signal checks run after rerank on same retained slot and following turn receives final flags`() = runBlocking {
+        val checkEntered = CompletableDeferred<Unit>()
+        val releaseCheck = CompletableDeferred<Unit>()
+        val fake = ControllableGateway(classify = { "Y" }, warmup = { CacheMetrics(8, 2) }, signalCheck = { _, _ ->
+            checkEntered.complete(Unit); releaseCheck.await(); "Y"
+        })
+        val coordinator = SessionPrefillCoordinator(fake)
+        val request = warmup().copy(flags = mapOf("visited" to false),
+            signals = mapOf("enter" to listOf(de.aidadventure.server.model.FlagAssignment("visited", true))),
+            signalChecks = listOf(de.aidadventure.server.model.SignalCheckDefinition("enter", "Entered lighthouse")))
+        val reservation = coordinator.reserveRerank(request, "origin")!!
+        coordinator.completeReservedRerank(reservation, candidate())
+        withTimeout(1_000) { checkEntered.await() }
+        val next = async { coordinator.beginTurn(turn("look").copy(flags = request.flags, signals = request.signals,
+            signalChecks = request.signalChecks)).toList() }
+        yield()
+        assertTrue(fake.turnRequests.isEmpty())
+        releaseCheck.complete(Unit)
+        val outcome = withTimeout(1_000) { coordinator.awaitSignalChecks(reservation) }
+        withTimeout(1_000) { next.await() }
+        assertEquals(mapOf("visited" to true), outcome.flags)
+        assertEquals(mapOf("visited" to true), fake.turnRequests.single().flags)
+        assertEquals(listOf("acquire", "classify", "signal", "warmup", "turn"), fake.slotLifecycle.map { it.operation })
+        assertEquals(listOf(LlamaCppSlot(1)), fake.slotLifecycle.map { it.slot }.distinct())
+        assertEquals(request.history, fake.signalRequests.single().history)
+        coordinator.close()
+    }
+
+    @Test
     fun `latest turn background result remains available after rerank completes without another turn`() = runBlocking {
         val fake = ControllableGateway(classify = { "Y" }, warmup = { CacheMetrics(8, 2) })
         val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
@@ -862,6 +950,7 @@ class PrefillCoordinatorTest {
         private val warmup: (suspend (WarmupRequest) -> CacheMetrics)? = null,
         private val worldState: (suspend (WorldStateResolutionRequest) -> WorldState?)? = null,
         private val classify: (suspend () -> String)? = null,
+        private val signalCheck: (suspend (WarmupRequest, de.aidadventure.server.model.SignalCheckDefinition) -> String)? = null,
         private val onRelease: () -> Unit = {},
         private var releaseFailures: Int = 0,
     ) : PrefillGateway {
@@ -875,6 +964,7 @@ class PrefillCoordinatorTest {
         val prefillSlots = mutableListOf<LlamaCppSlot>()
         val warmupSlots = mutableListOf<LlamaCppSlot>()
         val warmupRequests = mutableListOf<WarmupRequest>()
+        val signalRequests = mutableListOf<WarmupRequest>()
         val classifySlots = mutableListOf<LlamaCppSlot>()
         val worldStateSlots = mutableListOf<LlamaCppSlot>()
         val turnSlots = mutableListOf<LlamaCppSlot>()
@@ -954,6 +1044,13 @@ class PrefillCoordinatorTest {
             } finally {
                 classifyFinished.complete(Unit)
             }
+        }
+
+        override suspend fun checkSignal(request: WarmupRequest, definition: de.aidadventure.server.model.SignalCheckDefinition,
+            slot: LlamaCppSlot, onCall: (de.aidadventure.server.model.StreamDiagnostic) -> Unit): String {
+            signalRequests += request
+            slotLifecycle += SlotLifecycleEvent("signal", slot)
+            return signalCheck?.invoke(request, definition) ?: "N"
         }
 
         override fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> {
