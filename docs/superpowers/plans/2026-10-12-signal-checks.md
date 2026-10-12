@@ -30,14 +30,15 @@
 
 ### Task 1: Frontmatter and browser request propagation
 
-Files: `web/src/jsMain/kotlin/de/aidadventure/web/persistence/ScenarioFrontmatter.kt`, `web/src/jsMain/kotlin/de/aidadventure/web/api/AdventureApi.kt`, corresponding web tests, `examples/test-game.md`, scenario documentation.
+Files: `web/src/jsMain/kotlin/de/aidadventure/web/persistence/ScenarioFrontmatter.kt`, `web/src/jsMain/kotlin/de/aidadventure/web/api/AdventureApi.kt`, `web/src/jsMain/kotlin/de/aidadventure/web/Main.kt`, corresponding web tests, `examples/test-game.md`, scenario documentation.
 
 Interfaces: local/serialized `SignalCheckDefinition(name: String, description: String, conditions: List<FlagCondition> = emptyList())`; `ParsedScenario.signalChecks` and request `signalChecks: List<SignalCheckDefinition> = emptyList()`. Preserve `signals` assignment maps.
 
-- [ ] Add parser and serialization regression tests, verify failing before implementation.
-- [ ] Implement explicit description/condition parsing, fallback for existing definitions, propagation for turn/prefill/warmup.
-- [ ] Update example descriptions and concise docs; run focused web tests after coordinating Gradle ownership.
-- [ ] Commit and review.
+- [x] Add parser and serialization regression tests, verify failing before implementation.
+- [x] Implement explicit description/condition parsing, fallback for existing definitions, propagation for turn/prefill/warmup.
+- [x] When input-ready has arrived, queue a following action without aborting the SSE carrying final flags; preserve interruption while primary generation is still running. Test that following requests receive final flags.
+- [x] Update example descriptions and concise docs; run focused web tests after coordinating Gradle ownership.
+- [x] Commit and review.
 
 ### Task 2: Server checks and lifecycle integration
 
@@ -45,13 +46,22 @@ Files: server API models, prompt factory, llama.cpp gateway, prefill coordinator
 
 Interfaces: server `SignalCheckDefinition` and request `signalChecks` matching Task 1 wire format. Internal signatures chosen consistently with existing gateway/coordinator patterns.
 
-- [ ] Add regression tests for independent recognition, exact single-token requests/shared prefix, ordering, flag snapshot and final completion, early following turns and errors; verify red.
-- [ ] Implement sequential checks on retained slot after rerank and accepted focus; remove fragment-based flag emission.
-- [ ] Return final flags without race; emit metrics/diagnostics, restore canonical prompt and retain cache-slot lifecycle.
-- [ ] Run server tests including existing cache contracts; commit and review.
+- [x] Add regression tests for independent recognition, exact single-token requests/shared prefix, ordering, flag snapshot and final completion, early following turns and errors; verify red.
+- [x] Implement sequential checks on retained slot after rerank and accepted focus; remove fragment-based flag emission.
+- [x] Return final flags without race; emit metrics/diagnostics, restore canonical prompt and retain cache-slot lifecycle.
+- [x] Run server tests including existing cache contracts; commit and review.
 
 ### Task 3: Whole-branch verification and integration
 
 - [ ] Independently review full diff against spec including error/cancellation paths and browser persistence.
 - [ ] Address review findings through implementer; run full serialized `./gradlew check`.
 - [ ] Verify runtime process state, commit docs, merge main, remove task worktree/branch, report verification and live-measurement limits.
+
+## Verification evidence
+
+- Browser: `./gradlew :web:browserTest`, 133 tests, zero failures/errors. Parser and queued-action regressions failed before implementation.
+- Server: `./gradlew :server:test`, 308 tests, zero failures/errors after review fixes. Existing new/resumed/following-turn prefix and retained-slot tests unchanged.
+- Full `./gradlew check` succeeds without task exclusions. Existing compiler and JVM native-access warnings remain.
+- Real-coordinator HTTP tests cover independent events, accepted focus, last-stage ordering, final SSE flags, overlapping admission and cancelled SSE settlement. Gateway HTTP fixtures assert cached single-token request shape and reported metrics; they are not a live model-quality or cost benchmark.
+- Review fixes make gate observation/admission atomic, propagate the actual admitted context to Application, and settle coordinator-owned work before releasing a cancelled request's barrier.
+- No game server started or restarted. Live recognition accuracy, latency and actual llama.cpp cache reuse remain to be measured with the local model.
