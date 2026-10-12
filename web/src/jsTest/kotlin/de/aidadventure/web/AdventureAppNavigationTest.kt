@@ -121,7 +121,7 @@ class AdventureAppNavigationTest {
             nextBrowserTick()
             nextBrowserTick()
             assertEquals("debug-event-prior-intro", window.asDynamic().__lastScrolledId)
-            assertNull(container.querySelector("#debug-event-stale-intro button"))
+            assertNull(container.querySelector("#debug-event-stale-intro")?.getAttribute("tabindex"))
             container.doubleClick("#debug-event-prior-intro")
             nextBrowserTick()
             assertEquals("transcript-message-0", window.asDynamic().__lastScrolledId)
@@ -143,8 +143,8 @@ class AdventureAppNavigationTest {
             GameMessage("game-master", "retry response", 4, messageId = "retry-output"),
         ), createdAt = 1, updatedAt = 4)
         val events = recordingDebugEvents(
-            DebugEvent("failed", "session", "failed-turn", 0, 2, "turn_state", "initial", transcriptRole = "player", transcriptIndex = 0, transcriptMessageId = "failed-player"),
-            DebugEvent("retry", "session", "retry-turn", 0, 3, "turn_state", "initial", transcriptRole = "player", transcriptIndex = 0, transcriptMessageId = "retry-player"),
+            DebugEvent("failed", "session", "failed-turn", 0, 2, "turn_state", "initial", fields = mapOf("location" to "Harbor"), transcriptRole = "player", transcriptIndex = 0, transcriptMessageId = "failed-player"),
+            DebugEvent("retry", "session", "retry-turn", 0, 3, "turn_state", "initial", fields = mapOf("location" to "Harbor"), transcriptRole = "player", transcriptIndex = 0, transcriptMessageId = "retry-player"),
         )
         val elementPrototype = js("Element.prototype")
         val oldBounds = elementPrototype.getBoundingClientRect
@@ -168,7 +168,7 @@ class AdventureAppNavigationTest {
             nextBrowserTick()
             assertEquals("debug-event-retry", window.asDynamic().__lastScrolledId)
             assertNotNull(container.querySelector("#debug-event-retry"))
-            assertNull(container.querySelector("#debug-event-failed button"))
+            assertNull(container.querySelector("#debug-event-failed")?.getAttribute("tabindex"))
         } finally {
             elementPrototype.getBoundingClientRect = oldBounds
             container.remove()
@@ -189,7 +189,7 @@ class AdventureAppNavigationTest {
         ), createdAt = 1, updatedAt = 4)
         val events = recordingDebugEvents(
             DebugEvent("intro-event", "session", "intro", 0, 2, "turn_status", "completed", transcriptRole = "game-master", transcriptIndex = 0, transcriptMessageId = "intro-output"),
-            DebugEvent("player-event", "session", "turn", 0, 3, "turn_state", "initial", transcriptRole = "player", transcriptIndex = 1, transcriptMessageId = "player-action"),
+            DebugEvent("player-event", "session", "turn", 0, 3, "turn_state", "initial", fields = mapOf("location" to "Harbor"), transcriptRole = "player", transcriptIndex = 1, transcriptMessageId = "player-action"),
         )
         val elementPrototype = js("Element.prototype")
         val oldBounds = elementPrototype.getBoundingClientRect
@@ -527,7 +527,8 @@ class AdventureAppNavigationTest {
             DebugEvent("earlier", "session", "turn", 1, 1, "background_rerank", "prior_completed", fields = mapOf("source" to "prior_turn", "result" to "accepted", "fragment" to "Hidden fragment", "matchText" to "lighthouse", "playerAction" to "player secret action", "gameMasterOutput" to "game master secret output"), turnOrder = 1),
             DebugEvent("later", "session", "turn", 2, 2, "turn_metrics", "completed", metrics = DiagnosticMetrics(promptTokens = 21, contextTokens = 4096, predictedTokens = 12, cacheTokens = 15, evaluatedTokens = 6, promptDurationMs = 100.0, predictedDurationMs = 200.0, promptTokensPerSecond = 210.0, predictedTokensPerSecond = 60.0, totalDurationMs = 300), turnOrder = 1),
             DebugEvent("compression", "session", "turn", 3, 3, "context_compression", "completed", fields = mapOf("epoch" to "2", "activeCoversThroughTurn" to "4"), turnOrder = 1),
-            DebugEvent("signal", "session", "turn", 4, 4, "flags", "applied", fields = mapOf("emittedSignals" to "unlock", "appliedAssignments" to "doorOpen=true"), turnOrder = 1),
+            DebugEvent("signal", "session", "turn", 4, 4, "signal", "emitted", fields = mapOf("emittedSignals" to "unlock", "flag:doorOpen" to "true"), turnOrder = 1),
+            DebugEvent("applied", "session", "turn", 5, 5, "flags", "applied", fields = mapOf("emittedSignals" to "unlock", "appliedAssignments" to "doorOpen=true"), turnOrder = 1),
         )
         try {
             flushSync { createRoot(container).render(AdventureApp.create {
@@ -559,7 +560,8 @@ class AdventureAppNavigationTest {
             panel.unsafeCast<HTMLElement>().click("button[title='System prompt']")
             nextBrowserTick()
             assertEquals(true, panel.textContent?.contains("Prompt body") == true)
-            assertEquals(null, panel.querySelector("#debug-event-signal .debug-flag-delta"))
+            assertEquals(true, panel.querySelector("#debug-event-signal .debug-flag-delta")?.textContent?.contains("doorOpen: true"))
+            assertNull(panel.querySelector("#debug-event-applied"))
             assertEquals(true, text.contains("Background rerank"), text)
             assertEquals(true, text.contains("Prior turn"), text)
             assertEquals(true, text.contains("Context compression"), text)
@@ -567,7 +569,7 @@ class AdventureAppNavigationTest {
                 repeat(details.length) { index -> details.item(index)?.asDynamic()?.click() }
             }
             val withDetails = panel.textContent.orEmpty()
-            assertEquals(true, withDetails.contains("Applied assignments"), withDetails)
+            assertEquals(false, withDetails.contains("Applied assignments"), withDetails)
             assertEquals(true, withDetails.contains("Prompt tokens"), withDetails)
             assertEquals(true, withDetails.contains("Context tokens"), withDetails)
             assertEquals(true, withDetails.contains("Predicted tokens per second"), withDetails)
@@ -806,6 +808,7 @@ class AdventureAppNavigationTest {
             nextBrowserTick()
             container.clickButtonNamed(session.title)
             nextBrowserTick()
+            assertEquals(false, container.textContent?.contains("AI Adventure"), "Global heading must not consume window space")
             val transcript = assertNotNull(container.querySelector(".transcript")).asDynamic()
             fun visible(element: dynamic) {
                 val bounds = element.getBoundingClientRect()
@@ -818,6 +821,9 @@ class AdventureAppNavigationTest {
             container.click("button[aria-label='Open debug panel']")
             nextBrowserTick()
             nextBrowserTick()
+            val panelBounds = assertNotNull(container.querySelector(".debug-panel")).asDynamic().getBoundingClientRect()
+            assertEquals(0.0, panelBounds.top as Double, "Diagnostics use the full window height")
+            assertEquals(window.innerHeight.toDouble(), panelBounds.bottom as Double)
             val debug = assertNotNull(container.querySelector("#debug-event-list")).asDynamic()
             assertEquals(true, debug.scrollHeight > debug.clientHeight)
             visible(container.querySelector(".debug-panel-header"))
@@ -859,6 +865,7 @@ class AdventureAppNavigationTest {
                 }.await()
                 val game = narrow.querySelector(".play-layout > .view-card")
                 val panel = narrow.querySelector(".debug-panel")
+                assertEquals(844.0, panel.getBoundingClientRect().height as Double, "Narrow diagnostics use the full window height")
                 assertEquals(true, panel.getBoundingClientRect().top >= game.getBoundingClientRect().bottom,
                     "Narrow panes should stack")
                 for (selector in listOf(".transcript", "#debug-event-list")) {
@@ -889,6 +896,7 @@ class AdventureAppNavigationTest {
                     "Short viewport composer must remain inside a reachable pane")
                 assertEquals(true, narrow.querySelector(".action-form > button").clientHeight >= 40,
                     "Send control must remain reachable")
+                assertEquals(307.0, panel.getBoundingClientRect().height as Double, "Short diagnostics use the full window height")
                 val shortDebug = narrow.querySelector("#debug-event-list")
                 assertEquals(true, shortDebug.clientHeight >= 96,
                     "Short viewport diagnostics must remain readable")

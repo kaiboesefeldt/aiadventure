@@ -29,6 +29,7 @@ internal external interface DebugPanelProps : Props {
 internal val DebugPanel = FC<DebugPanelProps> { props ->
     var readerAtBottom by useState(true)
     var headerPopover by useState("")
+    var collapsedEvents by useState(emptySet<String>())
     val ordered = props.events
     useEffect(dependencies = arrayOf(ordered.size)) {
         if (ordered.isEmpty()) readerAtBottom = true
@@ -143,13 +144,18 @@ internal val DebugPanel = FC<DebugPanelProps> { props ->
                         val sameTurnId = sameTurn.transcriptMessageId ?: return@mapNotNull null
                         visibleMessages.indexOfFirst { it.messageId == sameTurnId && it.role == sameTurn.transcriptRole }.takeIf { it >= 0 }
                     }.firstOrNull()
-                renderDebugEvent(event, turnIndex, turnParity[event.turnId] ?: 0, props.session.flags, props.onShowTranscript)
+                if (event.hasDisplayInformation()) renderDebugEvent(
+                    event, turnIndex, turnParity[event.turnId] ?: 0, props.session.flags,
+                    event.id !in collapsedEvents,
+                    { collapsedEvents = if (event.id in collapsedEvents) collapsedEvents - event.id else collapsedEvents + event.id },
+                    props.onShowTranscript,
+                )
             }
         }
     }
 }
 
-private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex: Int?, turnParity: Int, currentFlags: Map<String, Boolean>, onShowTranscript: (Int) -> Unit) {
+private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex: Int?, turnParity: Int, currentFlags: Map<String, Boolean>, expanded: Boolean, onToggle: () -> Unit, onShowTranscript: (Int) -> Unit) {
     ReactHTML.article {
         key = event.id
         id = "debug-event-${event.id}".unsafeCast<web.dom.ElementId>()
@@ -164,21 +170,31 @@ private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex:
                 }
             }
         }
-        val prompts = event.fields.filterKeys { it == "prompt" || it.endsWith("_prompt") }
-        val outputs = event.fields.filterKeys { event.isVisibleOutputField(it) }
-        val histories = event.fields.filterKeys { it == "history" || it.endsWith("_history") }
+        val prompts = event.fields.filter { (key, value) -> (key == "prompt" || key.endsWith("_prompt")) && value.hasChatContent() }
+        val outputs = event.fields.filter { (key, value) -> event.isVisibleOutputField(key) && value.isNotBlank() }
+        val histories = event.fields.filter { (key, value) -> (key == "history" || key.endsWith("_history")) && value.hasChatContent() }
         val deltas = flagDeltas(event)
         ReactHTML.div {
             className = ClassName("debug-event-topline")
-            ReactHTML.h4 { +humanLabel(event.kind) }
+            ReactHTML.h4 {
+                ReactHTML.button {
+                    className = ClassName("debug-event-toggle")
+                    ariaExpanded = expanded
+                    ariaControls = "debug-event-body-${event.id}".unsafeCast<web.dom.ElementId>()
+                    onClick = { onToggle() }
+                    onDoubleClick = { it.stopPropagation() }
+                    +humanLabel(event.kind)
+                }
+            }
             ReactHTML.span { className = ClassName("debug-stage"); +humanLabel(event.stage) }
             ReactHTML.div {
                 className = ClassName("debug-event-tools")
+                onDoubleClick = { it.stopPropagation() }
                 ReactHTML.details {
                     ReactHTML.summary { className = ClassName("debug-icon-button"); title = "All status variables"; ariaLabel = "All status variables"; +"⚑" }
                     ReactHTML.div { className = ClassName("debug-popover debug-event-popover"); renderFlagValues(currentFlags) }
                 }
-                if (event.metrics != null || event.fields.keys.any(::isDiagnosticMetadataField)) ReactHTML.details {
+                if (event.metrics.hasInformation() || event.fields.any { (key, value) -> isTechnicalDetailField(key) && value.isNotBlank() }) ReactHTML.details {
                     ReactHTML.summary { className = ClassName("debug-icon-button"); title = "Event details"; ariaLabel = "Event details"; +"ⓘ" }
                     ReactHTML.div {
                         className = ClassName("debug-popover debug-event-popover")
@@ -191,25 +207,37 @@ private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex:
                 }
             }
         }
-        prompts.forEach { (key, prompt) -> ReactHTML.section {
-            ReactHTML.h5 { +(if (key == "prompt") "Prompt" else "${humanLabel(key.removeSuffix("_prompt"))} prompt") }
-            renderChatHistory(prompt)
-        } }
-        outputs.forEach { (key, output) -> ReactHTML.section {
-            ReactHTML.h5 { +(if (key == "output") "LLM output" else "${humanLabel(key.removeSuffix("_output"))} output") }
-            ReactHTML.div { className = ClassName("debug-markdown"); MarkdownMessage { content = output } }
-        } }
-        histories.forEach { (key, value) -> ReactHTML.section {
-            ReactHTML.h5 { +(if (key == "history") "Chat history" else humanLabel(key.removeSuffix("_history"))) }
-            renderChatHistory(value)
-        } }
-        event.fields["emittedSignals"]?.takeIf(String::isNotBlank)?.let { signals -> ReactHTML.div {
-            className = ClassName("debug-signal-name")
-            +"Signal: $signals"
-        } }
-        if (deltas.isNotEmpty()) ReactHTML.div {
-            className = ClassName("debug-flag-delta")
-            deltas.forEach { (name, value) -> ReactHTML.span { +"$name: $value" } }
+        ReactHTML.div {
+            id = "debug-event-body-${event.id}".unsafeCast<web.dom.ElementId>()
+            className = ClassName("debug-event-body")
+            asDynamic().hidden = !expanded
+            val domainFields = event.fields.filter { (key, value) ->
+                isDiagnosticMetadataField(key) && !isTechnicalDetailField(key) && key != "emittedSignals" && value.isNotBlank()
+            }
+            if (domainFields.isNotEmpty()) ReactHTML.dl {
+                className = ClassName("debug-fields debug-domain-fields")
+                domainFields.forEach { (key, value) -> field(humanLabel(key), value) }
+            }
+            prompts.forEach { (key, prompt) -> ReactHTML.section {
+                ReactHTML.h5 { +(if (key == "prompt") "Prompt" else "${humanLabel(key.removeSuffix("_prompt"))} prompt") }
+                renderChatHistory(prompt)
+            } }
+            outputs.forEach { (key, output) -> ReactHTML.section {
+                ReactHTML.h5 { +(if (key == "output") "LLM output" else "${humanLabel(key.removeSuffix("_output"))} output") }
+                ReactHTML.div { className = ClassName("debug-markdown"); MarkdownMessage { content = output } }
+            } }
+            histories.forEach { (key, value) -> ReactHTML.section {
+                ReactHTML.h5 { +(if (key == "history") "Chat history" else humanLabel(key.removeSuffix("_history"))) }
+                renderChatHistory(value)
+            } }
+            event.fields["emittedSignals"]?.takeIf(String::isNotBlank)?.let { signals -> ReactHTML.div {
+                className = ClassName("debug-signal-name")
+                +"Signal: $signals"
+            } }
+            if (deltas.isNotEmpty()) ReactHTML.div {
+                className = ClassName("debug-flag-delta")
+                deltas.forEach { (name, value) -> ReactHTML.span { +"$name: $value" } }
+            }
         }
     }
 }
@@ -219,8 +247,7 @@ private fun DebugEvent.isVisibleOutputField(key: String): Boolean =
         !(key == "output" && (kind == "warmup" || stage == "warmup"))
 
 private fun flagDeltas(event: DebugEvent): Map<String, String> = buildMap {
-    if (event.kind != "signal") return@buildMap
-    event.fields.filterKeys { it.startsWith("flag:") }.forEach { (key, value) -> put(key.removePrefix("flag:"), value) }
+    event.fields.filter { (key, value) -> key.startsWith("flag:") && value.isNotBlank() }.forEach { (key, value) -> put(key.removePrefix("flag:"), value) }
 }
 
 private fun ChildrenBuilder.renderFlagValues(flags: Map<String, Boolean>) {
@@ -231,10 +258,41 @@ private fun ChildrenBuilder.renderFlagValues(flags: Map<String, Boolean>) {
 }
 
 private fun ChildrenBuilder.renderDiagnosticMetadata(event: DebugEvent) {
-    event.fields.filterKeys(::isDiagnosticMetadataField).forEach { (key, value) ->
-        if (key == "appliedAssignments") field("Applied assignments", value)
-        else if (!key.startsWith("flag:")) field(humanLabel(key), if (key == "source") humanLabel(value) else value)
+    event.fields.filter { (key, value) -> isTechnicalDetailField(key) && value.isNotBlank() }.forEach { (key, value) ->
+        field(humanLabel(key), if (key == "source") humanLabel(value) else value)
     }
+}
+
+private fun DiagnosticMetrics?.hasInformation(): Boolean = this != null && this != DiagnosticMetrics()
+
+// A replayed prompt can become empty after chat deduplication, including an open model cue.
+private fun String.hasChatContent(): Boolean =
+    isNotBlank() && (parseChatHistory(this)?.any { it.content.isNotBlank() } ?: true)
+
+private fun DebugEvent.hasDisplayInformation(): Boolean {
+    // The signal event already reports changed flags. Repeated assignments are not new state.
+    if (kind == "flags" && stage == "applied") return flagDeltas(this).isNotEmpty()
+    if (metrics.hasInformation()) return true
+    if (fields.any { (key, value) ->
+            when {
+                isChatSnapshotField(key) -> value.hasChatContent()
+                key == "output" || key.endsWith("_output") -> isVisibleOutputField(key) && value.isNotBlank()
+                else -> (isDiagnosticMetadataField(key) || key.startsWith("flag:")) && value.isNotBlank()
+            }
+        }) return true
+    // Lifecycle stages themselves carry information even when there is no payload.
+    return kind in setOf("turn_status", "world_state", "warmup", "background_rerank") ||
+        stage.endsWith("failed") || stage.endsWith("cancelled") || stage == "incomplete"
+}
+
+private fun isTechnicalDetailField(key: String): Boolean {
+    if (!isDiagnosticMetadataField(key)) return false
+    val normalized = key.lowercase().filter(Char::isLetter)
+    return normalized.endsWith("id") || normalized.endsWith("tokens") ||
+        normalized.endsWith("durationms") || normalized.endsWith("tokenspersecond") ||
+        normalized in setOf("source", "operation", "epoch", "active", "pending") ||
+        normalized.startsWith("activecovers") || normalized.startsWith("pendingcovers") ||
+        normalized.endsWith("recapchars")
 }
 
 private fun isDiagnosticMetadataField(key: String): Boolean =
