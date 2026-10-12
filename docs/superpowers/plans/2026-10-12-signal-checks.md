@@ -55,7 +55,7 @@ Interfaces: server `SignalCheckDefinition` and request `signalChecks` matching T
 
 - [x] Independently review full diff against spec including error/cancellation paths and browser persistence.
 - [x] Address review findings through implementer; run full serialized `./gradlew check`.
-- [ ] Verify runtime process state, commit docs, merge main, remove task worktree/branch, report verification and live-measurement limits.
+- [x] Verify runtime process state, commit docs, merge main, remove task worktree/branch, report verification and live-measurement limits.
 
 ## Verification evidence
 
@@ -65,3 +65,5 @@ Interfaces: server `SignalCheckDefinition` and request `signalChecks` matching T
 - Real-coordinator HTTP tests cover independent events, accepted focus, last-stage ordering, final SSE flags, overlapping admission and cancelled SSE settlement. Gateway HTTP fixtures assert cached single-token request shape and reported metrics; they are not a live model-quality or cost benchmark.
 - Review fixes make gate observation/admission atomic, propagate the actual admitted context to Application, and settle coordinator-owned work before releasing a cancelled request's barrier.
 - No game server started or restarted. Live recognition accuracy, latency and actual llama.cpp cache reuse remain to be measured with the local model.
+
+Integration: merged into `main`; merged-tree `./gradlew check` succeeded in 1m2s (308 server tests, 133 browser tests, zero failures/errors). Task branch/worktree removed. All task build/test commands completed; interrupted test executor termination was verified from Gradle daemon logs before retry. No game runtime started or restarted.
