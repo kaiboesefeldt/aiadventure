@@ -132,7 +132,7 @@ internal val DebugPanel = FC<DebugPanelProps> { props ->
                 })
                 // Outputs are already visible in their own section. Count their next model
                 // occurrence so a subsequent prompt does not display them again as context.
-                completedEvent.fields.filterKeys { it == "output" || it.endsWith("_output") }.forEach { (key, output) ->
+                completedEvent.fields.filterKeys { completedEvent.isVisibleOutputField(it) }.forEach { (key, output) ->
                     val promptKey = if (key == "output") "prompt" else key.removeSuffix("_output") + "_prompt"
                     displayedMessages.recordOutput(output, completedEvent.fields[promptKey])
                 }
@@ -165,7 +165,7 @@ private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex:
             }
         }
         val prompts = event.fields.filterKeys { it == "prompt" || it.endsWith("_prompt") }
-        val outputs = event.fields.filterKeys { it == "output" || it.endsWith("_output") }
+        val outputs = event.fields.filterKeys { event.isVisibleOutputField(it) }
         val histories = event.fields.filterKeys { it == "history" || it.endsWith("_history") }
         val deltas = flagDeltas(event)
         ReactHTML.div {
@@ -213,6 +213,10 @@ private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex:
         }
     }
 }
+
+private fun DebugEvent.isVisibleOutputField(key: String): Boolean =
+    (key == "output" || key.endsWith("_output")) && key != "warmup_output" &&
+        !(key == "output" && (kind == "warmup" || stage == "warmup"))
 
 private fun flagDeltas(event: DebugEvent): Map<String, String> = buildMap {
     if (event.kind != "signal") return@buildMap
