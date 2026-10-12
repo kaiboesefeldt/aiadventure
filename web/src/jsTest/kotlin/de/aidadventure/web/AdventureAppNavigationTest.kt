@@ -100,8 +100,8 @@ class AdventureAppNavigationTest {
             DebugEvent("prior-intro", "session", "next-turn", 0, 3, "background_rerank", "prior_completed", fields = mapOf("source" to "prior_turn"), transcriptRole = "game-master", transcriptIndex = 0, transcriptMessageId = "saved-intro-output"),
         )
         val elementPrototype = js("Element.prototype")
-        val oldScrollIntoView = elementPrototype.scrollIntoView
-        elementPrototype.scrollIntoView = js("function () { window.__lastScrolledId = this.id; }")
+        val oldBounds = elementPrototype.getBoundingClientRect
+        elementPrototype.getBoundingClientRect = js("(function (original) { return function () { if (/^(debug-event-|transcript-message-)/.test(this.id)) window.__lastScrolledId = this.id; return original.call(this); }; })")(oldBounds)
         try {
             flushSync { createRoot(container).render(AdventureApp.create {
                 scenarioRepository = scenarioRepository(scenario)
@@ -127,7 +127,7 @@ class AdventureAppNavigationTest {
             assertEquals("transcript-message-0", window.asDynamic().__lastScrolledId)
             assertNotNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
         } finally {
-            elementPrototype.scrollIntoView = oldScrollIntoView
+            elementPrototype.getBoundingClientRect = oldBounds
             container.remove()
         }
     }
@@ -147,8 +147,8 @@ class AdventureAppNavigationTest {
             DebugEvent("retry", "session", "retry-turn", 0, 3, "turn_state", "initial", transcriptRole = "player", transcriptIndex = 0, transcriptMessageId = "retry-player"),
         )
         val elementPrototype = js("Element.prototype")
-        val oldScrollIntoView = elementPrototype.scrollIntoView
-        elementPrototype.scrollIntoView = js("function () { window.__lastScrolledId = this.id; }")
+        val oldBounds = elementPrototype.getBoundingClientRect
+        elementPrototype.getBoundingClientRect = js("(function (original) { return function () { if (/^(debug-event-|transcript-message-)/.test(this.id)) window.__lastScrolledId = this.id; return original.call(this); }; })")(oldBounds)
         try {
             flushSync { createRoot(container).render(AdventureApp.create {
                 scenarioRepository = scenarioRepository(scenario)
@@ -170,7 +170,7 @@ class AdventureAppNavigationTest {
             assertNotNull(container.querySelector("#debug-event-retry"))
             assertNull(container.querySelector("#debug-event-failed button"))
         } finally {
-            elementPrototype.scrollIntoView = oldScrollIntoView
+            elementPrototype.getBoundingClientRect = oldBounds
             container.remove()
         }
     }
@@ -192,8 +192,8 @@ class AdventureAppNavigationTest {
             DebugEvent("player-event", "session", "turn", 0, 3, "turn_state", "initial", transcriptRole = "player", transcriptIndex = 1, transcriptMessageId = "player-action"),
         )
         val elementPrototype = js("Element.prototype")
-        val oldScrollIntoView = elementPrototype.scrollIntoView
-        elementPrototype.scrollIntoView = js("function () { window.__lastScrolledId = this.id; }")
+        val oldBounds = elementPrototype.getBoundingClientRect
+        elementPrototype.getBoundingClientRect = js("(function (original) { return function () { if (/^(debug-event-|transcript-message-)/.test(this.id)) window.__lastScrolledId = this.id; return original.call(this); }; })")(oldBounds)
         try {
             flushSync { createRoot(container).render(AdventureApp.create {
                 scenarioRepository = scenarioRepository(scenario)
@@ -222,7 +222,7 @@ class AdventureAppNavigationTest {
             assertNotNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
             assertNull(container.querySelector(".debug-navigation-button"))
         } finally {
-            elementPrototype.scrollIntoView = oldScrollIntoView
+            elementPrototype.getBoundingClientRect = oldBounds
             container.remove()
         }
     }
@@ -767,6 +767,153 @@ class AdventureAppNavigationTest {
         } finally {
             flushSync { root.unmount() }
             container.remove()
+        }
+    }
+
+    // Removing pane height constraints or scrolling the page during cross-links breaks this contract.
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `long game and diagnostics scroll independently with controls visible`() = GlobalScope.promise<Unit> {
+        val stylesheet = document.createElement("link")
+        stylesheet.asDynamic().rel = "stylesheet"
+        stylesheet.asDynamic().href = "/app.css"
+        val loaded = Promise<Unit> { resolve, reject ->
+            stylesheet.asDynamic().onload = { resolve(Unit) }
+            stylesheet.asDynamic().onerror = { reject(IllegalStateException("Cannot load app.css")) }
+        }
+        document.head.appendChild(stylesheet)
+        loaded.await()
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        val scenario = Scenario("layout", "layout.md", "# Harbor", 1)
+        val session = GameSession("layout-session", scenario.id, "Harbor", messages = List(60) {
+            GameMessage("game-master", "Long narrative paragraph. ".repeat(30), it.toLong(), messageId = "message-$it")
+        }, createdAt = 1, updatedAt = 60)
+        val events = recordingDebugEvents(*Array(60) {
+            DebugEvent("layout-$it", session.id, "turn-$it", it, it.toLong(), "turn_status", "completed",
+                transcriptRole = "game-master", transcriptMessageId = "message-$it")
+        })
+        try {
+            flushSync { root.render(AdventureApp.create {
+                scenarioRepository = scenarioRepository(scenario)
+                sessionRepository = fixedSessions(session)
+                debugEventRepository = events
+                api = unusedApi()
+                initialScenarios = listOf(scenario)
+            }) }
+            container.clickButtonNamed(scenario.name)
+            nextBrowserTick()
+            container.clickButtonNamed(session.title)
+            nextBrowserTick()
+            val transcript = assertNotNull(container.querySelector(".transcript")).asDynamic()
+            fun visible(element: dynamic) {
+                val bounds = element.getBoundingClientRect()
+                assertEquals(true, bounds.top >= 0 && bounds.bottom <= window.innerHeight + 1,
+                    "Controls must fit viewport: " + bounds.top + ".." + bounds.bottom)
+            }
+            assertEquals(true, transcript.scrollHeight > transcript.clientHeight, "Transcript must have its own overflow")
+            visible(container.querySelector("#player-action"))
+            visible(container.querySelector(".action-form > button"))
+            container.click("button[aria-label='Open debug panel']")
+            nextBrowserTick()
+            nextBrowserTick()
+            val debug = assertNotNull(container.querySelector("#debug-event-list")).asDynamic()
+            assertEquals(true, debug.scrollHeight > debug.clientHeight)
+            visible(container.querySelector(".debug-panel-header"))
+            visible(container.querySelector("#player-action"))
+            transcript.scrollTop = 300
+            debug.scrollTop = 0
+            val gameOffset = transcript.scrollTop
+            val pageOffset = window.scrollY
+            container.doubleClick("#transcript-message-55")
+            nextBrowserTick()
+            nextBrowserTick()
+            assertEquals(true, debug.scrollTop > 0, "Transcript cross-link must reveal a distant diagnostic")
+            assertEquals(gameOffset, transcript.scrollTop, "Source pane must stay put")
+            assertEquals(pageOffset, window.scrollY, "Cross-link must not scroll page")
+            transcript.scrollTop = 0
+            val debugOffset = debug.scrollTop
+            container.querySelector("#debug-event-layout-55")?.asDynamic()?.dispatchEvent(
+                js("new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })"))
+            nextBrowserTick()
+            assertEquals(true, transcript.scrollTop > 0, "Keyboard diagnostic cross-link must reveal transcript")
+            assertEquals(debugOffset, debug.scrollTop)
+            assertEquals(pageOffset, window.scrollY)
+            visible(container.querySelector("#player-action"))
+            // A real narrow browsing context evaluates the responsive media query.
+            val frame = document.createElement("iframe")
+            frame.asDynamic().style = "width:390px;height:844px;border:0;position:fixed;top:0;left:0"
+            document.body.appendChild(frame)
+            try {
+                val narrow = frame.asDynamic().contentDocument
+                narrow.open()
+                narrow.write("<link rel='stylesheet' href='/app.css'>" + container.innerHTML)
+                narrow.close()
+                Promise<Unit> { resolve, reject ->
+                    val link = narrow.querySelector("link")
+                    if (link.sheet != null) resolve(Unit) else {
+                        link.onload = { resolve(Unit) }
+                        link.onerror = { reject(IllegalStateException("Cannot load narrow app.css")) }
+                    }
+                }.await()
+                val game = narrow.querySelector(".play-layout > .view-card")
+                val panel = narrow.querySelector(".debug-panel")
+                assertEquals(true, panel.getBoundingClientRect().top >= game.getBoundingClientRect().bottom,
+                    "Narrow panes should stack")
+                for (selector in listOf(".transcript", "#debug-event-list")) {
+                    val scroller = narrow.querySelector(selector)
+                    assertEquals(true, scroller.clientHeight > 0 && scroller.scrollHeight > scroller.clientHeight,
+                        "$selector must remain reachable and independently scrollable on narrow screens")
+                }
+                val composer = narrow.querySelector(".action-form").getBoundingClientRect()
+                val gameBounds = game.getBoundingClientRect()
+                assertEquals(true, composer.top >= gameBounds.top && composer.bottom <= gameBounds.bottom,
+                    "Narrow game keeps composer inside its pane")
+                assertEquals(true, narrow.documentElement.scrollWidth <= 390, "No horizontal page overflow")
+                // Just above the stacking breakpoint, both columns must still fit.
+                frame.asDynamic().style.width = "720px"
+                val intermediateGame = game.getBoundingClientRect()
+                val intermediateDebug = panel.getBoundingClientRect()
+                assertEquals(true, intermediateDebug.left >= intermediateGame.right,
+                    "Wider panes should be side by side")
+                assertEquals(true, narrow.documentElement.scrollWidth <= 720, "Intermediate width must not overflow")
+                frame.asDynamic().style.width = "1000px"
+                frame.asDynamic().style.height = "307px"
+                val shortTranscript = narrow.querySelector(".transcript")
+                assertEquals(true, shortTranscript.clientHeight >= 96,
+                    "Short wide viewport must retain readable transcript space")
+                val shortComposer = narrow.querySelector(".action-form").getBoundingClientRect()
+                val shortGame = game.getBoundingClientRect()
+                assertEquals(true, shortComposer.top >= shortGame.top && shortComposer.bottom <= shortGame.bottom,
+                    "Short viewport composer must remain inside a reachable pane")
+                assertEquals(true, narrow.querySelector(".action-form > button").clientHeight >= 40,
+                    "Send control must remain reachable")
+                val shortDebug = narrow.querySelector("#debug-event-list")
+                assertEquals(true, shortDebug.clientHeight >= 96,
+                    "Short viewport diagnostics must remain readable")
+                // Closing diagnostics must preserve the same readable game pane.
+                narrow.querySelector(".play-layout").classList.remove("play-layout--debug-open")
+                panel.remove()
+                assertEquals(true, shortTranscript.clientHeight >= 96,
+                    "Short viewport game remains readable with diagnostics closed")
+                frame.asDynamic().style.height = "407px"
+                assertEquals(true, narrow.querySelector(".app-shell").getBoundingClientRect().bottom <= 407,
+                    "Compact chrome should fit a 407px viewport without page growth")
+                narrow.querySelector(".view-title").textContent = "Long session title ".repeat(20)
+                assertEquals(true, shortTranscript.clientHeight >= 96,
+                    "A long session title must not displace the short-window transcript")
+                val title = narrow.querySelector(".view-title")
+                assertEquals(true, title.scrollHeight > title.clientHeight,
+                    "Wrapped title remains reachable through its own overflow")
+
+
+            } finally { frame.remove() }
+        } finally {
+            flushSync { root.unmount() }
+            container.remove()
+            stylesheet.remove()
+            window.scrollTo(0.0, 0.0)
         }
     }
 

@@ -86,11 +86,18 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .debug-open-button { position: fixed; z-index: 20; top: 45%; right: 0; border-radius: 10px 0 0 10px; border-color: var(--accent); background: var(--accent); color: white; box-shadow: 0 0.3rem 1rem rgb(31 41 51 / 20%); }
 .debug-open-button--hidden { display: none; }
 .debug-navigation-button { margin-top: 0.6rem; font-size: 0.8rem; }
-.play-layout { min-width: 0; }
-.play-layout--debug-open { display: grid; grid-template-columns: minmax(20rem, 0.8fr) minmax(24rem, 1.2fr); align-items: start; gap: 0.75rem; }
+.app-shell:has(.play-layout) { height: 100vh; height: 100dvh; display: flex; flex-direction: column; padding: 1rem 1.5rem; }
+.app-shell:has(.play-layout) > .app-title { flex: none; margin-bottom: 1rem; }
+.play-layout { flex: 1; min-width: 0; min-height: 0; }
+.play-layout > .view-card { height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.play-layout > .view-card > button, .play-layout .view-title { flex: none; align-self: flex-start; }
+.play-layout .transcript { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; align-content: start; margin: 0.75rem 0; }
+.play-layout .action-form { flex: none; max-height: 45%; overflow-y: auto; overscroll-behavior: contain; margin-top: 0; }
+.play-layout .action-input { min-height: 4rem; max-height: 20vh; max-height: 20dvh; }
+.play-layout--debug-open { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); align-items: stretch; gap: 0.75rem; }
 .play-layout--debug-open > .view-card { min-width: 0; }
-.debug-panel { position: sticky; top: 0.5rem; width: auto; height: calc(100vh - 1rem); min-height: 28rem; display: flex; flex-direction: column; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); box-shadow: 0 0.3rem 1.5rem rgb(31 41 51 / 12%); overflow: hidden; }
-.debug-panel-header, .debug-log-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--rule); }
+.debug-panel { position: relative; width: auto; height: 100%; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); box-shadow: 0 0.3rem 1.5rem rgb(31 41 51 / 12%); overflow: hidden; }
+.debug-panel-header, .debug-log-heading { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--rule); }
 .debug-header-tools, .debug-event-tools { display: flex; align-items: center; gap: 0.25rem; margin-left: auto; }
 .debug-icon-button { display: inline-flex; align-items: center; justify-content: center; min-width: 2rem; min-height: 2rem; padding: 0.25rem; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); color: var(--ink); cursor: pointer; font-size: 1rem; line-height: 1; }
 .debug-icon-button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
@@ -128,12 +135,23 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .debug-chat-turn > strong { color: var(--muted-ink); font-size: 0.75rem; }
 .debug-header-popover ul, .debug-header-popover ol { padding-left: 1.25rem; margin: 0.3rem 0; }
 
+/* Keep short desktop windows usable; smaller windows can scroll the page to this minimum. */
+@media (min-width: 44.01rem) and (max-height: 36rem) {
+  .app-shell:has(.play-layout) { min-height: 25rem; padding: 0.5rem 1rem; }
+  .app-shell:has(.play-layout) > .app-title { font-size: 2rem; margin-bottom: 0.5rem; }
+  .play-layout > .view-card { padding: 0.75rem; }
+  .play-layout .view-title { font-size: 1.5rem; line-height: 1.2; max-height: 3rem; overflow-y: auto; }
+  .play-layout .action-input { height: 3rem; min-height: 3rem; max-height: 3rem; }
+}
+
 @media (max-width: 44rem) {
   .app-shell { padding: 1.25rem 1rem 2rem; }
   .view-header { align-items: stretch; flex-direction: column; }
   .view-header > button, .action-form > button { width: 100%; }
   .action-row { align-items: flex-start; flex-direction: column; }
+  .app-shell:has(.play-layout) { height: auto; min-height: 100vh; min-height: 100dvh; padding: 1rem; }
   .play-layout--debug-open { grid-template-columns: minmax(0, 1fr); }
-  .debug-panel { position: static; width: 100%; height: 75vh; min-height: 24rem; }
+  .play-layout > .view-card { height: calc(100vh - 6rem); height: calc(100dvh - 6rem); min-height: 28rem; padding: 1rem; }
+  .debug-panel { width: 100%; height: 75vh; height: 75dvh; min-height: 20rem; }
   .debug-global { max-height: 36%; }
 }

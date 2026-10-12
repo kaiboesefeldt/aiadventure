@@ -262,7 +262,7 @@ private val PlayView = FC<PlayViewProps> { props ->
         if (debugOpen && eventId != null) window.setTimeout({
             val target = document.getElementById("debug-event-$eventId".unsafeCast<web.dom.ElementId>())
             if (target != null) {
-                target.asDynamic().scrollIntoView()
+                scrollWithinPane(target, "#debug-event-list")
                 selectedDebugEventId = null
             }
         }, 0)
@@ -374,6 +374,7 @@ private val PlayView = FC<PlayViewProps> { props ->
                 MarkdownMessage { content = message.content }
             }
         } }
+        ReactHTML.div { className = ClassName("action-form")
         error?.let { ReactHTML.p { className = ClassName("status-error"); +it } }
         if (props.session.introductionPending && !pending && error != null) ReactHTML.button {
             className = ClassName("primary-button")
@@ -382,6 +383,7 @@ private val PlayView = FC<PlayViewProps> { props ->
         }
         ReactHTML.textarea { id = "player-action".unsafeCast<web.dom.ElementId>(); className = ClassName("action-input"); value = action; disabled = props.session.introductionPending; onChange = { action = it.target.unsafeCast<HTMLTextAreaElement>().value; if (turnInput.phase == TurnPhase.IDLE) prefill.changed(props.session, props.scenario, liveId, action) }; onKeyDown = { event -> if (shouldSubmitOnEnter(event.key, event.shiftKey, event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>(), false, action)) { event.preventDefault(); submit() } } }
         ReactHTML.button { className = ClassName("primary-button"); disabled = props.session.introductionPending || action.isBlank(); onClick = { submit() }; +(if (pending && props.session.introductionPending) "Introducing adventure…" else if (pending && inputReady) "Updating world…" else if (pending) "Sending…" else "Send") }
+        }
     }
     ReactHTML.button {
         className = ClassName(if (debugOpen) "debug-open-button debug-open-button--hidden" else "debug-open-button")
@@ -398,7 +400,7 @@ private val PlayView = FC<PlayViewProps> { props ->
         onShowTranscript = { index ->
             window.setTimeout({
                 val target = document.getElementById("transcript-message-$index".unsafeCast<web.dom.ElementId>())
-                if (target != null) target.scrollIntoView()
+                if (target != null) scrollWithinPane(target, ".transcript")
             }, 0)
         }
         onClear = {
@@ -443,3 +445,11 @@ internal fun newGameSession(scenario: Scenario, id: String, time: Long): GameSes
 internal fun isVisibleTranscriptMessage(message: GameMessage) = !message.hidden && message.role != "runtime-fragment"
 internal fun shouldSubmitOnEnter(key: String, shiftKey: Boolean, isComposing: Boolean, pending: Boolean, action: String) = key == "Enter" && !shiftKey && !isComposing && !pending && action.isNotBlank()
 internal fun now(): Long = (js("Date.now()") as Double).toLong()
+
+// Scroll the owning pane explicitly so cross-links never move its ancestors or the page.
+private fun scrollWithinPane(target: web.dom.Element, paneSelector: String) {
+    val pane = target.closest(paneSelector) ?: return
+    val paneBounds = pane.getBoundingClientRect()
+    val targetBounds = target.getBoundingClientRect()
+    pane.asDynamic().scrollTop = pane.asDynamic().scrollTop + targetBounds.top - paneBounds.top - pane.asDynamic().clientTop
+}
