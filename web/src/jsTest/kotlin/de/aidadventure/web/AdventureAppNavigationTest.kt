@@ -878,6 +878,36 @@ class AdventureAppNavigationTest {
                 assertEquals(true, intermediateDebug.left >= intermediateGame.right,
                     "Wider panes should be side by side")
                 assertEquals(true, narrow.documentElement.scrollWidth <= 720, "Intermediate width must not overflow")
+                frame.asDynamic().style.width = "1000px"
+                frame.asDynamic().style.height = "307px"
+                val shortTranscript = narrow.querySelector(".transcript")
+                assertEquals(true, shortTranscript.clientHeight >= 96,
+                    "Short wide viewport must retain readable transcript space")
+                val shortComposer = narrow.querySelector(".action-form").getBoundingClientRect()
+                val shortGame = game.getBoundingClientRect()
+                assertEquals(true, shortComposer.top >= shortGame.top && shortComposer.bottom <= shortGame.bottom,
+                    "Short viewport composer must remain inside a reachable pane")
+                assertEquals(true, narrow.querySelector(".action-form > button").clientHeight >= 40,
+                    "Send control must remain reachable")
+                val shortDebug = narrow.querySelector("#debug-event-list")
+                assertEquals(true, shortDebug.clientHeight >= 96,
+                    "Short viewport diagnostics must remain readable")
+                // Closing diagnostics must preserve the same readable game pane.
+                narrow.querySelector(".play-layout").classList.remove("play-layout--debug-open")
+                panel.remove()
+                assertEquals(true, shortTranscript.clientHeight >= 96,
+                    "Short viewport game remains readable with diagnostics closed")
+                frame.asDynamic().style.height = "407px"
+                assertEquals(true, narrow.querySelector(".app-shell").getBoundingClientRect().bottom <= 407,
+                    "Compact chrome should fit a 407px viewport without page growth")
+                narrow.querySelector(".view-title").textContent = "Long session title ".repeat(20)
+                assertEquals(true, shortTranscript.clientHeight >= 96,
+                    "A long session title must not displace the short-window transcript")
+                val title = narrow.querySelector(".view-title")
+                assertEquals(true, title.scrollHeight > title.clientHeight,
+                    "Wrapped title remains reachable through its own overflow")
+
+
             } finally { frame.remove() }
         } finally {
             flushSync { root.unmount() }

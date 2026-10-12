@@ -135,6 +135,15 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .debug-chat-turn > strong { color: var(--muted-ink); font-size: 0.75rem; }
 .debug-header-popover ul, .debug-header-popover ol { padding-left: 1.25rem; margin: 0.3rem 0; }
 
+/* Keep short desktop windows usable; smaller windows can scroll the page to this minimum. */
+@media (min-width: 44.01rem) and (max-height: 36rem) {
+  .app-shell:has(.play-layout) { min-height: 25rem; padding: 0.5rem 1rem; }
+  .app-shell:has(.play-layout) > .app-title { font-size: 2rem; margin-bottom: 0.5rem; }
+  .play-layout > .view-card { padding: 0.75rem; }
+  .play-layout .view-title { font-size: 1.5rem; line-height: 1.2; max-height: 3rem; overflow-y: auto; }
+  .play-layout .action-input { height: 3rem; min-height: 3rem; max-height: 3rem; }
+}
+
 @media (max-width: 44rem) {
   .app-shell { padding: 1.25rem 1rem 2rem; }
   .view-header { align-items: stretch; flex-direction: column; }
