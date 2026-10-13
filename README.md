@@ -187,6 +187,7 @@ signals:
     condition: {visited: false}
     triggers:
       - set-flag: {visited: true}
+      - emit-text: The keeper now trusts the player; reveal the hidden stair on the next round.
 ```
 
 `description` is optional nonblank text describing an actual event, rather than
@@ -195,6 +196,14 @@ flag value. Explicit event descriptions use only this signal condition, regardle
 of conditions on fragments referencing the signal. Checks run after the completed
 exchange, using flags from the start of the turn; successful assignments apply in
 declaration order without triggering further checks in that same turn.
+
+`emit-text` accepts nonblank fixed text, and text-only signals work without a
+`flags` declaration. Successful checks add their texts to the next round's hidden
+runtime context, in signal and trigger declaration order, followed by any selected
+runtime fragment. Blank lines separate these paragraphs in one context entry.
+This entry is saved with the session and survives reload without being added twice.
+Text-emitting signals are checked even when their flag assignments would not change
+anything; use a condition and flag assignment when an event should fire only once.
 
 Older signals without descriptions use their signal-bearing fragment paths and
 inherited flag conditions as fallback event predicates, or the signal name when

@@ -177,7 +177,8 @@ internal class TurnSubmission(
             throw cause
         }
         val completed = started.copy(
-            messages = messages + GameMessage("game-master", streamedText.toString(), clock(), messageId = gameMasterMessageId),
+            messages = messages + GameMessage("game-master", streamedText.toString(), clock(), messageId = gameMasterMessageId) +
+                completion.nextRuntimeContext.takeIf { it.isNotBlank() }?.let { listOf(GameMessage("runtime-fragment", it, clock())) }.orEmpty(),
             updatedAt = clock(),
             worldState = completion.worldState,
             contextCompression = completion.contextCompression,

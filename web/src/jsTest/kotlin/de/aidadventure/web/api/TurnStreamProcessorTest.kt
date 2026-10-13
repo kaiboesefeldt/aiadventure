@@ -6,6 +6,15 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class TurnStreamProcessorTest {
+    @Test fun `done decodes next context without emitting a current round fragment`() {
+        val fragments = mutableListOf<String>()
+        val completion = processTurnStreamChunk(SseFrameDecoder(),
+            "event: done\ndata: {\"metrics\":{\"totalDurationMs\":null,\"promptTokens\":3,\"cacheTokens\":null},\"nextRuntimeContext\":\"Hint\\n\\nFragment\"}\n\n",
+            onFragment = fragments::add, onToken = {})
+        assertEquals("Hint\n\nFragment", completion?.nextRuntimeContext)
+        assertEquals(emptyList(), fragments)
+    }
+
     @Test
     fun `signals input readiness before the delayed completion frame`() {
         var readySignals = 0

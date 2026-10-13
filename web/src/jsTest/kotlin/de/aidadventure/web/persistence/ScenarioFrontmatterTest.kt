@@ -7,6 +7,21 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertContains
 
 class ScenarioFrontmatterTest {
+    @Test fun `rejects malformed emitted signal text with trigger path`() {
+        for (value in listOf("''", "true", "{}")) {
+            val error = assertFailsWith<IllegalArgumentException> {
+                ScenarioFrontmatter.parse("---\nsignals:\n  visit:\n    triggers:\n      - emit-text: $value\n---\n# Harbor")
+            }
+            assertContains(error.message.orEmpty(), "signals.visit.triggers[0].emit-text")
+        }
+    }
+
+    @Test fun `accepts text only signals without flags`() {
+        val parsed = ScenarioFrontmatter.parse("---\nsignals:\n  visit:\n    triggers:\n      - emit-text: Remember the tower.\n---\n# Harbor")
+        assertEquals(emptyList(), parsed.signals["visit"])
+        assertEquals(listOf("Remember the tower."), parsed.signalChecks.single().emittedTexts)
+    }
+
     @Test fun `legacy signal without fragments uses its name as event fallback`() {
         val parsed = ScenarioFrontmatter.parse("---\nflags: {visited: false}\nsignals:\n  visit:\n    condition: {visited: false}\n    triggers:\n      - set-flag: {visited: true}\n---\n# Harbor")
         assertEquals(listOf(SignalCheckDefinition("visit", "visit", listOf(FlagCondition("visited", false)))), parsed.signalChecks)

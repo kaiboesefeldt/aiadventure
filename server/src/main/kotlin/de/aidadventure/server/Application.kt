@@ -344,6 +344,7 @@ fun Application.adventureModule(
                             metrics = DiagnosticMetrics(totalDurationMs = metrics.totalDurationMs,
                                 evaluatedTokens = metrics.promptTokens, cacheTokens = metrics.cacheTokens)))
                         var completedFlags = request.flags
+                        var nextRuntimeContext = ""
                         val completedHistory = (appliedFragment?.takeIf { it.isNotBlank() }?.let { request.history + ChatEntry("runtime-fragment", it) } ?: request.history) +
                             ChatEntry("player", request.playerAction) +
                             ChatEntry("game-master", generated.toString())
@@ -407,7 +408,7 @@ fun Application.adventureModule(
                             ))
                             if (request.signals.isEmpty()) {
                                 diagnostic(StreamDiagnostic("turn_status", "completed", transcriptRole = "game-master"))
-                                sse("done", eventJson.encodeToString(StreamDone(metrics, acceptedWorldState, completedCompression, completedFlags)))
+                                sse("done", eventJson.encodeToString(StreamDone(metrics, acceptedWorldState, completedCompression, completedFlags, nextRuntimeContext)))
                             }
                             reservation?.let { rerankReservation ->
                                 val rerankJob = postTurnScope.launch {
@@ -441,6 +442,7 @@ fun Application.adventureModule(
                                     rerankJob.join()
                                     activeCoordinator.awaitSignalChecks(rerankReservation)?.let { outcome ->
                                         completedFlags = outcome.flags
+                                        nextRuntimeContext = outcome.nextRuntimeContext
                                         finalSignalFlags = outcome.flags
                                         outcome.diagnostics.forEach(::diagnostic)
                                     }
@@ -448,7 +450,7 @@ fun Application.adventureModule(
                             }
                             if (request.signals.isNotEmpty()) {
                                 diagnostic(StreamDiagnostic("turn_status", "completed", transcriptRole = "game-master"))
-                                sse("done", eventJson.encodeToString(StreamDone(metrics, acceptedWorldState, completedCompression, completedFlags)))
+                                sse("done", eventJson.encodeToString(StreamDone(metrics, acceptedWorldState, completedCompression, completedFlags, nextRuntimeContext)))
                             }
                         } catch (failure: Exception) {
                             reservation?.let { rerankReservation ->
@@ -728,13 +730,17 @@ object RequestValidator {
         flags.keys.any { it.isBlank() || it.length > MAX_NAME_LENGTH } -> invalid()
         signals.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
         signals.any { (name, assignments) ->
-            name.isBlank() || name.length > MAX_NAME_LENGTH || assignments.isEmpty() || assignments.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS ||
+            name.isBlank() || name.length > MAX_NAME_LENGTH || (assignments.isEmpty() && signalChecks.none { it.name == name && it.emittedTexts.isNotEmpty() }) || assignments.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS ||
                 assignments.any { it.flag !in flags }
         } -> invalid()
         signalChecks.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
         signalChecks.any { check ->
             check.name !in signals || check.description.isBlank() || check.description.length > MAX_TEXT_LENGTH ||
+                check.emittedTexts.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS || check.emittedTexts.any { it.isBlank() || it.length > MAX_TEXT_LENGTH } ||
                 check.conditions.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS || check.conditions.any { it.flag !in flags }
+        } -> invalid()
+        signalChecks.groupBy { it.name }.values.any { definitions ->
+            definitions.map { it.emittedTexts }.distinct().size > 1
         } -> invalid()
         runtimeFragments.any { fragment ->
             fragment.conditions.any { it.flag !in flags } || fragment.emittedSignals.any { it !in signals }
@@ -743,7 +749,8 @@ object RequestValidator {
     }
 
     private fun ChatEntry.isValidHistoryEntry(): Boolean =
-        role in ALLOWED_HISTORY_ROLES && content.isNotBlank() && content.length <= MAX_TEXT_LENGTH
+        role in ALLOWED_HISTORY_ROLES && content.isNotBlank() &&
+            content.length.toLong() <= if (role == "runtime-fragment") MAX_HISTORY_CHARS else MAX_TEXT_LENGTH.toLong()
 
     private fun de.aidadventure.server.model.RuntimeFragmentDefinition.isValidRuntimeFragmentDefinition(): Boolean =
         matchText.isNotBlank() && (fragment.isNotBlank() || emittedSignals.isNotEmpty()) &&

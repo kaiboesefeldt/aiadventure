@@ -5,6 +5,24 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.*
 
 class SignalChecksTest {
+    @Test fun `texts follow signal declaration and trigger order without flag cascades`() = runBlocking {
+        val request = request().copy(signalChecks = listOf(
+            SignalCheckDefinition("reward", "Reward", emittedTexts = listOf("Third")),
+            SignalCheckDefinition("enter", "Entry", emittedTexts = listOf("First", "Second"))))
+        val result = runSignalChecks(request) { "Y" }
+        assertEquals(listOf("First", "Second", "Third"), result.emittedTexts)
+    }
+
+    @Test fun `text signals still check when assignments are unchanged`() = runBlocking {
+        val check = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString<SignalCheckDefinition>(
+            """{"name":"enter","description":"Entered","emittedTexts":["Remember"]}""")
+        val checked = mutableListOf<String>()
+        runSignalChecks(request().copy(signals = mapOf("enter" to listOf(FlagAssignment("visited", false))), signalChecks = listOf(check))) {
+            checked += it.name; "Y"
+        }
+        assertEquals(listOf("enter"), checked)
+    }
+
     private fun request() = WarmupRequest("session", scenarioMarkdown = "# Game", history = listOf(
         ChatEntry("player", "Enter"), ChatEntry("game-master", "You entered the lighthouse.")),
         flags = mapOf("visited" to false, "reward" to false),

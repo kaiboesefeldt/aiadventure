@@ -19,6 +19,7 @@ class SignalCheckApplicationTest {
     fun `independent checks follow accepted focus and rerank before final SSE flags`() = testApplication {
         val stages = mutableListOf<String>()
         val checks = mutableListOf<WarmupRequest>()
+        val warmups = mutableListOf<WarmupRequest>()
         val gateway = object : PrefillGateway {
             override fun acquireIdleSlot(port: Int, excludedSlots: Set<LlamaCppSlot>) = LlamaCppSlot(7)
             override fun releaseSlot(port: Int, slot: LlamaCppSlot) = Unit
@@ -42,6 +43,7 @@ class SignalCheckApplicationTest {
                 return "Y"
             }
             override suspend fun warmup(request: WarmupRequest, slot: LlamaCppSlot): CacheMetrics {
+                warmups += request
                 stages += "warmup"; return CacheMetrics(12, 2)
             }
         }
@@ -66,9 +68,11 @@ class SignalCheckApplicationTest {
                     signalChecks = listOf(
                         SignalCheckDefinition("unchanged", "Already unchanged"),
                         SignalCheckDefinition("blocked", "Blocked", listOf(FlagCondition("visited", true))),
-                        SignalCheckDefinition("enter", "Entered lighthouse"), SignalCheckDefinition("meet", "Met keeper"))))
+                        SignalCheckDefinition("enter", "Entered lighthouse", emittedTexts = listOf("First hint", "Second hint")), SignalCheckDefinition("meet", "Met keeper"))))
             }.bodyAsText()
             assertEquals(listOf("world_state", "warmup", "rerank", "check:enter", "check:meet", "warmup"), stages)
+            assertEquals("First hint\n\nSecond hint\n\nFuture guidance", warmups.last().history.last().content)
+            assertContains(body.substringAfter("event: done"), "nextRuntimeContext")
             assertEquals(2, checks.size)
             checks.forEach { check ->
                 assertEquals(WorldState("Lighthouse", "Talk to keeper"), check.worldState)

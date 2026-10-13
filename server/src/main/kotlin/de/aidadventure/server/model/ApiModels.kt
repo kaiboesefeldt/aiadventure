@@ -24,7 +24,7 @@ data class RuntimeFragmentDefinition(
 data class FlagCondition(val flag: String, val value: Boolean)
 
 @Serializable
-data class SignalCheckDefinition(val name: String, val description: String, val conditions: List<FlagCondition> = emptyList())
+data class SignalCheckDefinition(val name: String, val description: String, val conditions: List<FlagCondition> = emptyList(), val emittedTexts: List<String> = emptyList())
 
 @Serializable
 data class FlagAssignment(val flag: String, val value: Boolean)
@@ -154,6 +154,7 @@ data class StreamDone(
     @EncodeDefault(EncodeDefault.Mode.NEVER)
     val contextCompression: ContextCompression = ContextCompression(),
     val flags: Map<String, Boolean> = emptyMap(),
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val nextRuntimeContext: String = "",
 )
 
 @Serializable
