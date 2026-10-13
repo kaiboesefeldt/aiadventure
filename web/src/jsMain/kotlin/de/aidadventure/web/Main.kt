@@ -198,6 +198,17 @@ private val PlayView = FC<PlayViewProps> { props ->
     useLayoutEffect(dependencies = arrayOf(displayed.messages, debugOpen)) {
         if (followTranscript.current == true) scrollToTranscriptEnd()
     }
+    useEffectWithCleanup(dependencies = arrayOf(liveId)) {
+        val onEnd = { event: dynamic ->
+            if (event.key == "End" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey &&
+                event.isComposing != true) {
+                event.preventDefault()
+                scrollToTranscriptEnd()
+            }
+        }
+        document.asDynamic().addEventListener("keydown", onEnd)
+        onCleanup { document.asDynamic().removeEventListener("keydown", onEnd) }
+    }
     fun closeDebugPanel() {
         debugOpen = false
         window.setTimeout({ document.querySelector("button[aria-label='Open debug panel']")?.asDynamic()?.focus() }, 0)
@@ -361,13 +372,6 @@ private val PlayView = FC<PlayViewProps> { props ->
     }
     ReactHTML.div { className = ClassName(if (debugOpen) "play-layout play-layout--debug-open" else "play-layout")
     ReactHTML.section { className = ClassName("view-card")
-        onKeyDown = { event ->
-            if (event.key == "End" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey &&
-                event.nativeEvent.asDynamic().isComposing != true) {
-                event.preventDefault()
-                scrollToTranscriptEnd()
-            }
-        }
         ReactHTML.button { className = ClassName("secondary-button"); disabled = pending || leaving; onClick = { leavePlay() }; +"Back to sessions" }
         ReactHTML.h2 { className = ClassName("view-title"); +displayed.title }
         ReactHTML.div {
