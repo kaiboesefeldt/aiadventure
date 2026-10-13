@@ -54,4 +54,53 @@ class SignalChecksTest {
         assertEquals("failed", result.diagnostics.first().stage)
         assertFalse(result.diagnostics.toString().contains("secret"))
     }
+
+    @Test fun `explicit and legacy signals without effective flag changes never call the checker`() = runBlocking {
+        for (explicit in listOf(false, true)) {
+            val signals = linkedMapOf(
+                "unchanged" to listOf(FlagAssignment("visited", false), FlagAssignment("reward", false)),
+                "empty" to emptyList(),
+                "restored" to listOf(FlagAssignment("visited", true), FlagAssignment("visited", false)),
+                "blocked" to listOf(FlagAssignment("visited", true)),
+            )
+            val request = request().copy(signals = signals,
+                signalChecks = if (explicit) signals.keys.map { name ->
+                    SignalCheckDefinition(name, name, if (name == "blocked") listOf(FlagCondition("reward", true)) else emptyList())
+                } else emptyList(),
+                runtimeFragments = if (explicit) emptyList() else listOf(
+                    RuntimeFragmentDefinition("Unchanged", "Guidance", emittedSignals = listOf("unchanged", "empty", "restored")),
+                    RuntimeFragmentDefinition("Blocked", "Guidance", listOf(FlagCondition("reward", true)), listOf("blocked"))))
+            val checked = mutableListOf<String>()
+            val result = runSignalChecks(request) { checked += it.name; "Y" }
+            assertEquals(emptyList(), checked, "explicit=$explicit")
+            assertEquals(emptyList(), result.emittedSignals)
+            assertEquals(mapOf("visited" to false, "reward" to false), result.flags)
+        }
+    }
+
+    @Test fun `partial changes final repeated assignments and true to false changes call the checker`() = runBlocking {
+        val request = request().copy(flags = mapOf("visited" to false, "reward" to true, "extra" to false), signals = linkedMapOf(
+            "partial" to listOf(FlagAssignment("visited", false), FlagAssignment("extra", true)),
+            "repeated" to listOf(FlagAssignment("visited", true), FlagAssignment("visited", false), FlagAssignment("visited", true)),
+            "clear" to listOf(FlagAssignment("reward", false)),
+        ))
+        val checked = mutableListOf<String>()
+        val result = runSignalChecks(request) { checked += it.name; "Y" }
+        assertEquals(listOf("partial", "repeated", "clear"), checked)
+        assertEquals(listOf("partial", "repeated", "clear"), result.emittedSignals)
+        assertEquals(mapOf("visited" to true, "reward" to false, "extra" to true), result.flags)
+    }
+
+    @Test fun `effect eligibility stays at turn start despite earlier assignments`() = runBlocking {
+        val request = request().copy(signals = linkedMapOf(
+            "enter" to listOf(FlagAssignment("visited", true)),
+            "reset" to listOf(FlagAssignment("visited", false)),
+            "enterAgain" to listOf(FlagAssignment("visited", true)),
+        ))
+        val checked = mutableListOf<String>()
+        val result = runSignalChecks(request) { checked += it.name; "Y" }
+        assertEquals(listOf("enter", "enterAgain"), checked)
+        assertEquals(listOf("enter", "enterAgain"), result.emittedSignals)
+        assertEquals(mapOf("visited" to true, "reward" to false), result.flags)
+    }
 }

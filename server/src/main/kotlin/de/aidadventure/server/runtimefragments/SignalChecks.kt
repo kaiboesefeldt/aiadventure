@@ -10,7 +10,9 @@ data class SignalCheckOutcome(
 )
 
 /** Resolve eligibility once from the turn-start snapshot; never chain assignments within a turn. */
-internal fun eligibleSignalChecks(request: WarmupRequest): List<SignalCheckDefinition> = request.signals.keys.mapNotNull { name ->
+internal fun eligibleSignalChecks(request: WarmupRequest): List<SignalCheckDefinition> = request.signals.mapNotNull { (name, assignments) ->
+    val effectiveAssignments = assignments.associate { it.flag to it.value }
+    if (effectiveAssignments.none { (flag, value) -> request.flags[flag] != value }) return@mapNotNull null
     val explicit = request.signalChecks.filter { it.name == name }
     val predicates = if (explicit.isNotEmpty()) {
         explicit.filter { definition -> definition.conditions.all { request.flags[it.flag] == it.value } }
