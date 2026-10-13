@@ -6,7 +6,7 @@ import kotlin.js.JsNonModule
 
 data class FlagCondition(val flag: String, val value: Boolean)
 data class FlagAssignment(val flag: String, val value: Boolean)
-data class SignalCheckDefinition(val name: String, val description: String, val conditions: List<FlagCondition> = emptyList())
+data class SignalCheckDefinition(val name: String, val description: String, val conditions: List<FlagCondition> = emptyList(), val emittedTexts: List<String> = emptyList())
 
 data class RuntimeFragmentDefinition(
     val matchText: String,
@@ -37,7 +37,8 @@ object ScenarioFrontmatter {
         val locations = readLocations(rootEntries)
         val flags = readFlags(rootEntries)
         val declaredChecks = linkedMapOf<String, Pair<String?, List<FlagCondition>>>()
-        val signals = readSignals(rootEntries, flags.keys, declaredChecks)
+        val emittedTexts = linkedMapOf<String, List<String>>()
+        val signals = readSignals(rootEntries, flags.keys, declaredChecks, emittedTexts)
         val fragments = readRuntimeFragments(rootEntries, flags.keys, signals.keys, flagsEntryPresent = rootEntries.any { it[0] == "flags" } || rootEntries.any { it[0] == "signals" })
         val checks = signals.keys.flatMap { name ->
             val (description, conditions) = declaredChecks.getValue(name)
@@ -57,7 +58,7 @@ object ScenarioFrontmatter {
             initialSituationSetting = initialSituation.second,
             initialFlags = flags,
             signals = signals,
-            signalChecks = checks,
+            signalChecks = checks.map { it.copy(emittedTexts = emittedTexts[it.name].orEmpty()) },
         )
     }
 
@@ -105,6 +106,7 @@ object ScenarioFrontmatter {
         rootEntries: Array<Array<dynamic>>,
         declaredFlags: Set<String>,
         declaredChecks: MutableMap<String, Pair<String?, List<FlagCondition>>>,
+        emittedTexts: MutableMap<String, List<String>>,
     ): Map<String, List<FlagAssignment>> {
         val entry = rootEntries.firstOrNull { it[0] == "signals" } ?: return emptyMap()
         val source = entry[1]
@@ -144,10 +146,16 @@ object ScenarioFrontmatter {
                 invalidFrontmatter("$path.triggers", "expected at least one action")
             }
             val actions = mutableListOf<FlagAssignment>()
+            val texts = mutableListOf<String>()
             triggers.unsafeCast<Array<dynamic>>().forEachIndexed { index, trigger ->
                 val triggerPath = "$path.triggers[$index]"
                 val action = mappingEntries(trigger) ?: invalidFrontmatter(triggerPath, "expected set-flag")
-                if (action.size != 1 || action.single()[0] != "set-flag") invalidFrontmatter(triggerPath, "expected set-flag")
+                if (action.size != 1 || action.single()[0] !in setOf("set-flag", "emit-text")) invalidFrontmatter(triggerPath, "expected set-flag or emit-text")
+                if (action.single()[0] == "emit-text") {
+                    texts += (action.single()[1] as? String)?.takeIf { it.isNotBlank() }
+                        ?: invalidFrontmatter("$triggerPath.emit-text", "expected nonblank text")
+                    return@forEachIndexed
+                }
                 val assignments = mappingEntries(action.single()[1])
                     ?: invalidFrontmatter("$triggerPath.set-flag", "expected flag assignments")
                 if (assignments.isEmpty()) invalidFrontmatter("$triggerPath.set-flag", "must assign at least one flag")
@@ -160,6 +168,7 @@ object ScenarioFrontmatter {
                 }
             }
             signals[name] = actions
+            emittedTexts[name] = texts
         }
         return signals
     }

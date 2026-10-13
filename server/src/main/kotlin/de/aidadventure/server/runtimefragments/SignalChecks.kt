@@ -7,12 +7,14 @@ data class SignalCheckOutcome(
     val flags: Map<String, Boolean>,
     val emittedSignals: List<String> = emptyList(),
     val diagnostics: List<StreamDiagnostic> = emptyList(),
+    val emittedTexts: List<String> = emptyList(),
+    val nextRuntimeContext: String = "",
 )
 
 /** Resolve eligibility once from the turn-start snapshot; never chain assignments within a turn. */
 internal fun eligibleSignalChecks(request: WarmupRequest): List<SignalCheckDefinition> = request.signals.mapNotNull { (name, assignments) ->
     val effectiveAssignments = assignments.associate { it.flag to it.value }
-    if (effectiveAssignments.none { (flag, value) -> request.flags[flag] != value }) return@mapNotNull null
+    if (request.signalChecks.none { it.name == name && it.emittedTexts.isNotEmpty() } && effectiveAssignments.none { (flag, value) -> request.flags[flag] != value }) return@mapNotNull null
     val explicit = request.signalChecks.filter { it.name == name }
     val predicates = if (explicit.isNotEmpty()) {
         explicit.filter { definition -> definition.conditions.all { request.flags[it.flag] == it.value } }
@@ -53,5 +55,5 @@ internal suspend fun runSignalChecks(
     diagnostics += StreamDiagnostic("flags", "applied", transcriptRole = "game-master", fields = mapOf(
         "emittedSignals" to emitted.joinToString(", "),
         "appliedAssignments" to emitted.flatMap { request.signals[it].orEmpty() }.joinToString(", ") { "${it.flag}=${it.value}" }))
-    return SignalCheckOutcome(flags, emitted, diagnostics)
+    return SignalCheckOutcome(flags, emitted, diagnostics, emitted.flatMap { name -> request.signalChecks.firstOrNull { it.name == name }?.emittedTexts.orEmpty() })
 }

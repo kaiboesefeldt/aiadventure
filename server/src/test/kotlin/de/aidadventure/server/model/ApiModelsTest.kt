@@ -11,6 +11,22 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class ApiModelsTest {
+    @Test fun `combined runtime context can exceed a source text limit while player text remains bounded`() {
+        val request = TurnRequest("live", modelId = "model", scenarioMarkdown = "# Game", history = listOf(ChatEntry("runtime-fragment", "x".repeat(20_001))), playerAction = "enter")
+        assertNull(RequestValidator.validate(request))
+        assertNotNull(RequestValidator.validate(request.copy(history = listOf(ChatEntry("player", "x".repeat(20_001))))))
+    }
+
+    @Test fun `text only signal validation accepts bounded text and rejects malformed text`() {
+        val request = TurnRequest("live", modelId = "model", scenarioMarkdown = "# Game", history = emptyList(), playerAction = "enter",
+            signals = mapOf("enter" to emptyList()), signalChecks = listOf(SignalCheckDefinition("enter", "Entered", emittedTexts = listOf("Remember"))))
+        assertNull(RequestValidator.validate(request))
+        assertEquals(request, Json.decodeFromString<TurnRequest>(Json.encodeToString(request)).copy(modelId = "model"))
+        for (texts in listOf(listOf(" "), listOf("x".repeat(20_001)), List(201) { "hint" })) {
+            assertNotNull(RequestValidator.validate(request.copy(signalChecks = listOf(request.signalChecks.single().copy(emittedTexts = texts)))))
+        }
+    }
+
     @Test
     fun `independent check validation rejects unknown signals flags and blank descriptions`() {
         val request = TurnRequest("live", modelId = "configured-llama-cpp", scenarioMarkdown = "# S", history = emptyList(), playerAction = "look",

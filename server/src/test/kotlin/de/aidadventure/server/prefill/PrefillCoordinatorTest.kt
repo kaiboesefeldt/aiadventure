@@ -39,6 +39,37 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
+    @Test fun `combined next context survives persisted history resume and following turn without duplicates`() = runBlocking {
+        for (fragment in listOf(false, true)) {
+            val fake = ControllableGateway(classify = { "Y" }, warmup = { CacheMetrics(8, 2) }, signalCheck = { _, _ -> "Y" })
+            val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+            val completed = warmup(listOf(ChatEntry("player", "enter"), ChatEntry("game-master", "Entered"))).copy(
+                signals = mapOf("enter" to emptyList()),
+                signalChecks = listOf(de.aidadventure.server.model.SignalCheckDefinition("enter", "Entered", emittedTexts = listOf("Remember"))))
+            val reservation = coordinator.reserveRerank(completed, "origin")!!
+            coordinator.completeReservedRerank(reservation, if (fragment) candidate() else null)
+            val outcome = coordinator.awaitSignalChecks(reservation)
+            val expected = if (fragment) "Remember\n\nfragment text" else "Remember"
+            assertEquals(expected, outcome.nextRuntimeContext)
+            val persisted = completed.history + ChatEntry("runtime-fragment", expected)
+            val next = turn("continue", persisted).copy(signals = completed.signals, signalChecks = completed.signalChecks)
+            coordinator.beginTurn(next).toList()
+            assertEquals(persisted, fake.turnRequests.single().history)
+            assertEquals(PromptFactory().buildWarmup(fake.warmupRequests.single()), PromptFactory().build(fake.turnRequests.single()).dropLast(1))
+            assertEquals(listOf(LlamaCppSlot(1)), fake.slotLifecycle.map { it.slot }.distinct())
+            coordinator.close()
+            val resumedFake = ControllableGateway(warmup = { CacheMetrics(8, 2) })
+            val resumed = SessionPrefillCoordinator(resumedFake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+            resumed.warmup(completed.copy(history = persisted), "resume")
+            resumedFake.awaitWarmupCompletion()
+            resumed.beginTurn(next).toList()
+            assertEquals(persisted, resumedFake.turnRequests.single().history)
+            assertEquals(PromptFactory().buildWarmup(resumedFake.warmupRequests.single()), PromptFactory().build(resumedFake.turnRequests.single()).dropLast(1))
+            assertEquals(listOf(LlamaCppSlot(1)), resumedFake.slotLifecycle.map { it.slot }.distinct())
+            resumed.close()
+        }
+    }
+
     @Test
     fun `failed primary signal turn clears transient postturn gate`() = runBlocking {
         val fake = ControllableGateway(stream = { flow { throw java.io.IOException("unavailable") } })

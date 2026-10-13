@@ -12,7 +12,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class RequestBodyEncodingTest {
     @Test fun `all request mappers serialize explicit event checks and keep assignments`() {
-        val scenario = Scenario("scenario", "Harbor", "---\nflags: {visited: false}\nsignals:\n  visit:\n    description: The player actually entered.\n    condition: {visited: false}\n    triggers:\n      - set-flag: {visited: true}\n---\n# Harbor", 1)
+        val scenario = Scenario("scenario", "Harbor", "---\nflags: {visited: false}\nsignals:\n  visit:\n    description: The player actually entered.\n    condition: {visited: false}\n    triggers:\n      - emit-text: First hint\n      - set-flag: {visited: true}\n      - emit-text: Second hint\n---\n# Harbor", 1)
         val session = GameSession("session", scenario.id, "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
         val bodies = listOf(
             encodeTurnRequest(TurnRequestMapper.map(session, scenario, "enter", "session")),
@@ -23,6 +23,7 @@ class RequestBodyEncodingTest {
             val body = Json.parseToJsonElement(encoded).jsonObject
             val check = body["signalChecks"]!!.jsonArray.single().jsonObject
             assertEquals("visit", check["name"]!!.jsonPrimitive.content)
+            assertEquals(listOf("First hint", "Second hint"), check["emittedTexts"]!!.jsonArray.map { it.jsonPrimitive.content })
             assertEquals("The player actually entered.", check["description"]!!.jsonPrimitive.content)
             assertEquals("visited", check["conditions"]!!.jsonArray.single().jsonObject["flag"]!!.jsonPrimitive.content)
             assertEquals("false", check["conditions"]!!.jsonArray.single().jsonObject["value"]!!.jsonPrimitive.content)

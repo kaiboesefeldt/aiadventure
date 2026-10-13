@@ -760,6 +760,13 @@ internal class SessionPrefillCoordinator(
                     operation.resolvedFragment = operation.resolvedFragment?.takeIf { fragment ->
                         fragment.conditions.all { finalFlags[it.flag] == it.value }
                     }
+                    val texts = operation.signalOutcome?.emittedTexts.orEmpty()
+                    if (texts.isNotEmpty()) {
+                        val context = (texts + listOfNotNull(operation.resolvedFragment?.fragment?.takeIf { it.isNotBlank() }))
+                            .joinToString("\n\n")
+                        operation.signalOutcome = operation.signalOutcome?.copy(nextRuntimeContext = context)
+                        operation.resolvedFragment = RuntimeFragmentDefinition("signal-context", context)
+                    }
                     val canonicalWarmup = prepared.copy(
                         flags = finalFlags,
                         history = operation.resolvedFragment?.takeIf { it.fragment.isNotBlank() }
@@ -977,8 +984,9 @@ internal class SessionPrefillCoordinator(
         candidate.conditions.all { flags[it.flag] == it.value }
     }?.let { candidate ->
         ResolvedTurn(
-            if (candidate.fragment.isBlank()) this else copy(history = history + ChatEntry("runtime-fragment", candidate.fragment)),
-            candidate.fragment,
+            if (candidate.fragment.isBlank() || history.lastOrNull() == ChatEntry("runtime-fragment", candidate.fragment)) this
+            else copy(history = history + ChatEntry("runtime-fragment", candidate.fragment)),
+            candidate.fragment.takeUnless { history.lastOrNull() == ChatEntry("runtime-fragment", candidate.fragment) },
         )
     } ?: ResolvedTurn(this, null)
 

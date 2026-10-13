@@ -308,7 +308,7 @@ class TurnSubmissionTest {
             override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
                 submittedFlags = request.flags
                 onToken("A map lies on the table.")
-                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState(), flags = mapOf("has-map" to true))
+                return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState(), flags = mapOf("has-map" to true), nextRuntimeContext = "Signal hint\n\nFragment hint")
             }
         }
 
@@ -319,6 +319,11 @@ class TurnSubmissionTest {
         assertEquals(mapOf("has-map" to true), completed.flags)
         assertEquals(completed.flags, TurnRequestMapper.map(completed, scenario, "continue", completed.id).flags)
         assertEquals(completed, sessions.saved.single())
+        val persisted = sessions.saved.single()
+        assertEquals("runtime-fragment", persisted.messages.last().role)
+        assertEquals("Signal hint\n\nFragment hint", persisted.messages.last().content)
+        assertEquals(persisted.messages.map { it.content }, TurnRequestMapper.map(persisted, scenario, "continue", persisted.id).history.map { it.content })
+        assertEquals(1, persisted.messages.count { it.role == "runtime-fragment" })
     }
 
     @OptIn(DelicateCoroutinesApi::class)

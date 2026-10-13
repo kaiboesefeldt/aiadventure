@@ -191,7 +191,7 @@ internal fun processTurnStreamChunk(
             "fragment" -> onFragment(streamJson.decodeFromString<StreamFragment>(frame.data).fragment)
             "token" -> onToken(streamJson.decodeFromString<StreamToken>(frame.data).text)
             "diagnostic" -> onDiagnostic(streamJson.decodeFromString<StreamDiagnostic>(frame.data))
-            "done" -> streamJson.decodeFromString<StreamDone>(frame.data).let { return TurnCompletion(it.metrics, it.worldState, it.contextCompression, it.flags) }
+            "done" -> streamJson.decodeFromString<StreamDone>(frame.data).let { return TurnCompletion(it.metrics, it.worldState, it.contextCompression, it.flags, it.nextRuntimeContext) }
             "error" -> throw AdventureApiException(streamJson.decodeFromString<StreamError>(frame.data).message)
         }
     }
@@ -266,7 +266,7 @@ object TurnRequestMapper {
             initialSituation = if (includeInitialSituation) parsed.initialSituationSetting else "",
             flags = parsed.initialFlags + session.flags,
             signals = parsed.signals.mapValues { (_, assignments) -> assignments.map { FlagAssignment(it.flag, it.value) } },
-            signalChecks = parsed.signalChecks.map { SignalCheckDefinition(it.name, it.description, it.conditions.map { condition -> FlagCondition(condition.flag, condition.value) }) },
+            signalChecks = parsed.signalChecks.map { SignalCheckDefinition(it.name, it.description, it.conditions.map { condition -> FlagCondition(condition.flag, condition.value) }, it.emittedTexts) },
         )
     }
 }
@@ -288,7 +288,7 @@ object PrefillRequestMapper {
             locations = parsed.locations,
             flags = parsed.initialFlags + session.flags,
             signals = parsed.signals.mapValues { (_, assignments) -> assignments.map { FlagAssignment(it.flag, it.value) } },
-            signalChecks = parsed.signalChecks.map { SignalCheckDefinition(it.name, it.description, it.conditions.map { condition -> FlagCondition(condition.flag, condition.value) }) },
+            signalChecks = parsed.signalChecks.map { SignalCheckDefinition(it.name, it.description, it.conditions.map { condition -> FlagCondition(condition.flag, condition.value) }, it.emittedTexts) },
         )
     }
 }
@@ -308,7 +308,7 @@ object WarmupRequestMapper {
             locations = parsed.locations,
             flags = parsed.initialFlags + session.flags,
             signals = parsed.signals.mapValues { (_, assignments) -> assignments.map { FlagAssignment(it.flag, it.value) } },
-            signalChecks = parsed.signalChecks.map { SignalCheckDefinition(it.name, it.description, it.conditions.map { condition -> FlagCondition(condition.flag, condition.value) }) },
+            signalChecks = parsed.signalChecks.map { SignalCheckDefinition(it.name, it.description, it.conditions.map { condition -> FlagCondition(condition.flag, condition.value) }, it.emittedTexts) },
         )
     }
 }
@@ -328,7 +328,7 @@ data class RuntimeFragmentDefinition(
 data class FlagCondition(val flag: String, val value: Boolean)
 
 @Serializable
-data class SignalCheckDefinition(val name: String, val description: String, val conditions: List<FlagCondition> = emptyList())
+data class SignalCheckDefinition(val name: String, val description: String, val conditions: List<FlagCondition> = emptyList(), val emittedTexts: List<String> = emptyList())
 
 @Serializable
 data class FlagAssignment(val flag: String, val value: Boolean)
@@ -404,12 +404,14 @@ private data class StreamDone(
     val worldState: WorldState = WorldState(),
     val contextCompression: ContextCompression = ContextCompression(),
     val flags: Map<String, Boolean> = emptyMap(),
+    val nextRuntimeContext: String = "",
 )
 data class TurnCompletion(
     val metrics: TurnMetrics,
     val worldState: WorldState,
     val contextCompression: ContextCompression = ContextCompression(),
     val flags: Map<String, Boolean> = emptyMap(),
+    val nextRuntimeContext: String = "",
 )
 
 @Serializable
