@@ -30,9 +30,12 @@ import react.dom.html.ReactHTML
 import react.useEffect
 import react.useEffectWithCleanup
 import react.useState
+import react.useRef
+import react.useLayoutEffect
 import web.cssom.ClassName
 import web.dom.document
 import web.file.File
+import web.html.HTMLElement
 import web.html.HTMLInputElement
 import web.html.HTMLTextAreaElement
 
@@ -185,6 +188,16 @@ private val PlayView = FC<PlayViewProps> { props ->
     val liveId = props.session.id
     val (prefill) = useState(PrefillSubmission(props.api))
     val displayed = sessionForDisplay(props.session, streamed)
+    val transcript = useRef<HTMLElement>(null)
+    val followTranscript = useRef(true)
+    fun scrollToTranscriptEnd() {
+        followTranscript.current = true
+        transcript.current?.let { it.asDynamic().scrollTop = it.scrollHeight }
+    }
+    // Run after each committed text update, before browser scroll events from its new layout.
+    useLayoutEffect(dependencies = arrayOf(displayed.messages, debugOpen)) {
+        if (followTranscript.current == true) scrollToTranscriptEnd()
+    }
     fun closeDebugPanel() {
         debugOpen = false
         window.setTimeout({ document.querySelector("button[aria-label='Open debug panel']")?.asDynamic()?.focus() }, 0)
@@ -348,9 +361,23 @@ private val PlayView = FC<PlayViewProps> { props ->
     }
     ReactHTML.div { className = ClassName(if (debugOpen) "play-layout play-layout--debug-open" else "play-layout")
     ReactHTML.section { className = ClassName("view-card")
+        onKeyDown = { event ->
+            if (event.key == "End" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey &&
+                event.nativeEvent.asDynamic().isComposing != true) {
+                event.preventDefault()
+                scrollToTranscriptEnd()
+            }
+        }
         ReactHTML.button { className = ClassName("secondary-button"); disabled = pending || leaving; onClick = { leavePlay() }; +"Back to sessions" }
         ReactHTML.h2 { className = ClassName("view-title"); +displayed.title }
-        ReactHTML.div { className = ClassName("transcript"); displayed.messages.filter(::isVisibleTranscriptMessage).forEachIndexed { index, message ->
+        ReactHTML.div {
+            className = ClassName("transcript")
+            ref = transcript
+            onScroll = { event ->
+                val pane = event.currentTarget
+                followTranscript.current = pane.scrollHeight - pane.clientHeight - pane.scrollTop <= 1
+            }
+            displayed.messages.filter(::isVisibleTranscriptMessage).forEachIndexed { index, message ->
             ReactHTML.article {
                 id = "transcript-message-$index".unsafeCast<web.dom.ElementId>()
                 className = ClassName("message")
@@ -397,6 +424,7 @@ private val PlayView = FC<PlayViewProps> { props ->
         events = diagnosticEvents.filter { it.sessionId == liveId }
         onClose = ::closeDebugPanel
         onShowTranscript = { index ->
+            followTranscript.current = false
             window.setTimeout({
                 val target = document.getElementById("transcript-message-$index".unsafeCast<web.dom.ElementId>())
                 if (target != null) scrollWithinPane(target, ".transcript")

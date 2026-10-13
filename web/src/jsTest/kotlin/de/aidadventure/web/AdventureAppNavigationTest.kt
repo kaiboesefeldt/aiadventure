@@ -846,6 +846,131 @@ class AdventureAppNavigationTest {
         }
     }
 
+    // Missing follow updates, ignoring user scrolls, or losing follow state breaks these transitions.
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `streaming follows bottom pauses above it and resumes with bottom or End`() = GlobalScope.promise<Unit> {
+        val stylesheet = document.createElement("link")
+        stylesheet.asDynamic().rel = "stylesheet"
+        stylesheet.asDynamic().href = "/app.css"
+        val loaded = Promise<Unit> { resolve, reject ->
+            stylesheet.asDynamic().onload = { resolve(Unit) }
+            stylesheet.asDynamic().onerror = { reject(IllegalStateException("Cannot load app.css")) }
+        }
+        document.head.appendChild(stylesheet)
+        loaded.await()
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        val scenario = Scenario("follow", "follow.md", "# Harbor", 1)
+        val session = GameSession("follow-session", scenario.id, "Harbor", messages = List(20) {
+            GameMessage("game-master", "Old narrative paragraph. ".repeat(30), it.toLong(), messageId = "old-$it")
+        }, createdAt = 1, updatedAt = 20)
+        val events = recordingDebugEvents(DebugEvent("follow-old", session.id, "old-turn", 0, 1,
+            "turn_status", "completed", fields = mapOf("result" to "accepted"),
+            transcriptRole = "game-master", transcriptMessageId = "old-0"))
+        val started = CompletableDeferred<Unit>()
+        val finished = CompletableDeferred<Unit>()
+        var token: (String) -> Unit = {}
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+            override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
+                token = onToken
+                started.complete(Unit)
+                finished.await()
+                return TurnCompletion(TurnMetrics(null, null, null), WorldState())
+            }
+        }
+        try {
+            flushSync { root.render(AdventureApp.create {
+                scenarioRepository = scenarioRepository(scenario)
+                sessionRepository = fixedSessions(session)
+                debugEventRepository = events
+                this.api = api
+                initialScenarios = listOf(scenario)
+            }) }
+            container.clickButtonNamed(scenario.name)
+            nextBrowserTick()
+            container.clickButtonNamed(session.title)
+            nextBrowserTick()
+            val transcript = assertNotNull(container.querySelector(".transcript")).asDynamic()
+            val input = container.querySelector("#player-action").asDynamic()
+            fun scrollTo(offset: dynamic) {
+                transcript.scrollTop = offset
+                transcript.dispatchEvent(js("new Event('scroll', { bubbles: false })"))
+            }
+            fun assertBottom() {
+                assertEquals(true, transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop <= 1,
+                    "Latest streamed text must stay visible")
+            }
+            scrollTo(transcript.scrollHeight)
+            js("Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Look around')")
+            input.dispatchEvent(js("new Event('input', { bubbles: true })"))
+            nextBrowserTick()
+            container.click(".action-form button.primary-button")
+            withTimeout(5_000) { started.await() }
+            suspend fun appendText() {
+                token("\n\nNew streamed narrative. ".repeat(40))
+                nextBrowserTick()
+            }
+            appendText()
+            assertBottom()
+            appendText()
+            assertBottom()
+
+            scrollTo(200)
+            val pausedOffset = transcript.scrollTop
+            appendText()
+            assertEquals(pausedOffset, transcript.scrollTop, "Reading earlier text must pause following")
+            scrollTo(transcript.scrollHeight)
+            appendText()
+            assertBottom()
+
+            scrollTo(200)
+            val end = js("new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true })")
+            input.dispatchEvent(end)
+            assertEquals(true, end.defaultPrevented, "Plain End in composer must jump the dialog")
+            assertBottom()
+            appendText()
+            assertBottom()
+
+            scrollTo(200)
+            for (modifier in listOf("shiftKey", "ctrlKey", "altKey", "metaKey")) {
+                val options = js("({ key: 'End', bubbles: true, cancelable: true })")
+                options[modifier] = true
+                val modifiedEnd = js("new KeyboardEvent('keydown', options)")
+                input.dispatchEvent(modifiedEnd)
+                assertEquals(false, modifiedEnd.defaultPrevented, "Modified End retains native editing")
+                assertEquals(200, transcript.scrollTop)
+            }
+
+            // Diagnostics may change layout and navigate back while generation continues.
+            scrollTo(transcript.scrollHeight)
+            container.click("button[aria-label='Open debug panel']")
+            nextBrowserTick()
+            nextBrowserTick()
+            appendText()
+            assertBottom()
+            assertNotNull(container.querySelector("#debug-event-follow-old")).asDynamic().dispatchEvent(
+                js("new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })"))
+            nextBrowserTick()
+            val linkedOffset = transcript.scrollTop
+            assertEquals(true, linkedOffset < transcript.scrollHeight - transcript.clientHeight, "Diagnostic link must reveal old narrative")
+            appendText()
+            assertEquals(linkedOffset, transcript.scrollTop, "A diagnostic back-link must pause following")
+            input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true })"))
+            appendText()
+            assertBottom()
+        } finally {
+            finished.complete(Unit)
+            nextBrowserTick()
+            flushSync { root.unmount() }
+            container.remove()
+            stylesheet.remove()
+        }
+    }
+
     // Removing pane height constraints or scrolling the page during cross-links breaks this contract.
     @OptIn(DelicateCoroutinesApi::class)
     @Test
