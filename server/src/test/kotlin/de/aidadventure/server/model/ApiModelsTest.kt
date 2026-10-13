@@ -11,6 +11,15 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class ApiModelsTest {
+    @Test fun `same signal fallback predicates require identical emitted texts`() {
+        val request = TurnRequest("live", modelId = "model", scenarioMarkdown = "# Game", history = emptyList(), playerAction = "enter",
+            signals = mapOf("enter" to emptyList()), signalChecks = listOf(
+                SignalCheckDefinition("enter", "Entry", emittedTexts = emptyList()),
+                SignalCheckDefinition("enter", "Arrival", emittedTexts = listOf("hint"))))
+        assertNotNull(RequestValidator.validate(request))
+        assertNull(RequestValidator.validate(request.copy(signalChecks = request.signalChecks.map { it.copy(emittedTexts = listOf("hint")) })))
+    }
+
     @Test fun `combined runtime context can exceed a source text limit while player text remains bounded`() {
         val request = TurnRequest("live", modelId = "model", scenarioMarkdown = "# Game", history = listOf(ChatEntry("runtime-fragment", "x".repeat(20_001))), playerAction = "enter")
         assertNull(RequestValidator.validate(request))

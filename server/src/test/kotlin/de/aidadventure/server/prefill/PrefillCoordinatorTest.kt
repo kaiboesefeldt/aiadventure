@@ -39,9 +39,10 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
-    @Test fun `combined next context survives persisted history resume and following turn without duplicates`() = runBlocking {
+    @Test fun `combined next context survives persisted history resume and following turn without duplicates`() = runBlocking { withTimeout(5_000) {
         for (fragment in listOf(false, true)) {
-            val fake = ControllableGateway(classify = { "Y" }, warmup = { CacheMetrics(8, 2) }, signalCheck = { _, _ -> "Y" })
+            val fake = ControllableGateway(classify = { "Y" }, prefill = { CacheMetrics(8, 2) }, warmup = { CacheMetrics(8, 2) }, signalCheck = { _, _ -> "Y" },
+                stream = { flowOf(TurnStreamEvent.Token("Continued"), TurnStreamEvent.Done(TurnMetrics(1, 8, 2))) })
             val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
             val completed = warmup(listOf(ChatEntry("player", "enter"), ChatEntry("game-master", "Entered"))).copy(
                 signals = mapOf("enter" to emptyList()),
@@ -52,11 +53,34 @@ class PrefillCoordinatorTest {
             val expected = if (fragment) "Remember\n\nfragment text" else "Remember"
             assertEquals(expected, outcome.nextRuntimeContext)
             val persisted = completed.history + ChatEntry("runtime-fragment", expected)
-            val next = turn("continue", persisted).copy(signals = completed.signals, signalChecks = completed.signalChecks)
-            coordinator.beginTurn(next).toList()
+            val next = turn("open", persisted).copy(signals = completed.signals, signalChecks = completed.signalChecks)
+            assertEquals(PrefillDisposition.STARTED, coordinator.submit(prefill(1, "open").copy(history = persisted,
+                signals = completed.signals, signalChecks = completed.signalChecks)))
+            fake.awaitPrefillCompletion(1)
+            coordinator.beginTurn(next, "cycle-one").toList()
+            assertEquals(PromptFactory().build(fake.prefillRequests.single()), PromptFactory().build(fake.turnRequests.single()))
             assertEquals(persisted, fake.turnRequests.single().history)
             assertEquals(PromptFactory().buildWarmup(fake.warmupRequests.single()), PromptFactory().build(fake.turnRequests.single()).dropLast(1))
             assertEquals(listOf(LlamaCppSlot(1)), fake.slotLifecycle.map { it.slot }.distinct())
+            val secondCompleted = completed.copy(history = persisted + ChatEntry("player", "open") + ChatEntry("game-master", "Continued"))
+            val recurring = coordinator.reserveRerank(secondCompleted, "cycle-one")!!
+            coordinator.completeReservedRerank(recurring, if (fragment) candidate() else null)
+            val recurringOutcome = coordinator.awaitSignalChecks(recurring)
+            assertEquals(expected, recurringOutcome.nextRuntimeContext)
+            coordinator.finishPostTurn("cycle-one", recurringOutcome.flags)
+            val secondPersisted = secondCompleted.history + ChatEntry("runtime-fragment", expected)
+            assertEquals(2, secondPersisted.count { it.role == "runtime-fragment" && it.content == expected })
+            assertEquals(PrefillDisposition.STARTED, coordinator.submit(prefill(2, "open the").copy(history = secondPersisted,
+                signals = completed.signals, signalChecks = completed.signalChecks)))
+            fake.awaitPrefillCompletion(2)
+            coordinator.beginTurn(turn("open the", secondPersisted).copy(signals = completed.signals,
+                signalChecks = completed.signalChecks), "cycle-two").toList()
+            assertEquals(secondPersisted, fake.turnRequests.last().history)
+            assertEquals(PromptFactory().buildWarmup(fake.warmupRequests.last()), PromptFactory().build(fake.turnRequests.last()).dropLast(1))
+            assertEquals(PromptFactory().build(fake.prefillRequests.last()), PromptFactory().build(fake.turnRequests.last()))
+            assertEquals(1, fake.acquiredSlots.size)
+            assertEquals(listOf(LlamaCppSlot(1)), fake.slotLifecycle.map { it.slot }.distinct())
+            coordinator.finishPostTurn("cycle-two", recurringOutcome.flags)
             coordinator.close()
             val resumedFake = ControllableGateway(warmup = { CacheMetrics(8, 2) })
             val resumed = SessionPrefillCoordinator(resumedFake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
@@ -68,7 +92,7 @@ class PrefillCoordinatorTest {
             assertEquals(listOf(LlamaCppSlot(1)), resumedFake.slotLifecycle.map { it.slot }.distinct())
             resumed.close()
         }
-    }
+    } }
 
     @Test
     fun `failed primary signal turn clears transient postturn gate`() = runBlocking {

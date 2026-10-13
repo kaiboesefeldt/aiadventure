@@ -739,6 +739,9 @@ object RequestValidator {
                 check.emittedTexts.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS || check.emittedTexts.any { it.isBlank() || it.length > MAX_TEXT_LENGTH } ||
                 check.conditions.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS || check.conditions.any { it.flag !in flags }
         } -> invalid()
+        signalChecks.groupBy { it.name }.values.any { definitions ->
+            definitions.map { it.emittedTexts }.distinct().size > 1
+        } -> invalid()
         runtimeFragments.any { fragment ->
             fragment.conditions.any { it.flag !in flags } || fragment.emittedSignals.any { it !in signals }
         } -> invalid()
