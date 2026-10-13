@@ -58,8 +58,15 @@ class SignalCheckApplicationTest {
                 contentType(ContentType.Application.Json)
                 setBody(TurnRequest("live", scenarioMarkdown = "# Game", history = emptyList(), playerAction = "Enter",
                     flags = mapOf("visited" to false, "met" to false),
-                    signals = linkedMapOf("enter" to listOf(FlagAssignment("visited", true)), "meet" to listOf(FlagAssignment("met", true))),
-                    signalChecks = listOf(SignalCheckDefinition("enter", "Entered lighthouse"), SignalCheckDefinition("meet", "Met keeper"))))
+                    signals = linkedMapOf(
+                        "unchanged" to listOf(FlagAssignment("visited", false)),
+                        "blocked" to listOf(FlagAssignment("met", true)),
+                        "enter" to listOf(FlagAssignment("visited", true)),
+                        "meet" to listOf(FlagAssignment("met", true))),
+                    signalChecks = listOf(
+                        SignalCheckDefinition("unchanged", "Already unchanged"),
+                        SignalCheckDefinition("blocked", "Blocked", listOf(FlagCondition("visited", true))),
+                        SignalCheckDefinition("enter", "Entered lighthouse"), SignalCheckDefinition("meet", "Met keeper"))))
             }.bodyAsText()
             assertEquals(listOf("world_state", "warmup", "rerank", "check:enter", "check:meet", "warmup"), stages)
             assertEquals(2, checks.size)
