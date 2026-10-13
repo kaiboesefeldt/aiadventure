@@ -114,6 +114,7 @@ class AdventureAppNavigationTest {
     fun `opening debug panel recovers a persisted scheduled outcome after reload`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
+        val root = createRoot(container)
         val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
         val session = GameSession("session", scenario.id, "Harbor", messages = listOf(
             GameMessage("game-master", "Saved welcome", 2, messageId = "saved-output"),
@@ -136,7 +137,7 @@ class AdventureAppNavigationTest {
             }
         }
         try {
-            flushSync { createRoot(container).render(AdventureApp.create {
+            flushSync { root.render(AdventureApp.create {
                 scenarioRepository = scenarioRepository(scenario)
                 sessionRepository = fixedSessions(session)
                 debugEventRepository = events
@@ -154,7 +155,7 @@ class AdventureAppNavigationTest {
             val outcome = events.saved.single { it.stage == "prior_completed" }
             assertEquals(scheduled.turnId, outcome.turnId)
             assertEquals("saved-output", outcome.transcriptMessageId)
-        } finally { container.remove() }
+        } finally { flushSync { root.unmount() }; container.remove() }
     }
 
     @OptIn(DelicateCoroutinesApi::class)
@@ -162,6 +163,7 @@ class AdventureAppNavigationTest {
     fun `resumed introduction navigates to its prior turn diagnostic after a failed retry`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
+        val root = createRoot(container)
         val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
         val session = GameSession("session", scenario.id, "Harbor", messages = listOf(
             GameMessage("player", "hidden introduction", 1, hidden = true, messageId = "hidden-intro"),
@@ -175,7 +177,7 @@ class AdventureAppNavigationTest {
         val oldBounds = elementPrototype.getBoundingClientRect
         elementPrototype.getBoundingClientRect = js("(function (original) { return function () { if (/^(debug-event-|transcript-message-)/.test(this.id)) window.__lastScrolledId = this.id; return original.call(this); }; })")(oldBounds)
         try {
-            flushSync { createRoot(container).render(AdventureApp.create {
+            flushSync { root.render(AdventureApp.create {
                 scenarioRepository = scenarioRepository(scenario)
                 sessionRepository = fixedSessions(session)
                 debugEventRepository = events
@@ -200,6 +202,7 @@ class AdventureAppNavigationTest {
             assertNotNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
         } finally {
             elementPrototype.getBoundingClientRect = oldBounds
+            flushSync { root.unmount() }
             container.remove()
         }
     }
@@ -209,6 +212,7 @@ class AdventureAppNavigationTest {
     fun `resumed retry does not link a failed turn event to the replacement player`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
+        val root = createRoot(container)
         val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
         val session = GameSession("session", scenario.id, "Harbor", messages = listOf(
             GameMessage("player", "retry action", 3, messageId = "retry-player"),
@@ -222,7 +226,7 @@ class AdventureAppNavigationTest {
         val oldBounds = elementPrototype.getBoundingClientRect
         elementPrototype.getBoundingClientRect = js("(function (original) { return function () { if (/^(debug-event-|transcript-message-)/.test(this.id)) window.__lastScrolledId = this.id; return original.call(this); }; })")(oldBounds)
         try {
-            flushSync { createRoot(container).render(AdventureApp.create {
+            flushSync { root.render(AdventureApp.create {
                 scenarioRepository = scenarioRepository(scenario)
                 sessionRepository = fixedSessions(session)
                 debugEventRepository = events
@@ -243,6 +247,7 @@ class AdventureAppNavigationTest {
             assertNull(container.querySelector("#debug-event-failed")?.getAttribute("tabindex"))
         } finally {
             elementPrototype.getBoundingClientRect = oldBounds
+            flushSync { root.unmount() }
             container.remove()
         }
     }
@@ -252,6 +257,7 @@ class AdventureAppNavigationTest {
     fun `resumed transcript and diagnostic events navigate in both directions`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
+        val root = createRoot(container)
         val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
         val session = GameSession("session", scenario.id, "Harbor", messages = listOf(
             GameMessage("player", "hidden introduction", 1, hidden = true, messageId = "intro-input"),
@@ -267,7 +273,7 @@ class AdventureAppNavigationTest {
         val oldBounds = elementPrototype.getBoundingClientRect
         elementPrototype.getBoundingClientRect = js("(function (original) { return function () { if (/^(debug-event-|transcript-message-)/.test(this.id)) window.__lastScrolledId = this.id; return original.call(this); }; })")(oldBounds)
         try {
-            flushSync { createRoot(container).render(AdventureApp.create {
+            flushSync { root.render(AdventureApp.create {
                 scenarioRepository = scenarioRepository(scenario)
                 sessionRepository = fixedSessions(session)
                 debugEventRepository = events
@@ -295,6 +301,7 @@ class AdventureAppNavigationTest {
             assertNull(container.querySelector(".debug-navigation-button"))
         } finally {
             elementPrototype.getBoundingClientRect = oldBounds
+            flushSync { root.unmount() }
             container.remove()
         }
     }
@@ -347,12 +354,13 @@ class AdventureAppNavigationTest {
     fun `new session introduces the adventure once and resumes its saved introduction`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
+        val root = createRoot(container)
         val scenario = Scenario("scenario", "scenario.md", "# Scenario", 1)
         val saved = mutableListOf<GameSession>()
         val requests = mutableListOf<TurnRequest>()
         try {
             flushSync {
-                createRoot(container).render(AdventureApp.create {
+                root.render(AdventureApp.create {
                     scenarioRepository = scenarioRepository(scenario)
                     sessionRepository = object : SessionRepository {
                         override suspend fun list() = saved.asReversed().distinctBy { it.id }
@@ -397,6 +405,7 @@ class AdventureAppNavigationTest {
             assertEquals(1, requests.size)
             assertEquals(true, container.textContent?.contains("You stand at the harbor."))
         } finally {
+            flushSync { root.unmount() }
             container.remove()
         }
     }
@@ -406,6 +415,7 @@ class AdventureAppNavigationTest {
     fun `deleting a scenario removes the selected scenario from the library`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
+        val root = createRoot(container)
         val scenario = Scenario("scenario", "scenario.md", "# Scenario", 1)
         val storedScenarios = mutableListOf(scenario)
         val deletedScenarioIds = mutableListOf<String>()
@@ -420,7 +430,7 @@ class AdventureAppNavigationTest {
         }
         try {
             flushSync {
-                createRoot(container).render(AdventureApp.create {
+                root.render(AdventureApp.create {
                     scenarioRepository = scenarios
                     sessionRepository = sessionRepository()
                     api = unusedApi()
@@ -435,6 +445,7 @@ class AdventureAppNavigationTest {
             assertEquals(listOf("scenario"), deletedScenarioIds)
             assertNull(container.buttonNamed(scenario.name))
         } finally {
+            flushSync { root.unmount() }
             container.remove()
         }
     }
@@ -444,6 +455,7 @@ class AdventureAppNavigationTest {
     fun `deleting a session removes only the selected session from the detail page`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
+        val root = createRoot(container)
         val scenario = Scenario("scenario", "scenario.md", "# Scenario", 1)
         val first = GameSession("first", scenario.id, "First session", "local-model", emptyList(), 1, 1)
         val second = GameSession("second", scenario.id, "Second session", "local-model", emptyList(), 1, 1)
@@ -460,7 +472,7 @@ class AdventureAppNavigationTest {
         }
         try {
             flushSync {
-                createRoot(container).render(AdventureApp.create {
+                root.render(AdventureApp.create {
                     scenarioRepository = scenarioRepository(scenario)
                     sessionRepository = sessions
                     api = unusedApi()
@@ -479,6 +491,7 @@ class AdventureAppNavigationTest {
             assertNull(container.buttonNamed("First session"))
             assertNotNull(container.buttonNamed("Second session"))
         } finally {
+            flushSync { root.unmount() }
             container.remove()
         }
     }
@@ -488,6 +501,7 @@ class AdventureAppNavigationTest {
     fun `play transcript does not render persisted runtime fragments`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
+        val root = createRoot(container)
         val scenario = Scenario("scenario", "scenario.md", "# Scenario", 1)
         val session = GameSession(
             "session", scenario.id, "Harbor", "local-model",
@@ -505,7 +519,7 @@ class AdventureAppNavigationTest {
         }
         try {
             flushSync {
-                createRoot(container).render(AdventureApp.create {
+                root.render(AdventureApp.create {
                     scenarioRepository = scenarioRepository(scenario)
                     sessionRepository = sessions
                     api = unusedApi()
@@ -521,6 +535,7 @@ class AdventureAppNavigationTest {
             assertEquals(false, container.textContent?.contains("secret fragment"))
             assertEquals(true, container.textContent?.contains("look"))
         } finally {
+            flushSync { root.unmount() }
             container.remove()
         }
     }
@@ -530,6 +545,7 @@ class AdventureAppNavigationTest {
     fun `play view puts diagnostics behind a closable panel without inline controls`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
+        val root = createRoot(container)
         val scenario = Scenario("scenario", "scenario.md", "# Scenario", 1)
         val session = GameSession(
             "session", scenario.id, "Harbor", "local-model",
@@ -549,7 +565,7 @@ class AdventureAppNavigationTest {
         }
         try {
             flushSync {
-                createRoot(container).render(AdventureApp.create {
+                root.render(AdventureApp.create {
                     scenarioRepository = scenarioRepository(scenario)
                     sessionRepository = sessions
                     api = unusedApi()
@@ -584,6 +600,7 @@ class AdventureAppNavigationTest {
             assertNull(container.querySelector("[role='dialog'][aria-label='Debug panel']"))
             assertEquals(opener, document.activeElement)
         } finally {
+            flushSync { root.unmount() }
             container.remove()
         }
     }
@@ -593,6 +610,7 @@ class AdventureAppNavigationTest {
     fun `debug panel renders global information and labeled turn diagnostics`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
+        val root = createRoot(container)
         val scenario = Scenario("scenario", "scenario.md", "---\nflags:\n  doorOpen: false\nsignals:\n  unlock:\n    triggers:\n      - set-flag:\n          doorOpen: true\n---\n# Lighthouse\nPrompt body", 1)
         val session = GameSession("session", scenario.id, "Harbor", "local-model", emptyList(), 1, 1, flags = mapOf("doorOpen" to true))
         val events = recordingDebugEvents(
@@ -603,7 +621,7 @@ class AdventureAppNavigationTest {
             DebugEvent("applied", "session", "turn", 5, 5, "flags", "applied", fields = mapOf("emittedSignals" to "unlock", "appliedAssignments" to "doorOpen=true"), turnOrder = 1),
         )
         try {
-            flushSync { createRoot(container).render(AdventureApp.create {
+            flushSync { root.render(AdventureApp.create {
                 scenarioRepository = scenarioRepository(scenario)
                 sessionRepository = fixedSessions(session)
                 debugEventRepository = events
@@ -653,7 +671,7 @@ class AdventureAppNavigationTest {
             val cards = panel.querySelectorAll(".debug-event")
             assertEquals(4, cards.length)
             assertEquals(true, cards.item(0)?.textContent?.contains("Background rerank"))
-        } finally { container.remove() }
+        } finally { flushSync { root.unmount() }; container.remove() }
     }
 
     @OptIn(DelicateCoroutinesApi::class)
@@ -661,6 +679,7 @@ class AdventureAppNavigationTest {
     fun `clearing debug log removes only active session events`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
+        val root = createRoot(container)
         val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
         val session = GameSession("session", scenario.id, "Harbor", "local-model", emptyList(), 1, 1)
         val events = recordingDebugEvents(
@@ -668,7 +687,7 @@ class AdventureAppNavigationTest {
             DebugEvent("other", "other", "turn", 0, 1, "turn_status", "completed"),
         )
         try {
-            flushSync { createRoot(container).render(AdventureApp.create {
+            flushSync { root.render(AdventureApp.create {
                 scenarioRepository = scenarioRepository(scenario)
                 sessionRepository = fixedSessions(session)
                 debugEventRepository = events
@@ -686,7 +705,7 @@ class AdventureAppNavigationTest {
             nextBrowserTick()
             assertEquals(0, container.querySelectorAll(".debug-event").length)
             assertEquals(listOf("other"), events.saved.map { it.id })
-        } finally { container.remove() }
+        } finally { flushSync { root.unmount() }; container.remove() }
     }
 
     @OptIn(DelicateCoroutinesApi::class)
@@ -694,11 +713,12 @@ class AdventureAppNavigationTest {
     fun `open debug panel refreshes diagnostics added during a turn`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
+        val root = createRoot(container)
         val scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
         val session = GameSession("session", scenario.id, "Harbor", "local-model", emptyList(), 1, 1)
         val events = recordingDebugEvents()
         try {
-            flushSync { createRoot(container).render(AdventureApp.create {
+            flushSync { root.render(AdventureApp.create {
                 scenarioRepository = scenarioRepository(scenario)
                 sessionRepository = fixedSessions(session)
                 debugEventRepository = events
@@ -715,7 +735,7 @@ class AdventureAppNavigationTest {
             events.append(DebugEvent("new", "session", "turn", 0, 1, "turn_status", "completed", fields = mapOf("result" to "accepted")))
             Promise<Unit> { resolve, _ -> window.setTimeout({ resolve(Unit) }, 650) }.await()
             assertEquals(1, container.querySelectorAll(".debug-event").length)
-        } finally { container.remove() }
+        } finally { flushSync { root.unmount() }; container.remove() }
     }
 
     @OptIn(DelicateCoroutinesApi::class)
@@ -843,6 +863,149 @@ class AdventureAppNavigationTest {
         } finally {
             flushSync { root.unmount() }
             container.remove()
+        }
+    }
+
+    // Missing follow updates, ignoring user scrolls, or losing follow state breaks these transitions.
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `streaming follows bottom pauses above it and resumes with bottom or End`() = GlobalScope.promise<Unit> {
+        val stylesheet = document.createElement("link")
+        stylesheet.asDynamic().rel = "stylesheet"
+        stylesheet.asDynamic().href = "/app.css"
+        val loaded = Promise<Unit> { resolve, reject ->
+            stylesheet.asDynamic().onload = { resolve(Unit) }
+            stylesheet.asDynamic().onerror = { reject(IllegalStateException("Cannot load app.css")) }
+        }
+        document.head.appendChild(stylesheet)
+        loaded.await()
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        val scenario = Scenario("follow", "follow.md", "# Harbor", 1)
+        val session = GameSession("follow-session", scenario.id, "Harbor", messages = List(20) {
+            GameMessage("game-master", "Old narrative paragraph. ".repeat(30), it.toLong(), messageId = "old-$it")
+        }, createdAt = 1, updatedAt = 20)
+        val events = recordingDebugEvents(DebugEvent("follow-old", session.id, "old-turn", 0, 1,
+            "turn_status", "completed", fields = mapOf("result" to "accepted"),
+            transcriptRole = "game-master", transcriptMessageId = "old-0"))
+        val started = CompletableDeferred<Unit>()
+        val finished = CompletableDeferred<Unit>()
+        var token: (String) -> Unit = {}
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+            override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
+                token = onToken
+                started.complete(Unit)
+                finished.await()
+                return TurnCompletion(TurnMetrics(null, null, null), WorldState())
+            }
+        }
+        try {
+            flushSync { root.render(AdventureApp.create {
+                scenarioRepository = scenarioRepository(scenario)
+                sessionRepository = fixedSessions(session)
+                debugEventRepository = events
+                this.api = api
+                initialScenarios = listOf(scenario)
+            }) }
+            container.clickButtonNamed(scenario.name)
+            nextBrowserTick()
+            container.clickButtonNamed(session.title)
+            nextBrowserTick()
+            val transcript = assertNotNull(container.querySelector(".transcript")).asDynamic()
+            val input = container.querySelector("#player-action").asDynamic()
+            fun scrollTo(offset: dynamic) {
+                transcript.scrollTop = offset
+                transcript.dispatchEvent(js("new Event('scroll', { bubbles: false })"))
+            }
+            fun assertBottom() {
+                assertEquals(true, transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop <= 1,
+                    "Latest streamed text must stay visible")
+            }
+            scrollTo(transcript.scrollHeight)
+            js("Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Look around')")
+            input.dispatchEvent(js("new Event('input', { bubbles: true })"))
+            nextBrowserTick()
+            container.click(".action-form button.primary-button")
+            withTimeout(5_000) { started.await() }
+            suspend fun appendText() {
+                token("\n\nNew streamed narrative. ".repeat(40))
+                nextBrowserTick()
+            }
+            appendText()
+            assertBottom()
+            appendText()
+            assertBottom()
+
+            scrollTo(200)
+            val pausedOffset = transcript.scrollTop
+            appendText()
+            assertEquals(pausedOffset, transcript.scrollTop, "Reading earlier text must pause following")
+            scrollTo(transcript.scrollHeight)
+            appendText()
+            assertBottom()
+
+            scrollTo(200)
+            val end = js("new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true })")
+            input.dispatchEvent(end)
+            assertEquals(true, end.defaultPrevented, "Plain End in composer must jump the dialog")
+            assertBottom()
+            appendText()
+            assertBottom()
+
+            scrollTo(200)
+            for (modifier in listOf("shiftKey", "ctrlKey", "altKey", "metaKey")) {
+                val options = js("({ key: 'End', bubbles: true, cancelable: true })")
+                options[modifier] = true
+                val modifiedEnd = js("new KeyboardEvent('keydown', options)")
+                input.dispatchEvent(modifiedEnd)
+                assertEquals(false, modifiedEnd.defaultPrevented, "Modified End retains native editing")
+                assertEquals(200, transcript.scrollTop)
+            }
+
+            val composingEnd = js("new KeyboardEvent('keydown', { key: 'End', isComposing: true, bubbles: true, cancelable: true })")
+            input.dispatchEvent(composingEnd)
+            assertEquals(false, composingEnd.defaultPrevented, "IME composition retains native keys")
+            assertEquals(200, transcript.scrollTop)
+
+            val bodyEnd = js("new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true })")
+            document.body.dispatchEvent(bodyEnd)
+            assertEquals(true, bodyEnd.defaultPrevented, "End with body focus must jump the dialog")
+            appendText()
+            assertBottom()
+
+            // Diagnostics may change layout and navigate back while generation continues.
+            scrollTo(transcript.scrollHeight)
+            container.click("button[aria-label='Open debug panel']")
+            nextBrowserTick()
+            nextBrowserTick()
+            appendText()
+            assertBottom()
+            assertNotNull(container.querySelector("#debug-event-follow-old")).asDynamic().dispatchEvent(
+                js("new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })"))
+            nextBrowserTick()
+            val linkedOffset = transcript.scrollTop
+            assertEquals(true, linkedOffset < transcript.scrollHeight - transcript.clientHeight, "Diagnostic link must reveal old narrative")
+            appendText()
+            assertEquals(linkedOffset, transcript.scrollTop, "A diagnostic back-link must pause following")
+            val debugEvent = assertNotNull(container.querySelector("#debug-event-follow-old")).asDynamic()
+            debugEvent.focus()
+            val debugEnd = js("new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true })")
+            debugEvent.dispatchEvent(debugEnd)
+            assertEquals(true, debugEnd.defaultPrevented, "End from diagnostics must jump the dialog")
+            appendText()
+            assertBottom()
+        } finally {
+            finished.complete(Unit)
+            nextBrowserTick()
+            flushSync { root.unmount() }
+            container.remove()
+            stylesheet.remove()
+            val endAfterUnmount = js("new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true })")
+            document.body.dispatchEvent(endAfterUnmount)
+            assertEquals(false, endAfterUnmount.defaultPrevented, "Leaving play removes the End listener")
         }
     }
 
