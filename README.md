@@ -104,6 +104,10 @@ characters, independently of the much smaller effective model prompt.
 
 ## Test-Spiel laden
 
+Der deutsche [Guide zum Erstellen eines Spiels](docs/Spiel-Erstellen.md)
+beschreibt alle unterstützten Szenariofelder und Varianten, mit vollständiger
+Vorlage, Locations, Flags, Signalen und Runtime-Fragmenten.
+
 Importiere ein Beispiel in der Browser-Oberfläche:
 
 - [`examples/test-game.md`](examples/test-game.md): komplexes Leuchtturm-Spiel
