@@ -5,6 +5,9 @@ import de.aidadventure.web.model.DiagnosticMetrics
 import de.aidadventure.web.model.GameSession
 import de.aidadventure.web.model.Scenario
 import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.promise
 import kotlin.test.Test
@@ -13,6 +16,59 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DebugEventPersistenceTest {
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `background effects commit with outcome before a concurrent clear`() = GlobalScope.promise<Unit> {
+        val name = "debug-effects-atomic-${kotlin.js.Date.now()}-${kotlin.random.Random.nextInt()}"
+        val database = AdventureDatabase.open(name)
+        val scheduled = event("scheduled", "session-a", "turn-a", 0, 10).copy(
+            kind = "background_rerank", stage = "scheduled", fields = mapOf("operationId" to "op"),
+        )
+        val outcome = scheduled.copy(id = "outcome", sequence = 3, stage = "prior_completed")
+        val effect = scheduled.copy(id = "effect-op-0", sequence = 1, kind = "flag_set", stage = "applied",
+            fields = mapOf("operationId" to "op", "effectIndex" to "0", "flag" to "door", "value" to "true"))
+        try {
+            database.sessions.save(session("session-a", "scenario-a"))
+            database.debugEvents.append(scheduled)
+            assertTrue(database.debugEvents.appendBackgroundOutcome(outcome, "op", listOf(effect)))
+            assertEquals(listOf(scheduled, effect, outcome), database.debugEvents.listForSession("session-a"))
+            database.debugEvents.clearSession("session-a")
+            database.debugEvents.append(scheduled)
+            coroutineScope {
+                val writing = async(start = CoroutineStart.UNDISPATCHED) {
+                    database.debugEvents.appendBackgroundOutcome(outcome, "op", listOf(effect))
+                }
+                database.debugEvents.clearSession("session-a")
+                writing.await()
+            }
+            assertEquals(emptyList(), database.debugEvents.listForSession("session-a"))
+            assertFalse(database.debugEvents.appendBackgroundOutcome(outcome, "op", listOf(effect)))
+            assertEquals(emptyList(), database.debugEvents.listForSession("session-a"))
+        } finally { database.close(); js("globalThis.indexedDB").deleteDatabase(name) }
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `operation effects retain first write and require an uncleared schedule`() = GlobalScope.promise<Unit> {
+        val name = "debug-effect-guard-${kotlin.js.Date.now()}-${kotlin.random.Random.nextInt()}"
+        val database = AdventureDatabase.open(name)
+        val scheduled = event("scheduled", "session-a", "turn-a", 0, 10).copy(
+            kind = "background_rerank", stage = "scheduled", fields = mapOf("operationId" to "op"),
+        )
+        val effect = scheduled.copy(id = "effect-op-0", sequence = 1, kind = "text_emitted", stage = "applied",
+            fields = mapOf("operationId" to "op", "effectIndex" to "0", "text" to "hello"))
+        try {
+            database.sessions.save(session("session-a", "scenario-a"))
+            database.debugEvents.append(scheduled)
+            assertTrue(database.debugEvents.appendBackgroundOutcome(effect, "op"))
+            assertFalse(database.debugEvents.appendBackgroundOutcome(effect.copy(sequence = 99), "op"))
+            assertEquals(listOf(scheduled, effect), database.debugEvents.listForSession("session-a"))
+            database.debugEvents.clearSession("session-a")
+            assertFalse(database.debugEvents.appendBackgroundOutcome(effect, "op"))
+            assertEquals(emptyList(), database.debugEvents.listForSession("session-a"))
+        } finally { database.close(); js("globalThis.indexedDB").deleteDatabase(name) }
+    }
+
     @OptIn(DelicateCoroutinesApi::class)
     @Test
     fun `ordinary diagnostic append does not recreate a deleted session log`() = GlobalScope.promise<Unit> {

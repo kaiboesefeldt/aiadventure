@@ -319,6 +319,7 @@ fun Application.adventureModule(
                                     kind = "fragment", stage = "selected", transcriptRole = "player",
                                     fields = mapOf(
                                         "fragment" to event.fragment,
+                                        "effectsReported" to event.effectsReported.toString(),
                                         "emittedSignals" to event.emittedSignals.joinToString(", "),
                                     ),
                                 ))

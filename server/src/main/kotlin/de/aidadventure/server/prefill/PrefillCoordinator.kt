@@ -764,6 +764,18 @@ internal class SessionPrefillCoordinator(
                     operation.resolvedFragment = operation.resolvedFragment?.takeIf { fragment ->
                         matchesRuntimeConditions(fragment.conditions, fragment.excludedConditions, finalFlags)
                     }
+                    val effectKinds = setOf("text_emitted", "flag_set", "signal_detected")
+                    val effects = operation.signalOutcome?.diagnostics.orEmpty().filter { it.kind in effectKinds }.toMutableList()
+                    operation.resolvedFragment?.takeIf { it.fragment.isNotBlank() }?.let { selected ->
+                        effects += StreamDiagnostic("text_emitted", "emitted", transcriptRole = "game-master", fields = mapOf(
+                            "text" to selected.fragment, "sourceType" to "runtime_fragment", "sourceName" to selected.matchText))
+                    }
+                    val identifiedEffects = effects.mapIndexed { index, effect -> effect.copy(fields = effect.fields + mapOf(
+                        "operationId" to operation.reservation.operationId, "effectIndex" to index.toString())) }
+                    operation.signalOutcome = operation.signalOutcome?.let { outcome -> outcome.copy(
+                        diagnostics = outcome.diagnostics.filterNot { it.kind in effectKinds }.map { diagnostic ->
+                            diagnostic.copy(fields = diagnostic.fields + ("operationId" to operation.reservation.operationId))
+                        } + identifiedEffects) }
                     val texts = operation.signalOutcome?.emittedTexts.orEmpty()
                     if (texts.isNotEmpty()) {
                         val context = (texts + listOfNotNull(operation.resolvedFragment?.fragment?.takeIf { it.isNotBlank() }))
@@ -791,6 +803,7 @@ internal class SessionPrefillCoordinator(
                             "matchText" to candidate?.matchText.orEmpty(),
                             "fragment" to operation.resolvedFragment?.fragment.orEmpty(),
                             "warmup" to "completed",
+                            "effectsReported" to identifiedEffects.isNotEmpty().toString(),
                         ) + (response?.takeIf { it == "Y" || it == "N" }
                             ?.let { mapOf("classifierResponse" to it) } ?: emptyMap()) +
                             operation.signalOutcome?.diagnostics.orEmpty().filter { it.kind == "signal_check" }.associate { diagnostic ->
@@ -806,19 +819,24 @@ internal class SessionPrefillCoordinator(
                                     diagnostic.metrics.toDebugFields(prefix)
                             },
                         metrics = DiagnosticMetrics(cacheTokens = metrics.cachedTokens, evaluatedTokens = metrics.evaluatedTokens),
+                        effects = identifiedEffects,
                     )
                     null
                 } catch (_: CancellationException) {
+                    operation.discardUncommittedNamedText()
                     operation.diagnostic = StreamDiagnostic(
                         kind = "background_rerank", stage = "prior_cancelled", transcriptRole = "player",
                         fields = mapOf("source" to "prior_turn", "operationId" to operation.reservation.operationId),
+                        effects = operation.committedEffects(),
                     )
                     return@launch
                 } catch (failure: Throwable) {
+                    operation.discardUncommittedNamedText()
                     operation.diagnostic = StreamDiagnostic(
                         kind = "background_rerank", stage = "prior_failed", transcriptRole = "player",
                         fields = mapOf("source" to "prior_turn", "operationId" to operation.reservation.operationId,
                             "failureCategory" to failure.javaClass.simpleName),
+                        effects = operation.committedEffects(),
                     )
                     failure
                 }
@@ -836,6 +854,19 @@ internal class SessionPrefillCoordinator(
         operation.job.start()
         return operation
     }
+
+    private fun RerankingOperation.discardUncommittedNamedText() {
+        signalOutcome = signalOutcome?.let { outcome ->
+            if (outcome.nextRuntimeContext.isNotBlank()) outcome else outcome.copy(diagnostics = outcome.diagnostics.filterNot {
+                it.kind == "text_emitted" && it.fields["sourceType"] == "runtime_fragment"
+            })
+        }
+    }
+
+    // Only the signal/direct path commits flags/context in the current turn when
+    // warmup fails. A purely named fragment has no committed signal outcome.
+    private fun RerankingOperation.committedEffects(): List<StreamDiagnostic> =
+        signalOutcome?.diagnostics.orEmpty().filter { it.kind in setOf("text_emitted", "flag_set", "signal_detected") }
 
     private fun startTurnLocked(resolvedTurn: ResolvedTurn, existingLease: Lease? = null, requestId: String = "unknown", onAdmitted: (TurnRequest) -> Unit = {}): Flow<TurnStreamEvent> {
         val lease = existingLease ?: acquireLease(resolvedTurn.request.llamaCppPort)
@@ -1031,7 +1062,9 @@ internal class SessionPrefillCoordinator(
                     lease = ready.await()
                     priorDiagnostics.forEach { output.send(TurnStreamEvent.Diagnostic(it)) }
                     priorDiagnosticsDelivered = true
-                    if (selectedFragment != null) output.send(TurnStreamEvent.Fragment(selectedFragment.orEmpty(), emittedSignals))
+                    if (selectedFragment != null) output.send(TurnStreamEvent.Fragment(selectedFragment.orEmpty(), emittedSignals,
+                        effectsReported = priorDiagnostics.lastOrNull { it.kind == "background_rerank" && it.stage == "prior_completed" }
+                            ?.let { it.effects.isNotEmpty() && it.fields["fragment"] == selectedFragment } == true))
                     request = prepareTurn(request, lease.slot)
                     output.send(TurnStreamEvent.GenerationReady)
                     val generated = StringBuilder()

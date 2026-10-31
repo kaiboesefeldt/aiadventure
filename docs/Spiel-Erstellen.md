@@ -805,6 +805,10 @@ YAML-Sonderzeichen solltest du zitieren. Doppelte Mapping-Schlüssel vermeiden.
 4. Prüfe Ortswechsel und Flag-Zustände im Debug-Panel. Bei Signalen sind die
    `signal_check`-Ergebnisse, ausgelöste Signale und tatsächlich angewendete
    Flag-Zuweisungen aussagekräftiger als eine passende Erzählung allein.
+   Eigene Karten zeigen jedes erkannte Signal, jede Flag-Zuweisung mit altem
+   und zugewiesenem Wert sowie jeden emittierten Text mit seiner Herkunft.
+   Auch erneute Zuweisungen desselben Werts bleiben sichtbar. Textkarten
+   unterscheiden Signaltexte, direkte Flag-Regeln und ausgewählte Runtime-Fragmente.
 5. Prüfe bedingte Fragmente vor und nach einer Zustandsänderung. Beachte ihre
    Auswahl für folgende Antworten und die fehlende Signalkaskade im selben Zug.
    Prüfe direkte Regeln ohne passenden Erzählfokus, mehrere gleichzeitig passende

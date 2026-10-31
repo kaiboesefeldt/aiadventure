@@ -117,7 +117,7 @@ data class TurnMetrics(
 
 sealed interface TurnStreamEvent {
     data class Token(val text: String) : TurnStreamEvent
-    data class Fragment(val fragment: String, val emittedSignals: List<String> = emptyList()) : TurnStreamEvent
+    data class Fragment(val fragment: String, val emittedSignals: List<String> = emptyList(), val effectsReported: Boolean = false) : TurnStreamEvent
     data object GenerationReady : TurnStreamEvent
     data object InputReady : TurnStreamEvent
     data class Diagnostic(val value: StreamDiagnostic) : TurnStreamEvent
@@ -132,6 +132,7 @@ data class StreamDiagnostic(
     val fields: Map<String, String> = emptyMap(),
     @EncodeDefault(EncodeDefault.Mode.NEVER) val transcriptRole: String? = null,
     @EncodeDefault(EncodeDefault.Mode.NEVER) val metrics: DiagnosticMetrics? = null,
+    val effects: List<StreamDiagnostic> = emptyList(),
 )
 
 @OptIn(ExperimentalSerializationApi::class)

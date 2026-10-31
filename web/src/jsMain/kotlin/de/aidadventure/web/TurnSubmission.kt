@@ -159,6 +159,9 @@ internal class TurnSubmission(
                         diagnostic.kind == "background_rerank" && diagnostic.stage.startsWith("prior_") && operationId != null -> {
                             enqueueBackgroundOutcome(repository, session.id, operationId, diagnostic)
                         }
+                        diagnostic.effectIndex() != null && operationId != null -> {
+                            enqueueBackgroundOutcome(repository, session.id, operationId, diagnostic)
+                        }
                         else -> appendDiagnostic(repository, event)
                     }
                 }
@@ -275,7 +278,22 @@ internal class TurnSubmission(
             val scheduled = existing.firstOrNull {
                 it.kind == "background_rerank" && it.stage == "scheduled" && it.fields["operationId"] == operationId
             } ?: return@withLock
-            val sequence = (existing.filter { it.turnId == scheduled.turnId }.maxOfOrNull { it.sequence } ?: scheduled.sequence) + 1
+            fun effectEvent(effect: StreamDiagnostic): DebugEvent = scheduled.copy(
+                id = "effect-$sessionId-$operationId-${effect.effectIndex()}",
+                sequence = scheduled.sequence + effect.effectIndex()!! + 1,
+                createdAt = clock(), kind = effect.kind, stage = effect.stage,
+                fields = effect.fields, metrics = effect.metrics,
+            )
+            if (diagnostic.effectIndex() != null) {
+                val effect = effectEvent(diagnostic)
+                if (existing.none { it.id == effect.id }) repository.appendBackgroundOutcome(effect, operationId)
+                return@withLock
+            }
+            val effects = diagnostic.effects.filter {
+                it.effectIndex() != null && it.fields["operationId"] == operationId
+            }.distinctBy { it.effectIndex() }.sortedBy { it.effectIndex() }.map(::effectEvent)
+            val sequence = (existing.filter { it.turnId == scheduled.turnId } + effects)
+                .maxOfOrNull { it.sequence }?.plus(1) ?: (scheduled.sequence + 1)
             repository.appendBackgroundOutcome(scheduled.copy(
                 id = "background-outcome-$sessionId-$operationId",
                 sequence = sequence,
@@ -284,8 +302,12 @@ internal class TurnSubmission(
                 stage = diagnostic.stage,
                 fields = diagnostic.fields,
                 metrics = diagnostic.metrics,
-            ), operationId)
+            ), operationId, effects)
         }
+    }
+
+    private fun StreamDiagnostic.effectIndex(): Int? = fields["effectIndex"]?.toIntOrNull()?.takeIf {
+        it >= 0 && kind in setOf("text_emitted", "flag_set", "signal_detected")
     }
 
     companion object {

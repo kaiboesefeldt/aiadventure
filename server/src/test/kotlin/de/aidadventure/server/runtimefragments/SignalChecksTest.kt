@@ -24,6 +24,7 @@ class SignalChecksTest {
             signalChecks = checks, runtimeFragments = listOf(direct, direct))) { error("Direct signal must deduplicate classifier") }
         assertEquals(listOf("enter"), result.emittedSignals)
         assertEquals(listOf("Signal"), result.emittedTexts)
+        assertEquals(listOf("direct"), result.diagnostics.filter { it.kind == "signal_detected" }.map { it.fields["detection"] })
     }
 
     @Test fun `direct rules select all matches and else exclusions from original flags without classification`() = runBlocking {
@@ -67,6 +68,19 @@ class SignalChecksTest {
             checked += it.name; "Y"
         }
         assertEquals(listOf("enter"), checked)
+    }
+
+    @Test fun `effect diagnostics retain sequential repeated assignments and every text with origin`() = runBlocking {
+        val result = runSignalChecks(request().copy(signals = linkedMapOf(
+            "enter" to listOf(FlagAssignment("visited", false), FlagAssignment("visited", true), FlagAssignment("visited", true))),
+            signalChecks = listOf(SignalCheckDefinition("enter", "Entry", emittedTexts = listOf("Same", "Same"))),
+            runtimeFragments = listOf(RuntimeFragmentDefinition("", "Direct", direct = true)))) { "Y" }
+        val effects = result.diagnostics.filter { it.kind in setOf("signal_detected", "flag_set", "text_emitted") }
+        assertEquals(listOf("text_emitted", "signal_detected", "flag_set", "flag_set", "flag_set", "text_emitted", "text_emitted"), effects.map { it.kind })
+        assertEquals(listOf("false", "false", "true"), effects.filter { it.kind == "flag_set" }.map { it.fields["previousValue"] })
+        assertEquals(listOf("false", "true", "true"), effects.filter { it.kind == "flag_set" }.map { it.fields["value"] })
+        assertEquals(listOf("flag_rule", "signal", "signal"), effects.filter { it.kind == "text_emitted" }.map { it.fields["sourceType"] })
+        assertEquals("model", effects.single { it.kind == "signal_detected" }.fields["detection"])
     }
 
     private fun request() = WarmupRequest("session", scenarioMarkdown = "# Game", history = listOf(
