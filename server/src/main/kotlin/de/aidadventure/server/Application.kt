@@ -234,7 +234,7 @@ fun Application.adventureModule(
                 return@post
             }
             try {
-                runtimeFragmentResolver.prepare(eligibleRuntimeFragments(request.runtimeFragments, request.flags))
+                runtimeFragmentResolver.prepare(eligibleRuntimeFragments(request.runtimeFragments, request.flags, request.worldState.location))
             } catch (failure: Exception) {
                 if (failure is CancellationException) throw failure
                 logger.warn(
@@ -416,10 +416,10 @@ fun Application.adventureModule(
                                     var candidate: de.aidadventure.server.model.RuntimeFragmentDefinition? = null
                                     try {
                                         if ((acceptedWorldState.location.isNotBlank() || acceptedWorldState.narrativeFocus.isNotBlank()) &&
-                                            (request.runtimeFragments.none { it.direct } || eligibleRuntimeFragments(request.runtimeFragments, completedFlags).isNotEmpty())) {
+                                            (request.runtimeFragments.none { it.direct } || eligibleRuntimeFragments(request.runtimeFragments, completedFlags, acceptedWorldState.location).isNotEmpty())) {
                                             candidate = runtimeFragmentResolver.resolve(
                                                 completedHistory,
-                                                eligibleRuntimeFragments(request.runtimeFragments, completedFlags),
+                                                eligibleRuntimeFragments(request.runtimeFragments, completedFlags, acceptedWorldState.location),
                                                 acceptedWorldState.narrativeFocus,
                                                 acceptedWorldState.location,
                                                 request.locations[acceptedWorldState.location],
@@ -739,15 +739,15 @@ object RequestValidator {
         signalChecks.any { check ->
             check.name !in signals || (check.eventCheck && check.description.isBlank()) || check.description.length > MAX_TEXT_LENGTH ||
                 check.emittedTexts.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS || check.emittedTexts.any { it.isBlank() || it.length > MAX_TEXT_LENGTH } ||
-                check.conditions.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS || check.conditions.any { it.flag !in flags } ||
-                !validExclusions(check.excludedConditions, flags)
+                check.conditions.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS || check.conditions.any { !validCondition(it, flags, locations) } ||
+                !validExclusions(check.excludedConditions, flags, locations)
         } -> invalid()
         signalChecks.groupBy { it.name }.values.any { definitions ->
             definitions.map { it.emittedTexts }.distinct().size > 1
         } -> invalid()
         runtimeFragments.any { fragment ->
-            fragment.conditions.any { it.flag !in flags } || fragment.emittedSignals.any { it !in signals } ||
-                !validExclusions(fragment.excludedConditions, flags)
+            fragment.conditions.any { !validCondition(it, flags, locations) } || fragment.emittedSignals.any { it !in signals } ||
+                !validExclusions(fragment.excludedConditions, flags, locations)
         } -> invalid()
         else -> null
     }
@@ -761,10 +761,16 @@ object RequestValidator {
             matchText.length <= MAX_TEXT_LENGTH && fragment.length <= MAX_TEXT_LENGTH &&
             conditions.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS && emittedSignals.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS
 
-    private fun validExclusions(groups: List<List<de.aidadventure.server.model.FlagCondition>>, flags: Map<String, Boolean>): Boolean =
+    private fun validExclusions(groups: List<List<de.aidadventure.server.model.FlagCondition>>, flags: Map<String, Boolean>, locations: Map<String, String>): Boolean =
         groups.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS && groups.all { group ->
-            group.isNotEmpty() && group.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS && group.all { it.flag in flags }
+            group.isNotEmpty() && group.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS && group.all { validCondition(it, flags, locations) }
         }
+
+    private fun validCondition(condition: de.aidadventure.server.model.FlagCondition, flags: Map<String, Boolean>, locations: Map<String, String>): Boolean =
+        if (condition.location != null) {
+            condition.flag == null && condition.value == null && condition.location.isNotBlank() &&
+                (locations.isEmpty() || condition.location in locations)
+        } else condition.flag in flags && condition.value != null
 
     private fun invalid() = invalidRequestError()
 

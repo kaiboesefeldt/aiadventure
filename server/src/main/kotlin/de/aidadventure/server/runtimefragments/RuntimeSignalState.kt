@@ -7,8 +7,9 @@ import de.aidadventure.server.model.RuntimeFragmentDefinition
 fun eligibleRuntimeFragments(
     fragments: List<RuntimeFragmentDefinition>,
     flags: Map<String, Boolean>,
+    location: String = "",
 ): List<RuntimeFragmentDefinition> = fragments.filter { fragment ->
-    !fragment.direct && matchesRuntimeConditions(fragment.conditions, fragment.excludedConditions, flags)
+    !fragment.direct && matchesRuntimeConditions(fragment.conditions, fragment.excludedConditions, flags, location)
 }
 
 fun applyRuntimeSignals(
@@ -21,13 +22,18 @@ fun applyRuntimeSignals(
     }
 }
 
-/** Conditions and else exclusions always read a single immutable turn-start snapshot. */
+/** Conditions and else exclusions read the same immutable state snapshot. */
 internal fun matchesRuntimeConditions(
     conditions: List<FlagCondition>,
     excludedConditions: List<List<FlagCondition>>,
     flags: Map<String, Boolean>,
-): Boolean = conditions.all { flags[it.flag] == it.value } &&
-    excludedConditions.none { group -> group.all { flags[it.flag] == it.value } }
+    location: String = "",
+): Boolean = conditions.all { it.matches(flags, location) } &&
+    excludedConditions.none { group -> group.all { it.matches(flags, location) } }
 
-internal fun selectedDirectRules(fragments: List<RuntimeFragmentDefinition>, flags: Map<String, Boolean>) =
-    fragments.filter { it.direct && matchesRuntimeConditions(it.conditions, it.excludedConditions, flags) }
+private fun FlagCondition.matches(flags: Map<String, Boolean>, currentLocation: String): Boolean =
+    if (location != null) flag == null && value == null && location == currentLocation
+    else flag != null && value != null && flags[flag] == value
+
+internal fun selectedDirectRules(fragments: List<RuntimeFragmentDefinition>, flags: Map<String, Boolean>, location: String = "") =
+    fragments.filter { it.direct && matchesRuntimeConditions(it.conditions, it.excludedConditions, flags, location) }

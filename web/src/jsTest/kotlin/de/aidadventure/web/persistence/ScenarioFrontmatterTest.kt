@@ -7,6 +7,78 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertContains
 
 class ScenarioFrontmatterTest {
+    @Test fun `declared boolean flag named location remains distinct from current location predicates`() {
+        val parsed = ScenarioFrontmatter.parse("""---
+flags: {location: false}
+signals:
+  visit:
+    condition: {location: true}
+    triggers: [{emit-text: Arrival}]
+runtime-fragments:
+  condition: {location: false}
+  emit-text: Flag gated
+  tower:
+    condition: {location: Leuchtturm}
+    emit-text: Place gated
+  branch:
+    condition:
+      - location: true
+        then: {flag-path: Flag branch}
+      - else: {other-path: Fallback}
+---
+# Harbor
+""")
+        assertEquals(listOf(FlagCondition("location", true)), parsed.signalChecks.single().conditions)
+        assertEquals(listOf(FlagCondition("location", false)), parsed.runtimeFragments.single { it.direct }.conditions)
+        assertEquals(listOf(FlagCondition("location", false), FlagCondition(location = "Leuchtturm")),
+            parsed.runtimeFragments.single { it.matchText == "tower" }.conditions)
+        assertEquals(listOf(FlagCondition("location", false), FlagCondition("location", true)),
+            parsed.runtimeFragments.single { it.matchText == "branch\nflag-path" }.conditions)
+        assertEquals(listOf(listOf(FlagCondition("location", true))),
+            parsed.runtimeFragments.single { it.matchText == "branch\nother-path" }.excludedConditions)
+    }
+
+    @Test fun `location conditions are accepted throughout direct named inherited signal and else predicates`() {
+        val parsed = ScenarioFrontmatter.parse("""---
+locations: {Leuchtturm: Tower, Kai: Harbor}
+flags: {ready: true}
+signals:
+  visit:
+    condition: {location: Leuchtturm, ready: true}
+    triggers: [{emit-text: Arrival}]
+runtime-fragments:
+  condition: {location: Kai}
+  emit-text: Harbor hint
+  tower:
+    condition: {location: Leuchtturm}
+    interior: Tower hint
+  condition-tree:
+    condition:
+      - location: Leuchtturm
+        ready: true
+        then: {tower-path: Matched}
+      - else: {fallback-path: Fallback}
+---
+# Harbor
+""")
+        assertEquals(2, parsed.signalChecks.single().conditions.size)
+        assertEquals(1, parsed.runtimeFragments.single { it.direct }.conditions.size)
+        assertEquals(2, parsed.runtimeFragments.single { it.matchText == "tower\ninterior" }.conditions.size)
+        assertEquals(3, parsed.runtimeFragments.single { it.matchText == "condition-tree\ntower-path" }.conditions.size)
+        assertEquals(2, parsed.runtimeFragments.single { it.matchText == "condition-tree\nfallback-path" }.excludedConditions.single().size)
+    }
+
+    @Test fun `location predicates validate nonblank strings and optional catalog`() {
+        fun scenario(catalog: String, location: String) =
+            "---\nflags: {}\n${catalog}runtime-fragments:\n  condition: {location: $location}\n  emit-text: Hint\n---\n# Game"
+        assertEquals(1, ScenarioFrontmatter.parse(scenario("", "Leuchtturm")).runtimeFragments.size)
+        assertEquals(1, ScenarioFrontmatter.parse(scenario("locations: {Leuchtturm: Tower}\n", "Leuchtturm")).runtimeFragments.size)
+        for (value in listOf("' '", "true", "42", "[]", "null")) {
+            assertFailsWith<IllegalArgumentException> { ScenarioFrontmatter.parse(scenario("", value)) }
+        }
+        assertFailsWith<IllegalArgumentException> { ScenarioFrontmatter.parse(scenario("locations: {Kai: Harbor}\n", "Leuchtturm")) }
+    }
+
     @Test fun `root condition supports direct effects AND nested retrieval and final else`() {
         val parsed = ScenarioFrontmatter.parse("""---
 flags: {ready: true, visited: false}

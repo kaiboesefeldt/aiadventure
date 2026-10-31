@@ -5,6 +5,36 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.*
 
 class SignalChecksTest {
+    @Test fun `location conditions gate event checks direct rules inherited references and else groups`() = runBlocking {
+        val condition = kotlinx.serialization.json.Json.decodeFromString<FlagCondition>("""{"location":"Leuchtturm"}""")
+        val predicates = listOf(condition, FlagCondition("visited", false))
+        val fragments = listOf(
+            RuntimeFragmentDefinition("", "At tower", predicates, listOf("enter"), direct = true),
+            RuntimeFragmentDefinition("", "Elsewhere", direct = true, excludedConditions = listOf(predicates)),
+            RuntimeFragmentDefinition("tower", "Retrieved", predicates, listOf("enter")))
+        val base = request().copy(signals = mapOf("enter" to listOf(FlagAssignment("visited", true))), runtimeFragments = fragments,
+            signalChecks = listOf(SignalCheckDefinition("enter", "Arrived", predicates)))
+        val here = base.copy(worldState = de.aidadventure.server.worldstate.WorldState(location = "Leuchtturm"))
+        assertEquals(listOf("tower"), eligibleRuntimeFragments(fragments, here.flags, here.worldState.location).map { it.matchText })
+        assertEquals(listOf("enter"), eligibleSignalChecks(here).map { it.name })
+        val result = runSignalChecks(here) { error("Direct rule handles signal") }
+        assertEquals(listOf("At tower"), result.emittedTexts)
+        assertEquals(listOf("enter"), result.emittedSignals)
+        for (location in listOf("Kai", "leuchtturm", "")) {
+            val elsewhere = here.copy(worldState = here.worldState.copy(location = location))
+            assertTrue(eligibleRuntimeFragments(fragments, elsewhere.flags, elsewhere.worldState.location).isEmpty())
+            assertTrue(eligibleSignalChecks(elsewhere).isEmpty())
+            assertTrue(eligibleSignalChecks(elsewhere.copy(signalChecks = emptyList())).isEmpty())
+            val excluded = runSignalChecks(elsewhere) { error("Location must block checks") }
+            assertEquals(listOf("Elsewhere"), excluded.emittedTexts)
+            assertTrue(excluded.emittedSignals.isEmpty())
+        }
+        val signalExcluded = here.copy(runtimeFragments = emptyList(), signalChecks = listOf(
+            SignalCheckDefinition("enter", "Else event", excludedConditions = listOf(predicates))))
+        assertTrue(eligibleSignalChecks(signalExcluded).isEmpty())
+        assertTrue(eligibleSignalChecks(here.copy(flags = here.flags + ("visited" to true))).isEmpty())
+    }
+
     @Test fun `inactive direct only signal never becomes a legacy event predicate without check metadata`() = runBlocking {
         val request = request().copy(signals = mapOf("enter" to listOf(FlagAssignment("visited", true))),
             runtimeFragments = listOf(RuntimeFragmentDefinition("", "", listOf(FlagCondition("visited", true)), listOf("enter"), direct = true)))

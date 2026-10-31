@@ -22,8 +22,9 @@ data class RuntimeFragmentDefinition(
     val excludedConditions: List<List<FlagCondition>> = emptyList(),
 )
 
+/** One flag/value predicate or one exact current-location predicate. */
 @Serializable
-data class FlagCondition(val flag: String, val value: Boolean)
+data class FlagCondition(val flag: String? = null, val value: Boolean? = null, val location: String? = null)
 
 @Serializable
 data class SignalCheckDefinition(

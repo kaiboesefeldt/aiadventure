@@ -711,7 +711,7 @@ internal class SessionPrefillCoordinator(
         existingLease: Lease? = null,
     ): RerankingOperation {
         // Reserve the direct branch selection before the caller starts embedding retrieval.
-        val directRules = selectedDirectRules(request.runtimeFragments, request.flags)
+        val directRules = selectedDirectRules(request.runtimeFragments, request.flags, request.worldState.location)
         nextFragment = null
         val lease = existingLease ?: acquireLease(request.llamaCppPort)
         val operation = RerankingOperation(RerankReservation(++generation))
@@ -762,7 +762,7 @@ internal class SessionPrefillCoordinator(
                     }
                     val finalFlags = operation.signalOutcome?.flags ?: prepared.flags
                     operation.resolvedFragment = operation.resolvedFragment?.takeIf { fragment ->
-                        matchesRuntimeConditions(fragment.conditions, fragment.excludedConditions, finalFlags)
+                        matchesRuntimeConditions(fragment.conditions, fragment.excludedConditions, finalFlags, prepared.worldState.location)
                     }
                     val effectKinds = setOf("text_emitted", "flag_set", "signal_detected")
                     val effects = operation.signalOutcome?.diagnostics.orEmpty().filter { it.kind in effectKinds }.toMutableList()
@@ -1016,7 +1016,7 @@ internal class SessionPrefillCoordinator(
     )
 
     private fun TurnRequest.withNextFragment(): ResolvedTurn = nextFragment?.takeIf { candidate ->
-        matchesRuntimeConditions(candidate.conditions, candidate.excludedConditions, flags)
+        matchesRuntimeConditions(candidate.conditions, candidate.excludedConditions, flags, worldState.location)
     }?.let { candidate ->
         ResolvedTurn(
             if (candidate.fragment.isBlank() || history.lastOrNull() == ChatEntry("runtime-fragment", candidate.fragment)) this

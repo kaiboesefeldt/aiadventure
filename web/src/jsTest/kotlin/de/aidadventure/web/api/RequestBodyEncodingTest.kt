@@ -11,6 +11,36 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 class RequestBodyEncodingTest {
+    @Test fun `all request mappers preserve location only predicates and location exclusions`() {
+        val scenario = Scenario("scenario", "Harbor", """---
+flags: {}
+signals:
+  visit:
+    condition: {location: Leuchtturm}
+    triggers: [{emit-text: Arrival}]
+runtime-fragments:
+  condition:
+    - location: Leuchtturm
+      then: {emit-text: Tower, signal: visit}
+    - else: {emit-text: Elsewhere}
+---
+# Harbor
+""", 1)
+        val session = GameSession("session", scenario.id, "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+        val bodies = listOf(
+            encodeTurnRequest(TurnRequestMapper.map(session, scenario, "enter", "session")),
+            encodePrefillRequest(PrefillRequestMapper.map(session, scenario, "session", 1, "enter")),
+            encodeWarmupRequest(WarmupRequestMapper.map(session, scenario)))
+        bodies.forEach { encoded ->
+            val body = Json.parseToJsonElement(encoded).jsonObject
+            val rules = body["runtimeFragments"]!!.jsonArray.map { it.jsonObject }
+            val expected = Json.parseToJsonElement("""{"location":"Leuchtturm"}""")
+            assertEquals(expected, rules[0]["conditions"]!!.jsonArray.single())
+            assertEquals(expected, rules[1]["excludedConditions"]!!.jsonArray.single().jsonArray.single())
+            assertEquals(expected, body["signalChecks"]!!.jsonArray.single().jsonObject["conditions"]!!.jsonArray.single())
+        }
+    }
+
     @Test fun `all request mappers preserve direct rules and else exclusions`() {
         val scenario = Scenario("scenario", "Harbor", """---
 flags: {ready: false}

@@ -305,18 +305,18 @@ object WarmupRequestMapper {
 private fun de.aidadventure.web.persistence.RuntimeFragmentDefinition.toApi() = RuntimeFragmentDefinition(
     matchText = matchText,
     fragment = fragment,
-    conditions = conditions.map { FlagCondition(it.flag, it.value) },
+    conditions = conditions.map { FlagCondition(it.flag, it.value, it.location) },
     emittedSignals = emittedSignals,
     direct = direct,
-    excludedConditions = excludedConditions.map { group -> group.map { FlagCondition(it.flag, it.value) } },
+    excludedConditions = excludedConditions.map { group -> group.map { FlagCondition(it.flag, it.value, it.location) } },
 )
 
 private fun de.aidadventure.web.persistence.SignalCheckDefinition.toApi() = SignalCheckDefinition(
     name = name,
     description = description,
-    conditions = conditions.map { FlagCondition(it.flag, it.value) },
+    conditions = conditions.map { FlagCondition(it.flag, it.value, it.location) },
     emittedTexts = emittedTexts,
-    excludedConditions = excludedConditions.map { group -> group.map { FlagCondition(it.flag, it.value) } },
+    excludedConditions = excludedConditions.map { group -> group.map { FlagCondition(it.flag, it.value, it.location) } },
     eventCheck = eventCheck,
 )
 
@@ -333,8 +333,9 @@ data class RuntimeFragmentDefinition(
     val excludedConditions: List<List<FlagCondition>> = emptyList(),
 )
 
+/** One flag/value predicate or one exact current-location predicate. */
 @Serializable
-data class FlagCondition(val flag: String, val value: Boolean)
+data class FlagCondition(val flag: String? = null, val value: Boolean? = null, val location: String? = null)
 
 @Serializable
 data class SignalCheckDefinition(

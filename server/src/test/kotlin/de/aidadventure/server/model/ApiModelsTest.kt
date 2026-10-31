@@ -11,6 +11,28 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class ApiModelsTest {
+    @Test fun `location only condition JSON validates catalogs and exclusions without changing flag JSON`() {
+        val condition = Json.decodeFromString<FlagCondition>("""{"location":"Leuchtturm"}""")
+        val fragment = RuntimeFragmentDefinition("tower", "Hint", listOf(condition))
+        val request = WarmupRequest("location", modelId = "model", scenarioMarkdown = "# Game", history = emptyList(),
+            runtimeFragments = listOf(fragment), flags = mapOf("ready" to false),
+            signals = mapOf("visit" to listOf(FlagAssignment("ready", true))),
+            signalChecks = listOf(SignalCheckDefinition("visit", "Arrives", listOf(condition))))
+        assertNull(RequestValidator.validate(request))
+        assertNull(RequestValidator.validate(request.copy(locations = mapOf("Leuchtturm" to "Tower"))))
+        assertNotNull(RequestValidator.validate(request.copy(locations = mapOf("Kai" to "Harbor"))))
+        for (raw in listOf("""{"location":" "}""", """{}""", """{"flag":"ready"}""",
+            """{"value":false}""", """{"flag":"ready","value":true,"location":"Leuchtturm"}""")) {
+            val invalid = Json.decodeFromString<FlagCondition>(raw)
+            assertNotNull(RequestValidator.validate(request.copy(runtimeFragments = listOf(fragment.copy(conditions = listOf(invalid))))))
+            assertNotNull(RequestValidator.validate(request.copy(runtimeFragments = listOf(fragment.copy(conditions = emptyList(), excludedConditions = listOf(listOf(invalid)))))))
+            assertNotNull(RequestValidator.validate(request.copy(signalChecks = listOf(request.signalChecks.single().copy(conditions = listOf(invalid))))))
+            assertNotNull(RequestValidator.validate(request.copy(signalChecks = listOf(request.signalChecks.single().copy(conditions = emptyList(), excludedConditions = listOf(listOf(invalid)))))))
+        }
+        assertEquals("""{"flag":"ready","value":false}""", Json.encodeToString(FlagCondition("ready", false)))
+        assertEquals("""{"location":"Leuchtturm"}""", Json.encodeToString(condition))
+    }
+
     @kotlin.test.Test fun `direct rules permit repeated empty paths while exclusions validate declared flags`() {
         val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
         val direct = json.decodeFromString<RuntimeFragmentDefinition>("""{"matchText":"","fragment":"Hint","direct":true}""")
