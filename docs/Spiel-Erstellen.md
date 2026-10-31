@@ -74,18 +74,19 @@ Gib Hinweise schrittweise und akzeptiere plausible Lösungswege.
 | `flags` | Mapping von Flag-Namen auf `true` oder `false` | Ja; keine Flags |
 | `signals` | Mapping oder Liste benannter Signale | Ja; keine Ereignisprüfungen |
 | `signals.<name>.description` | Nichtleerer String mit Ereignisbeschreibung | Ja; siehe Rückfallregeln unten |
-| `signals.<name>.condition` | Mapping mit genau einem Flag und booleschem Sollwert | Ja; keine zusätzliche Flag-Schranke |
+| `signals.<name>.condition` | Nichtleeres Mapping deklarierter Flags auf boolesche Sollwerte (UND) | Ja; keine zusätzliche Flag-Schranke |
 | `signals.<name>.triggers` | Nichtleere Liste von `set-flag`- und/oder `emit-text`-Aktionen | Pflicht je Signal |
 | Signalaktion `set-flag` | Nichtleeres Mapping deklarierter Flags auf boolesche Zielwerte | Optional je Signal |
 | Signalaktion `emit-text` | Nichtleerer fester Text für den verborgenen Kontext der nächsten Runde | Optional je Signal |
-| `runtime-fragments` | Mapping mit Textblättern oder verschachtelten Gruppen | Ja; keine Zusatzhinweise |
+| `runtime-fragments` | Mapping mit benannten Fragmenten und optionalen direkten Regeln | Ja; keine Zusatzhinweise |
 | Fragmentfeld `emit-text` | Nichtleerer Zusatztext, an Nachfahren vererbt | Ja |
 | Fragmentfeld `signal` | Name eines deklarierten Signals, an Nachfahren vererbt | Ja |
-| Fragmentfeld `condition` | Einzelne Flag-Bedingung oder Liste von `then`-Zweigen | Ja |
+| Fragmentfeld `condition` | Flag-Mapping (UND) oder Liste unabhängiger `then`-Zweige mit optionalem abschließendem `else` | Ja |
 
 Die letzten drei Fragmentfelder haben eine besondere Kompatibilitätsregel:
-Sie sind nur bei vorhandenem obersten `flags`- oder `signals`-Feld Metadaten.
-Ohne beide Felder sind sie normale Fragmentnamen. Siehe Abschnitt 7.
+Sie sind nur bei vorhandenem obersten `flags`- oder `signals`-Feld Metadaten,
+auch direkt unter `runtime-fragments`. Ohne beide Felder sind sie normale
+Fragmentnamen. Siehe Abschnitt 7.
 
 Frontmatter muss unmittelbar am Dateianfang mit einer eigenen `---`-Zeile
 beginnen und durch eine weitere eigene `---`-Zeile enden. Leerzeilen davor
@@ -255,7 +256,9 @@ Ein mehrfach gesetztes Flag erhält den letzten zugewiesenen Wert.
 `description` beschreibt ein Ereignis im zuletzt abgeschlossenen Austausch.
 Formuliere sie als überprüfbare Tatsache und grenze Absicht, Versuch und Erfolg
 ab. Sie ist kein Befehl, das Ereignis herbeizuerzählen. Die zusätzliche `condition`
-schränkt die Prüfung auf genau einen deklarierten Flag-Sollwert ein.
+schränkt die Prüfung auf deklarierte Flag-Sollwerte ein. Mehrere Einträge
+im selben Mapping müssen alle erfüllt sein (UND), etwa
+`condition: {nachricht-gefunden: true, turm-besucht: false}`.
 Ohne `condition` entfällt diese Schranke.
 
 ### Signalaktionen mit `emit-text`
@@ -324,12 +327,15 @@ anders sortieren kann. Leere Signal-Mappings und leere Signallisten sind zuläss
 ### Ablauf und Konflikte
 
 Nach der sichtbaren Antwort, der World-State-/Fokus-Aktualisierung und der
-Fragmentprüfung werden die relevanten Signale nacheinander vom Modell geprüft.
+Fragmentprüfung werden die relevanten ereignisbasierten Signale nacheinander
+vom Modell geprüft. Direkte Runtime-Regeln werden bereits vor der Embedding-Suche
+ausgewählt. Ihre Signalaktionen werden anschließend zusammen mit den übrigen
+Signalaktionen angewendet, benötigen aber keine Modellprüfung (Abschnitt 7 G).
 Die Prüfung verlangt genau `Y` oder `N`; nur ein exaktes `Y` löst das Signal aus.
 Eine fehlgeschlagene oder ungültige Prüfung setzt dessen Flags nicht und gibt
 keine Signaltexte aus.
 
-Alle Flag-Bedingungen der Signalprüfungen beziehen sich auf die Werte **zu Beginn
+Die Flag-Bedingungen der ereignisbasierten Signalprüfungen beziehen sich auf die Werte **zu Beginn
 des Spielzugs**. Erst nach den Prüfungen werden die Zuweisungen erfolgreicher
 Signale in Signalreihenfolge angewendet. Es gibt keine Kettenreaktion innerhalb
 desselben Zugs: Ein Signal, das `turm-besucht: true` setzt, aktiviert dadurch keine
@@ -353,7 +359,10 @@ Ohne explizite Beschreibung wird die Ereignisfrage so gebildet:
    mit der Signalbedingung kombiniert.
 2. Mehrere passende Pfade desselben Signals bilden Alternativen: Ein tatsächlich
    eingetretenes Ereignis genügt. Gleichwertige Beschreibungen werden dedupliziert.
-3. Ohne Fragmentverweis wird der Signalname selbst zur Ereignisbeschreibung.
+3. Ohne Fragmentverweis wird der Signalname selbst zur Ereignisbeschreibung,
+   sofern das Signal nicht ausschließlich von direkten Regeln referenziert wird.
+   Ein solches Signal ohne `description` wartet auf seine direkte Regel und wird
+   nicht zusätzlich als unabhängiges Ereignis geprüft.
 
 Mit expliziter `description` gelten ausschließlich diese Beschreibung und die
 Signalbedingung; Bedingungen der referenzierenden Fragmente schränken die
@@ -363,17 +372,19 @@ klarste Form. Ein Signal benötigt kein Runtime-Fragment.
 ## 7. Runtime-Fragmente: situationsabhängige Hinweise
 
 Runtime-Fragmente liefern der Spielleitung zusätzliche, im normalen Transcript
-verborgene Hinweise. Ihre Schlüssel beschreiben die Situation; ihre Textwerte
-beschreiben, wie die Spielleitung darauf reagieren soll.
+verborgene Hinweise. Benannte Schlüssel beschreiben die Situation; ihre Textwerte
+beschreiben, wie die Spielleitung darauf reagieren soll. Daneben können direkte
+Regeln allein anhand von Flags Text ausgeben und Signale auslösen (Abschnitt G).
 
-Nach einem Austausch sucht die Anwendung unter den flagberechtigten Fragmenten
+Nach einem Austausch werden zuerst direkte Regeln ausgewertet. Anschließend
+sucht die Anwendung unter den flagberechtigten benannten Fragmenten
 semantisch einen Kandidaten anhand des aktuellen Erzählfokus bzw. des letzten
 sichtbaren Austauschs und des aktuellen Orts. Eine weitere Modellprüfung kann
 den Kandidaten ablehnen. Pro Auswahl wird höchstens ein Fragment übernommen.
 Ein übernommener Hinweis kommt in den Kontext für folgende Antworten; er verändert
 nicht rückwirkend die bereits sichtbare Antwort. Die Auswahl erfolgt vor der
 abschließenden Signalprüfung und berücksichtigt deren neue Flag-Werte in dieser
-Auswahl noch nicht. Fragmente sind deshalb keine synchronen Sofort-Trigger.
+Auswahl noch nicht. Benannte Fragmente sind deshalb keine synchronen Sofort-Trigger.
 
 ### A. Direkte Textblätter
 
@@ -427,7 +438,7 @@ Reihenfolge von außen nach innen, durch Zeilenumbrüche verbunden.
 Eine Gruppe mit Kindern wird nicht zusätzlich als eigenes Fragment angelegt.
 Ein Knoten mit nur `emit-text` ist selbst ein gültiges Blatt.
 
-### D. Einfache Flag-Bedingung
+### D. Flag-Bedingungen mit UND
 
 ```yaml
 flags: {nachricht-gefunden: false}
@@ -438,9 +449,10 @@ runtime-fragments:
 ```
 
 Die Bedingung filtert die Verfügbarkeit des Fragments. Sie setzt keine Flags.
-Sie darf genau ein deklariertes Flag mit `true` oder `false` enthalten.
-Nachfahren erben die Bedingung. Für mehrere gleichzeitig nötige Flags kannst
-du Gruppen verschachteln; alle geerbten Bedingungen müssen erfüllt sein (UND).
+Sie enthält ein oder mehrere deklarierte Flags mit `true` oder `false`, etwa
+`condition: {nachricht-gefunden: true, turm-besucht: true}`. Alle Einträge müssen
+erfüllt sein (UND). Nachfahren erben die Bedingungen ihrer Vorfahren; auch
+zwischen verschachtelten Gruppen gilt UND.
 Widersprüchliche Bedingungen erzeugen ein unerreichbares Fragment.
 
 ### E. Bedingte Zweige mit `then`
@@ -462,22 +474,53 @@ runtime-fragments:
             emit-text: Lass die Hafenmeisterin die genannte Abfahrtszeit erklären.
 ```
 
-`condition` als Liste benötigt mindestens einen Zweig. Jeder Zweig enthält
-genau einen Flag-Sollwert und `then`. `then` ist ein nichtleeres Mapping von
-Fragmentnamen zu Texten oder weiteren Gruppen. Verschachtelte Bedingungen,
-Metadaten und weitere Zweiglisten funktionieren innerhalb dieser Kinder ebenso.
-`then` ist kein einzelner Text und keine Liste.
+`condition` als Liste benötigt mindestens einen bedingten Zweig. Jeder solche
+Zweig enthält ein oder mehrere deklarierte Flags mit booleschen Sollwerten
+(UND) und genau ein `then`. `then` ist ein nichtleeres Mapping und darf direkt
+`emit-text`, `signal`, eine weitere `condition` sowie benannte Kinder enthalten.
+Verschachtelung ist auch ohne zusätzlichen Situationsnamen möglich.
+Ein einzelner Text oder eine Liste als `then` ist ungültig.
 
-Zweige sind unabhängige Varianten, keine `if/else`-Kette: Mehrere Zweige können
-gleichzeitig verfügbar sein. Bedingungen oberhalb des Zweigs bleiben bestehen.
-Ein Knoten kann zusätzlich gewöhnliche Kinder enthalten; diese erben den
-Elternkontext, aber keine Bedingung eines Geschwisterzweigs. Einen gemeinsamen
-Zusatztext setzt du per `emit-text` am Elternknoten.
+Alle passenden Zweige gelten unabhängig voneinander: Bei mehreren erfüllten
+Bedingungen werden alle entsprechenden `then`-Inhalte berücksichtigt. Ein
+optionaler letzter Eintrag `- else: ...` greift ausschließlich dann, wenn kein
+bedingter Geschwisterzweig passt. `else` enthält wie `then` ein nichtleeres
+Mapping; es hat weder eigene Flag-Einträge noch ein zusätzliches `then`.
 
-Die Zweigmarker `condition` und `then` sowie Flag-Namen werden nicht Teil des
-Suchpfads. Deshalb brauchen Zweige unterschiedliche vollständige Blattpfade.
-Zweimal derselbe Pfad wird auch bei gegensätzlichen Bedingungen abgelehnt;
-das Beispiel verwendet bewusst unterschiedliche Blattnamen.
+```yaml
+flags: {nachricht-gefunden: false, turm-besucht: false}
+runtime-fragments:
+  "Die Figur fragt nach weiteren Spuren":
+    condition:
+      - nachricht-gefunden: true
+        turm-besucht: true
+        then:
+          "Die Figur verbindet Nachricht und Turmspuren":
+            emit-text: Verknüpfe die Nachricht mit den Spuren im Turm.
+      - turm-besucht: true
+        then:
+          "Die Figur erinnert sich an die Treppe":
+            emit-text: Erinnere an die lose Treppenstufe.
+      - else:
+          "Die Figur fragt ohne passenden Turmhinweis":
+            emit-text: Verweise zunächst auf den Leuchtturm.
+```
+
+Sind beide Flags `true`, passen die ersten beiden Zweige; `else` entfällt.
+Ist nur `turm-besucht` wahr, passt der zweite Zweig. Ist `turm-besucht` falsch,
+passt keiner und `else` gilt. Bei diesem benannten Fragment bleiben die
+Zweiginhalte Kandidaten für die semantische Auswahl; sie werden dadurch nicht
+alle automatisch ausgegeben.
+
+Bedingungen oberhalb der Liste bleiben bestehen. Zusätzliche gewöhnliche Kinder
+am Elternknoten erben dessen Kontext, aber keine Bedingung eines Geschwisterzweigs.
+Gemeinsamen Zusatztext setzt du per `emit-text` am Elternknoten.
+
+Die Zweigmarker `condition`, `then`, `else` und Flag-Namen werden nicht Teil
+des Suchpfads. Benannte Blätter benötigen deshalb unterschiedliche vollständige
+Suchpfade, auch bei gegensätzlichen Bedingungen. Die Beispiele verwenden
+unterschiedliche Blattnamen. Direkte Regelaktionen ohne Suchpfad sind hiervon
+nicht betroffen.
 
 ### F. `signal` am Blatt oder an einer Gruppe
 
@@ -500,11 +543,85 @@ durch Verschachtelung zusammenkommen. Eine Liste von Signalnamen im Feld
 
 Auch ein Knoten mit ausschließlich `signal` und optionaler einfacher Bedingung
 ist gültig: Er definiert einen Ereignispfad ohne eigenen Zusatztext.
-**Die Auswahl eines Fragments löst das Signal nicht automatisch aus.** Der
-Verweis dient heute vor allem der Rückfall-Ereignisbeschreibung von Signalen
-ohne `description`; tatsächliches Eintreten wird separat geprüft.
+**Die Auswahl eines benannten Fragments löst das Signal nicht automatisch aus.**
+Der Verweis dient der Rückfall-Ereignisbeschreibung von Signalen ohne
+`description`; tatsächliches Eintreten wird separat geprüft. Direkte Regeln
+ohne Suchpfad unterscheiden sich hiervon, siehe den folgenden Abschnitt.
 
-### G. Kompatibilitätsregel für Metadaten-Namen
+### G. Direkte Regeln ohne semantische Suche
+
+Direkt unter `runtime-fragments` darf ebenfalls `condition` stehen. Ein `then`
+kann sofort Text ausgeben oder ein deklariertes Signal auslösen, ohne einen
+Situationsnamen, Suchtext oder eine Modellprüfung zu benötigen:
+
+```yaml
+flags: {nachricht-gefunden: false, turm-besucht: false, spur-erklaert: false}
+signals:
+  spur-bereit:
+    triggers:
+      - set-flag: {spur-erklaert: true}
+      - emit-text: Die nächste Spur führt zum Zeugen in der Hafenkneipe.
+runtime-fragments:
+  condition:
+    - nachricht-gefunden: true
+      turm-besucht: true
+      spur-erklaert: false
+      then:
+        emit-text: Die Figur kann jetzt Nachricht und Turmspuren verbinden.
+        signal: spur-bereit
+    - nachricht-gefunden: true
+      then:
+        condition:
+          - turm-besucht: false
+            then:
+              emit-text: Die Nachricht liefert einen Anlass, den Turm zu besuchen.
+          - else:
+              emit-text: Halte den Zusammenhang zwischen Nachricht und Turm präsent.
+    - else:
+        emit-text: Die Nachricht der Wärterin ist noch nicht bekannt.
+  "Die Figur fragt den Seemann nach der Abfahrt": >
+    Er hat zur dritten Glocke ein kleines Boot an der Mole gesehen.
+```
+
+Die Regeln werden vor der Embedding-Suche anhand eines gemeinsamen
+Flag-Schnappschusses ausgewertet; auch die Berechtigung zur Fragmentauswahl
+verwendet diese Ausgangswerte. Alle passenden Zweige gelten, auch in
+verschachtelten Listen. Hier greifen bei drei passenden Voraussetzungen beide
+äußeren `then`-Zweige; der zweite enthält wiederum eine eigene Entscheidung.
+Direkte Aktionen benötigen keinen passenden Erzählfokus und keine
+Relevanzbestätigung durch das Modell. Der benannte Seemann-Hinweis bleibt ein
+gewöhnlicher Kandidat für die semantische Auswahl.
+
+Ein direktes `signal` führt die deklarierten Signalaktionen aus; für diese
+Auslösung wird keine Ereignisfrage an das Modell gestellt. Eine eigene
+`condition` der Signaldefinition muss ebenfalls im Ausgangszustand erfüllt sein.
+Verwende die Flag-Bedingungen der Regel und des Signals, um die Voraussetzungen
+eindeutig festzulegen. Ein ausschließlich direkt referenziertes Signal ohne
+`description` wird nicht zusätzlich unabhängig als Ereignis geprüft.
+Es gibt keine Kettenreaktion zwischen Regeln desselben Durchlaufs: Ein dabei
+neu gesetztes Flag macht einen vorher unpassenden Zweig erst bei einer
+späteren Auswertung passend.
+
+Direkte Texte werden bei jedem passenden Durchlauf erneut ausgegeben.
+Im Beispiel verhindert `spur-erklaert: false` zusammen mit der gleichnamigen
+Flag-Zuweisung die Wiederholung des ersten Zweigs. Der zweite Zweig hat keinen
+solchen Schutz und bleibt wiederholbar. Alle Hinweise gelten für folgende
+Antworten; sie ändern keine bereits sichtbare Erzählung. Im verborgenen Kontext
+stehen zuerst direkte Regeltexte in Deklarations-/Durchlaufreihenfolge, dann
+Texte ausgelöster Signale in Signal- und Triggerreihenfolge und zuletzt das
+semantisch ausgewählte Fragment. Dieses Fragment wird nur übernommen, wenn
+es auch nach den Flag-Zuweisungen noch berechtigt ist.
+
+Auch `then` mit benannten Kindern ist erlaubt. Diese Kinder bleiben
+retrievalbasierte Fragmente und erben die Flag-Bedingungen der Regel. Direkte
+`emit-text`- und `signal`-Aktionen ohne benannten Pfad werden dagegen dort
+verarbeitet und nicht nochmals an die benannten Kinder vererbt. Innerhalb
+benannter Fragmentgruppen gilt weiterhin die Text- und Signalvererbung aus
+Abschnitt C und F. Ein direktes `emit-text` ohne benannten Pfad ist eine
+Regelaktion; ein `emit-text` unter einem benannten Fragment ist dessen
+Auswahlkontext.
+
+### H. Kompatibilitätsregel für Metadaten-Namen
 
 ```yaml
 runtime-fragments:
@@ -517,12 +634,12 @@ runtime-fragments:
 Ohne oberstes `flags` oder `signals` sind das drei gewöhnliche Textblätter
 mit den Pfaden `Leuchtturm / condition`, `Leuchtturm / emit-text` und
 `Leuchtturm / signal`. Sobald eines dieser obersten Felder existiert,
-werden diese Namen innerhalb von Fragmentknoten als Metadaten interpretiert.
-Auf der obersten Ebene unter `runtime-fragments` bleiben Schlüssel Fragmentnamen.
+werden diese Namen als Metadaten interpretiert, auch direkt auf der obersten
+Ebene unter `runtime-fragments`. Andere Schlüssel bleiben Fragmentnamen.
 Verwende für neue Spiele aussagekräftige Situationsnamen und deklariere
 `flags: {}`, wenn du Metadaten ohne tatsächliche Flags nutzen möchtest.
 
-### H. Leere und ungültige Fragmente
+### I. Leere und ungültige Fragmente
 
 `runtime-fragments: {}` ist zulässig. Jede sonstige Gruppe braucht mindestens
 ein gültiges Blatt oder passende eigene Metadaten. Ungültig sind insbesondere:
@@ -530,9 +647,12 @@ ein gültiges Blatt oder passende eigene Metadaten. Ungültig sind insbesondere:
 - Leere Texte, Zahlen, boolesche Werte und Listen als Fragmentwerte.
 - Leere Untergruppen und Knoten mit ausschließlich einer einfachen Bedingung.
 - Unbekannte Flag- oder Signalverweise.
-- Mehrere Flags in derselben einfachen `condition`.
-- Leere Zweiglisten, leere `then`-Mappings und zusätzliche Felder im Zweig.
-- Doppelte vollständige Blattpfade zwischen bedingten Zweigen.
+- Leere Flag-Mappings, unbekannte Flags und nichtboolesche Sollwerte.
+- Leere Zweiglisten oder leere `then`-/`else`-Mappings.
+- Bedingte Zweige ohne Flags oder ohne `then`.
+- Mehrere `else`-Einträge, `else` vor dem Listenende oder ein `else` ohne vorherigen bedingten Zweig.
+- Zusätzliche Felder neben `else` oder unzulässige Felder statt Flag-Einträgen in einem bedingten Zweig.
+- Doppelte vollständige Suchpfade benannter Blätter, auch zwischen bedingten Zweigen.
 
 Eine besondere Objektform `{fragment: Text}` gibt es derzeit nicht. Als
 verschachteltes Mapping kann sie zwar geparst werden, aber `fragment` wird dann
@@ -559,6 +679,7 @@ flags:
   turm-besucht: false
   nachricht-gefunden: false
   hafenmeisterin-misstrauisch: false
+  spur-erklaert: false
 signals:
   turm-betreten:
     description: >
@@ -587,7 +708,19 @@ signals:
     condition: {hafenmeisterin-misstrauisch: true}
     triggers:
       - set-flag: {hafenmeisterin-misstrauisch: false}
+  spur-bereit:
+    triggers:
+      - set-flag: {spur-erklaert: true}
+      - emit-text: Verknüpfe die bekannte Abfahrtszeit mit dem Zeugen in der Hafenkneipe.
 runtime-fragments:
+  condition:
+    - nachricht-gefunden: true
+      turm-besucht: true
+      spur-erklaert: false
+      then:
+        signal: spur-bereit
+    - else:
+        emit-text: Gib weitere Hinweise passend zum bisherigen Wissensstand.
   "Die Figur sucht einen Zugang zum Leuchtturm": >
     Die Tür klemmt. Nenne Rost am Schloss und einen erreichbaren Seiteneingang.
   "Die Figur untersucht das Innere des Leuchtturms":
@@ -632,22 +765,23 @@ Beende das Abenteuer, wenn die Wärterin gefunden und das dunkle Licht erklärt 
 ```
 
 Dieses Beispiel kombiniert strukturierte Ortswechsel, einmalige Fortschritte,
-einen reversiblen sozialen Zustand, eigenständige Ereignisprüfungen mit
-Textausgabe für die nächste Runde sowie
-geerbte und bedingte Hinweise. Das Ende bleibt eine erzählerische Regel;
+einen reversiblen sozialen Zustand, eigenständige Ereignisprüfungen und eine
+einmalige direkte Regel mit mehreren UND-Voraussetzungen sowie ein `else` als
+Fallback. Dazu kommen geerbte und bedingte Hinweise. Das Signal `spur-bereit`
+wird durch die direkte Regel ausgelöst; die übrigen Signale prüfen Ereignisse. Das Ende bleibt eine erzählerische Regel;
 ein eigenes Engine-Feld `ending` oder ein automatischer Abschluss-Trigger existiert nicht.
 
 ## 9. Grenzen des Formats und häufige Fehler
 
 | Wunsch oder Schreibweise | Aktuell unterstützter Weg / Grenze |
 | --- | --- |
-| Mehrere Voraussetzungen gleichzeitig | Verschachtelte Fragmentgruppen mit einfachen Flag-Bedingungen; pro Signal nur eine Flag-Bedingung |
-| Alternativen | Mehrere `condition`-/`then`-Zweige für Fragmente; Ereignisalternativen als Text in einer Signalbeschreibung |
-| `else`, `and`, `or`, `not` als YAML-Operatoren | Keine solchen Engine-Operatoren; boolesche Sollwerte und Verschachtelung nutzen |
+| Mehrere Voraussetzungen gleichzeitig | Mehrere Flag-Einträge im `condition`-Mapping oder im bedingten Listeneintrag vor `then` gelten als UND; auch geerbte Bedingungen müssen erfüllt sein |
+| Alternativen | Alle passenden `condition`-/`then`-Zweige gelten; optionales abschließendes `else` nur ohne Treffer; Ereignisalternativen als Text in einer Signalbeschreibung |
+| `and`, `or`, `not` als YAML-Operatoren | Keine solchen Operatoren; UND durch mehrere Flags, Alternativen durch Zweige, Negation durch `false` |
 | Flag umschalten oder zählen | Nur feste `set-flag`-Zuweisungen; für Rücksetzen eigenes Signal, keine `toggle`-/Zähleraktion |
 | Gegenstand vergeben, teleportieren, Dialog öffnen | Kein solcher strukturierter Trigger; erzählerisch beschreiben |
 | Ortsbedingung wie `condition: {location: Kai}` | Ungültig, sofern `location` kein deklariertes boolesches Flag ist; Situation im Suchtext beschreiben |
-| Fragment immer oder alle passenden Fragmente ausführen | Nicht garantiert; semantische Kandidatenauswahl und Relevanzprüfung |
+| Hinweise allein anhand von Flags ausführen | Direkte Regeln unter `runtime-fragments.condition`; benannte Fragmente bleiben semantisch ausgewählte Kandidaten |
 | Inventar, Personen, Fakten als `world-state`-Felder | Im Frontmatter ungültig; im Markdown beschreiben, binäre Fortschritte als Flags |
 | Signal mit leerem `triggers` | Ungültig; mindestens eine `set-flag`- oder `emit-text`-Aktion erforderlich |
 | `set-flag: {}` | Ungültig; eine `set-flag`-Aktion muss mindestens ein deklariertes Flag zuweisen |
@@ -673,6 +807,8 @@ YAML-Sonderzeichen solltest du zitieren. Doppelte Mapping-Schlüssel vermeiden.
    Flag-Zuweisungen aussagekräftiger als eine passende Erzählung allein.
 5. Prüfe bedingte Fragmente vor und nach einer Zustandsänderung. Beachte ihre
    Auswahl für folgende Antworten und die fehlende Signalkaskade im selben Zug.
+   Prüfe direkte Regeln ohne passenden Erzählfokus, mehrere gleichzeitig passende
+   Zweige und `else` ausschließlich ohne passenden Geschwisterzweig.
    Prüfe bei `emit-text`-Signalen den verborgenen Kontext der nächsten Runde
    und bei einmaligen Ereignissen, dass Bedingung und Flag-Zuweisung eine
    Wiederholung verhindern.
