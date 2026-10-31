@@ -39,6 +39,35 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
+    @Test fun `accepted fragment triggers its signal using original flags and current location without model check`() = runBlocking {
+        for (accepted in listOf(false, true)) for (fragmentEnabled in listOf(false, true)) for (signalEnabled in listOf(false, true)) {
+            val fake = ControllableGateway(classify = { if (accepted) "Y" else "N" },
+                signalCheck = { _, _ -> error("No event predicate was declared") }, warmup = { CacheMetrics(8, 2) })
+            val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+            try {
+                val fragment = candidate().copy(
+                    conditions = listOf(de.aidadventure.server.model.FlagCondition("visited", false),
+                        de.aidadventure.server.model.FlagCondition(location = "Kai")),
+                    emittedSignals = listOf("enter", "reward"))
+                val request = warmup().copy(flags = mapOf("visited" to false, "enabled" to signalEnabled, "reward" to false),
+                    worldState = WorldState(location = if (fragmentEnabled) "Kai" else "Elsewhere"),
+                    signals = linkedMapOf("enter" to listOf(de.aidadventure.server.model.FlagAssignment("visited", true)),
+                        "reward" to listOf(de.aidadventure.server.model.FlagAssignment("reward", true))),
+                    signalChecks = listOf(
+                        de.aidadventure.server.model.SignalCheckDefinition("enter", null, listOf(de.aidadventure.server.model.FlagCondition("enabled", true))),
+                        de.aidadventure.server.model.SignalCheckDefinition("reward", null, listOf(de.aidadventure.server.model.FlagCondition("visited", true)))),
+                    runtimeFragments = listOf(fragment))
+                val reservation = coordinator.reserveRerank(request, "origin")!!
+                coordinator.completeReservedRerank(reservation, fragment)
+                val outcome = coordinator.awaitSignalChecks(reservation)
+                val triggered = accepted && fragmentEnabled && signalEnabled
+                assertEquals(listOf("enter").takeIf { triggered }.orEmpty(), outcome.emittedSignals)
+                assertEquals(mapOf("visited" to triggered, "enabled" to signalEnabled, "reward" to false), outcome.flags)
+                assertEquals(listOf(LlamaCppSlot(1)), fake.slotLifecycle.map { it.slot }.distinct())
+            } finally { coordinator.close() }
+        }
+    }
+
     @Test fun `flag only failed warmup retains assignments but excludes uncommitted named text from both transports`() = runBlocking {
         for (cancelled in listOf(false, true)) {
             val fake = ControllableGateway(classify = { "Y" }, signalCheck = { _, _ -> "Y" }, warmup = {
@@ -68,7 +97,7 @@ class PrefillCoordinatorTest {
             try {
                 val request = warmup().copy(flags = mapOf("visited" to false),
                     signals = mapOf("enter" to listOf(de.aidadventure.server.model.FlagAssignment("visited", visited))),
-                    signalChecks = listOf(de.aidadventure.server.model.SignalCheckDefinition("enter", "", eventCheck = false)),
+                    signalChecks = listOf(de.aidadventure.server.model.SignalCheckDefinition("enter", null)),
                     runtimeFragments = listOf(RuntimeFragmentDefinition("", "Direct", emittedSignals = listOf("enter"), direct = true)))
                 val reservation = coordinator.reserveRerank(request, "origin")!!
                 coordinator.completeReservedRerank(reservation, candidate().copy(conditions = listOf(de.aidadventure.server.model.FlagCondition("visited", false))))
@@ -91,7 +120,7 @@ class PrefillCoordinatorTest {
             try {
                 val request = warmup().copy(flags = mapOf("visited" to false),
                     signals = if (direct) mapOf("enter" to listOf(de.aidadventure.server.model.FlagAssignment("visited", true))) else emptyMap(),
-                    signalChecks = if (direct) listOf(de.aidadventure.server.model.SignalCheckDefinition("enter", "", emittedTexts = listOf("Signal"), eventCheck = false)) else emptyList(),
+                    signalChecks = if (direct) listOf(de.aidadventure.server.model.SignalCheckDefinition("enter", null, emittedTexts = listOf("Signal"))) else emptyList(),
                     runtimeFragments = if (direct) listOf(RuntimeFragmentDefinition("", "Direct", emittedSignals = listOf("enter"), direct = true)) else emptyList())
                 val reservation = coordinator.reserveRerank(request, "origin")!!
                 coordinator.completeReservedRerank(reservation, candidate())
@@ -277,9 +306,10 @@ class PrefillCoordinatorTest {
             warmup = { CacheMetrics(8, 2) }, signalCheck = { _, _ -> "Y" })
         val coordinator = SessionPrefillCoordinator(fake)
         val primary = turn("enter").copy(flags = mapOf("visited" to false),
-            signals = mapOf("enter" to listOf(de.aidadventure.server.model.FlagAssignment("visited", true))))
+            signals = mapOf("enter" to listOf(de.aidadventure.server.model.FlagAssignment("visited", true))),
+            signalChecks = listOf(de.aidadventure.server.model.SignalCheckDefinition("enter", "Entered")))
         coordinator.beginTurn(primary, "origin").toList()
-        val completed = warmup().copy(flags = primary.flags, signals = primary.signals)
+        val completed = warmup().copy(flags = primary.flags, signals = primary.signals, signalChecks = primary.signalChecks)
         val resolving = async { coordinator.resolveWorldStateAndWarmup(primary, "Entered", completed,
             WorldStateResolutionRequest("session", "# Game", WorldState(), "enter", "Entered", emptyMap()), "origin") }
         worldEntered.await()

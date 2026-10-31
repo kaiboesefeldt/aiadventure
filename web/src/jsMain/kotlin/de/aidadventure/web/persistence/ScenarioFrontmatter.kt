@@ -9,11 +9,10 @@ data class FlagCondition(val flag: String? = null, val value: Boolean? = null, v
 data class FlagAssignment(val flag: String, val value: Boolean)
 data class SignalCheckDefinition(
     val name: String,
-    val description: String,
+    val eventCheck: String? = null,
     val conditions: List<FlagCondition> = emptyList(),
     val emittedTexts: List<String> = emptyList(),
     val excludedConditions: List<List<FlagCondition>> = emptyList(),
-    val eventCheck: Boolean = true,
 )
 
 data class RuntimeFragmentDefinition(
@@ -58,17 +57,9 @@ object ScenarioFrontmatter {
         val signals = readSignals(rootEntries, flags.keys, locationNames, declaredChecks, emittedTexts)
         val (locations, locationTriggers) = readLocations(rootEntries, flags.keys, signals.keys)
         val fragments = readRuntimeFragments(rootEntries, flags.keys, locations.keys, signals.keys, flagsEntryPresent = rootEntries.any { it[0] == "flags" } || rootEntries.any { it[0] == "signals" })
-        val checks = signals.keys.flatMap { name ->
-            val (description, conditions) = declaredChecks.getValue(name)
-            val directReference = fragments.any { it.direct && name in it.emittedSignals }
-            if (description != null) listOf(SignalCheckDefinition(name, description, conditions))
-            else {
-                val metadata = if (directReference) listOf(SignalCheckDefinition(name, name, conditions, eventCheck = false)) else emptyList()
-                val events = fragments.filter { !it.direct && name in it.emittedSignals }.map {
-                    SignalCheckDefinition(name, it.matchText, (conditions + it.conditions).distinct(), excludedConditions = it.excludedConditions)
-                }.distinct()
-                metadata + events.ifEmpty { if (directReference) emptyList() else listOf(SignalCheckDefinition(name, name, conditions)) }
-            }
+        val checks = signals.keys.map { name ->
+            val (eventCheck, conditions) = declaredChecks.getValue(name)
+            SignalCheckDefinition(name, eventCheck, conditions)
         }
         if (locations.isNotEmpty() && initialWorldState.location.isNotBlank() && initialWorldState.location !in locations.keys) {
             invalidFrontmatter()
@@ -154,16 +145,17 @@ object ScenarioFrontmatter {
             if (name.isBlank()) invalidFrontmatter("signals", "signal names cannot be blank")
             if (name in signals) invalidFrontmatter(path, "signal is declared more than once")
             val fields = mappingEntries(value) ?: invalidFrontmatter(path, "expected triggers")
-            if (fields.any { it[0] !in setOf("triggers", "description", "condition") }) invalidFrontmatter(path, "expected triggers, description, or condition")
-            val descriptionField = fields.firstOrNull { it[0] == "description" }
-            val description = descriptionField?.let {
-                (it[1] as? String)?.takeIf { text -> text.isNotBlank() }
-                    ?: invalidFrontmatter("$path.description", "expected nonblank text")
+            if (fields.any { it[0] !in setOf("triggers", "event-check", "condition") }) invalidFrontmatter(path, "expected triggers, event-check, or condition")
+            val eventCheckField = fields.firstOrNull { it[0] == "event-check" }
+            val eventCheck = eventCheckField?.let {
+                if (it[1] == null) null
+                else (it[1] as? String ?: invalidFrontmatter("$path.event-check", "expected text or null"))
+                    .takeIf { text -> text.isNotBlank() }
             }
             val conditions = fields.firstOrNull { it[0] == "condition" }?.let {
                 readConditions(it[1], "$path.condition", declaredFlags, declaredLocations)
             } ?: emptyList()
-            declaredChecks[name] = description to conditions
+            declaredChecks[name] = eventCheck to conditions
             val triggers = fields.firstOrNull { it[0] == "triggers" }?.get(1)
                 ?: invalidFrontmatter("$path.triggers", "expected a list")
             if (!isArray(triggers)) invalidFrontmatter("$path.triggers", "expected a list")

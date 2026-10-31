@@ -30,28 +30,28 @@ flags:
   hafenmeisterin-misstrauisch: false
 signals:
   betritt-leuchtturm:
-    description: Die Figur ist tatsächlich in das Innere des Leuchtturms eingetreten.
+    event-check: Die Figur ist tatsächlich in das Innere des Leuchtturms eingetreten.
     triggers:
       - set-flag:
           war-im-leuchtturm: true
   findet-gezeitenskizze:
-    description: Die Figur hat das halb verbrannte Blatt mit der Gezeitenskizze an sich genommen und dessen Gezeiten-Tabelle gelesen.
+    event-check: Die Figur hat das halb verbrannte Blatt mit der Gezeitenskizze an sich genommen und dessen Gezeiten-Tabelle gelesen.
     triggers:
       - set-flag:
           hat-gezeitenskizze: true
           kennt-gezeitenfenster: true
   entziffert-lichtkennung:
-    description: Die Figur hat die Lichtkennung als zwei langsame Blitze und einen schnellen Blitz entziffert.
+    event-check: Die Figur hat die Lichtkennung als zwei langsame Blitze und einen schnellen Blitz entziffert.
     triggers:
       - set-flag:
           kennt-lichtkennung: true
   beunruhigt-hafenmeisterin:
-    description: Die Hafenmeisterin ist durch das Verhalten oder die Aussagen der Figur misstrauisch geworden.
+    event-check: Die Hafenmeisterin ist durch das Verhalten oder die Aussagen der Figur misstrauisch geworden.
     triggers:
       - set-flag:
           hafenmeisterin-misstrauisch: true
   belegt-den-irrtum:
-    description: Die Figur hat den Irrtum mit Belegen aufgeklärt und das Misstrauen der Hafenmeisterin ausgeräumt.
+    event-check: Die Figur hat den Irrtum mit Belegen aufgeklärt und das Misstrauen der Hafenmeisterin ausgeräumt.
     triggers:
       - set-flag:
           hafenmeisterin-misstrauisch: false

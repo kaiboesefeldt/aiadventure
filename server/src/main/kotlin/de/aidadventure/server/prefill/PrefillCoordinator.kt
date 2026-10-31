@@ -755,7 +755,7 @@ internal class SessionPrefillCoordinator(
                     rerankDiagnosticSink(RerankDiagnostic(response, decision, accepted))
                     if (request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct } ||
                         request.enteredLocations.any { request.locationTriggers[it].orEmpty().isNotEmpty() }) {
-                        operation.signalOutcome = runSignalChecks(prepared, directRules) { definition ->
+                        operation.signalOutcome = runSignalChecks(prepared, directRules, operation.resolvedFragment) { definition ->
                             gateway.checkSignal(prepared, definition, lease.slot, callDiagnostics::add)
                         }.let { outcome -> outcome.copy(diagnostics = callDiagnostics.filter { it.stage == "signal_check" } + outcome.diagnostics) }
                         operation.signalOutcome?.diagnostics?.filter { it.stage == "failed" }?.forEach {

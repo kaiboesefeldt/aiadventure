@@ -5,6 +5,34 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.*
 
 class SignalChecksTest {
+    @Test fun `signals without event check never synthesize name or fragment predicates`() = runBlocking {
+        val request = request().copy(runtimeFragments = listOf(
+            RuntimeFragmentDefinition("tower", "Guidance", emittedSignals = listOf("enter"))))
+        var checks = 0
+        val result = runSignalChecks(request) { checks++; "Y" }
+        assertEquals(0, checks)
+        assertEquals(emptyList(), result.emittedSignals)
+        assertEquals(mapOf("visited" to false, "reward" to false), result.flags)
+    }
+
+    @Test fun `selected fragment checks inherited exclusions and signal location before firing once`() = runBlocking {
+        val fragment = RuntimeFragmentDefinition("tower\nroom", "Guidance", emittedSignals = listOf("enter", "enter"),
+            excludedConditions = listOf(listOf(FlagCondition("reward", true))))
+        for (predicate in listOf(null, "", " ", "The player entered")) for (blocked in listOf(false, true)) for (atSignalLocation in listOf(false, true)) {
+            val request = request().copy(flags = mapOf("visited" to false, "reward" to blocked),
+                worldState = de.aidadventure.server.worldstate.WorldState(location = if (atSignalLocation) "Kai" else "Tower"),
+                signals = mapOf("enter" to listOf(FlagAssignment("visited", true))),
+                signalChecks = listOf(SignalCheckDefinition("enter", predicate,
+                    listOf(FlagCondition(location = "Kai")), emittedTexts = listOf("Signal guidance"))))
+            val outcome = runSignalChecks(request, selectedFragment = fragment) { "N" }
+            val triggered = !blocked && atSignalLocation
+            assertEquals(if (triggered) listOf("enter") else emptyList(), outcome.emittedSignals)
+            assertEquals(if (triggered) listOf("Signal guidance") else emptyList(), outcome.emittedTexts)
+            assertEquals(triggered, outcome.flags["visited"])
+            if (triggered) assertTrue(outcome.diagnostics.none { it.kind == "signal_check" })
+        }
+    }
+
     @Test fun `location entry runs its actions in order and fires referenced signals without model checks`() = runBlocking {
         val request = request().copy(
             flags = mapOf("visited" to false, "reward" to false),
@@ -95,10 +123,9 @@ class SignalChecksTest {
         assertEquals(0, checks)
     }
 
-    @Test fun `direct declaration metadata overrides unrelated named fallback conditions and deduplicates event check`() = runBlocking {
+    @Test fun `direct references deduplicate effects and suppress independent event check`() = runBlocking {
         val checks = listOf(
-            SignalCheckDefinition("enter", "", listOf(FlagCondition("reward", false)), listOf("Signal"), eventCheck = false),
-            SignalCheckDefinition("enter", "Named fallback", listOf(FlagCondition("visited", true)), listOf("Signal")))
+            SignalCheckDefinition("enter", "An independent event", listOf(FlagCondition("reward", false)), listOf("Signal")))
         val direct = RuntimeFragmentDefinition("", "", emittedSignals = listOf("enter"), direct = true)
         val result = runSignalChecks(request().copy(signals = mapOf("enter" to listOf(FlagAssignment("visited", true))),
             signalChecks = checks, runtimeFragments = listOf(direct, direct))) { error("Direct signal must deduplicate classifier") }
@@ -109,8 +136,8 @@ class SignalChecksTest {
 
     @Test fun `direct rules select all matches and else exclusions from original flags without classification`() = runBlocking {
         val request = request().copy(signalChecks = listOf(
-            SignalCheckDefinition("enter", "Entry", emittedTexts = listOf("Signal text"), eventCheck = false),
-            SignalCheckDefinition("reward", "Reward", listOf(FlagCondition("visited", true)), eventCheck = false)),
+            SignalCheckDefinition("enter", null, emittedTexts = listOf("Signal text")),
+            SignalCheckDefinition("reward", null, listOf(FlagCondition("visited", true)))),
             runtimeFragments = listOf(
                 RuntimeFragmentDefinition("", "Direct one", listOf(FlagCondition("visited", false)), listOf("enter"), direct = true),
                 RuntimeFragmentDefinition("", "Direct two", listOf(FlagCondition("reward", false)), listOf("enter", "reward"), direct = true),
@@ -142,7 +169,7 @@ class SignalChecksTest {
 
     @Test fun `text signals still check when assignments are unchanged`() = runBlocking {
         val check = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString<SignalCheckDefinition>(
-            """{"name":"enter","description":"Entered","emittedTexts":["Remember"]}""")
+            """{"name":"enter","eventCheck":"Entered","emittedTexts":["Remember"]}""")
         val checked = mutableListOf<String>()
         runSignalChecks(request().copy(signals = mapOf("enter" to listOf(FlagAssignment("visited", false))), signalChecks = listOf(check))) {
             checked += it.name; "Y"
@@ -175,7 +202,7 @@ class SignalChecksTest {
             SignalCheckDefinition("reward", "The player received a reward.", listOf(FlagCondition("visited", true)))),
             runtimeFragments = listOf(RuntimeFragmentDefinition("irrelevant", "Guidance", listOf(FlagCondition("visited", true)), listOf("enter"))))
         val checked = mutableListOf<String>()
-        val result = runSignalChecks(request) { check -> checked += check.description; "Y" }
+        val result = runSignalChecks(request) { check -> checked += requireNotNull(check.eventCheck); "Y" }
         assertEquals(listOf("The player entered the lighthouse."), checked)
         assertEquals(listOf("enter"), result.emittedSignals)
         assertEquals(mapOf("visited" to true, "reward" to false), result.flags)
@@ -191,29 +218,31 @@ class SignalChecksTest {
         }
     }
 
-    @Test fun `legacy eligible paths collapse into one predicate per declared signal`() = runBlocking {
-        val request = request().copy(runtimeFragments = listOf(
-            RuntimeFragmentDefinition("entry", "A", emittedSignals = listOf("enter")),
-            RuntimeFragmentDefinition("arrival", "B", emittedSignals = listOf("enter")),
-            RuntimeFragmentDefinition("locked", "C", listOf(FlagCondition("visited", true)), listOf("enter"))))
-        val checked = mutableListOf<SignalCheckDefinition>()
-        val result = runSignalChecks(request) { checked += it; "Y" }
-        assertEquals(listOf("enter", "reward"), checked.map { it.name })
-        assertContains(checked.first().description, "entry")
-        assertContains(checked.first().description, "arrival")
-        assertFalse(checked.first().description.contains("locked"))
-        assertEquals(mapOf("visited" to true, "reward" to true), result.flags)
+    @Test fun `only nonblank event checks run and equivalent predicates collapse per signal`() = runBlocking {
+        for (predicate in listOf(null, "", " \n ")) {
+            val request = request().copy(signalChecks = listOf(SignalCheckDefinition("enter", predicate)))
+            val outcome = runSignalChecks(request) { error("Missing or blank predicate must never call model") }
+            assertTrue(outcome.emittedSignals.isEmpty())
+            assertEquals(request.flags, outcome.flags)
+        }
+        val request = request().copy(signalChecks = listOf(
+            SignalCheckDefinition("enter", "Entry"), SignalCheckDefinition("enter", "Entry"),
+            SignalCheckDefinition("enter", "Arrival"), SignalCheckDefinition("reward", null)))
+        val checked = mutableListOf<String>()
+        val outcome = runSignalChecks(request) { checked += requireNotNull(it.eventCheck); "Y" }
+        assertEquals(listOf("Entry\nOR\nArrival"), checked)
+        assertEquals(listOf("enter"), outcome.emittedSignals)
     }
 
     @Test fun `a failed predicate does not commit positive flags or stop later checks`() = runBlocking {
-        val result = runSignalChecks(request()) { check -> if (check.name == "enter") error("secret") else "Y" }
+        val result = runSignalChecks(request().copy(signalChecks = listOf(SignalCheckDefinition("enter", "Entry"), SignalCheckDefinition("reward", "Reward")))) { check -> if (check.name == "enter") error("secret") else "Y" }
         assertEquals(listOf("reward"), result.emittedSignals)
         assertEquals(mapOf("visited" to false, "reward" to true), result.flags)
         assertEquals("failed", result.diagnostics.first().stage)
         assertFalse(result.diagnostics.toString().contains("secret"))
     }
 
-    @Test fun `explicit and legacy signals without effective flag changes never call the checker`() = runBlocking {
+    @Test fun `signals without effective flag changes never call the checker`() = runBlocking {
         for (explicit in listOf(false, true)) {
             val signals = linkedMapOf(
                 "unchanged" to listOf(FlagAssignment("visited", false), FlagAssignment("reward", false)),
@@ -243,7 +272,8 @@ class SignalChecksTest {
             "clear" to listOf(FlagAssignment("reward", false)),
         ))
         val checked = mutableListOf<String>()
-        val result = runSignalChecks(request) { checked += it.name; "Y" }
+        val result = runSignalChecks(request.copy(signalChecks = listOf(
+            SignalCheckDefinition("partial", "Partial"), SignalCheckDefinition("repeated", "Repeated"), SignalCheckDefinition("clear", "Clear")))) { checked += it.name; "Y" }
         assertEquals(listOf("partial", "repeated", "clear"), checked)
         assertEquals(listOf("partial", "repeated", "clear"), result.emittedSignals)
         assertEquals(mapOf("visited" to true, "reward" to false, "extra" to true), result.flags)
@@ -256,7 +286,8 @@ class SignalChecksTest {
             "enterAgain" to listOf(FlagAssignment("visited", true)),
         ))
         val checked = mutableListOf<String>()
-        val result = runSignalChecks(request) { checked += it.name; "Y" }
+        val result = runSignalChecks(request.copy(signalChecks = listOf(
+            SignalCheckDefinition("enter", "Entry"), SignalCheckDefinition("reset", "Reset"), SignalCheckDefinition("enterAgain", "Reentry")))) { checked += it.name; "Y" }
         assertEquals(listOf("enter", "enterAgain"), checked)
         assertEquals(listOf("enter", "enterAgain"), result.emittedSignals)
         assertEquals(mapOf("visited" to true, "reward" to false), result.flags)

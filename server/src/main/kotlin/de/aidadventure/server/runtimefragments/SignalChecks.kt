@@ -15,19 +15,10 @@ data class SignalCheckOutcome(
 internal fun eligibleSignalChecks(request: WarmupRequest): List<SignalCheckDefinition> = request.signals.mapNotNull { (name, assignments) ->
     val effectiveAssignments = assignments.associate { it.flag to it.value }
     if (request.signalChecks.none { it.name == name && it.emittedTexts.isNotEmpty() } && effectiveAssignments.none { (flag, value) -> request.flags[flag] != value }) return@mapNotNull null
-    val definitions = request.signalChecks.filter { it.name == name }
-    val explicit = definitions.filter { it.eventCheck }
-    val predicates = if (definitions.isNotEmpty()) {
-        explicit.filter { definition -> matchesRuntimeConditions(definition.conditions, definition.excludedConditions, request.flags, request.worldState.location) }
-            .map { it.description }.distinct()
-    } else {
-        val references = request.runtimeFragments.filter { !it.direct && name in it.emittedSignals }
-        if (references.isEmpty()) {
-            if (request.runtimeFragments.any { it.direct && name in it.emittedSignals }) emptyList() else listOf(name)
-        } else references
-            .filter { fragment -> matchesRuntimeConditions(fragment.conditions, fragment.excludedConditions, request.flags, request.worldState.location) }
-            .map { it.matchText }.distinct()
-    }
+    val predicates = request.signalChecks.filter { definition ->
+        definition.name == name && !definition.eventCheck.isNullOrBlank() &&
+            matchesRuntimeConditions(definition.conditions, definition.excludedConditions, request.flags, request.worldState.location)
+    }.mapNotNull { it.eventCheck }.distinct()
     predicates.takeIf { it.isNotEmpty() }?.let {
         SignalCheckDefinition(name, if (it.size == 1) it.single() else it.joinToString("\nOR\n"))
     }
@@ -36,16 +27,19 @@ internal fun eligibleSignalChecks(request: WarmupRequest): List<SignalCheckDefin
 internal suspend fun runSignalChecks(
     request: WarmupRequest,
     directRules: List<RuntimeFragmentDefinition> = selectedDirectRules(request.runtimeFragments, request.flags, request.worldState.location),
+    selectedFragment: RuntimeFragmentDefinition? = null,
     check: suspend (SignalCheckDefinition) -> String,
 ): SignalCheckOutcome {
-    val references = directRules.flatMap { it.emittedSignals }.toSet()
+    val acceptedFragment = selectedFragment?.takeIf {
+        matchesRuntimeConditions(it.conditions, it.excludedConditions, request.flags, request.worldState.location)
+    }
+    val references = (directRules.flatMap { it.emittedSignals } + acceptedFragment?.emittedSignals.orEmpty()).toSet()
     val locationActions = request.enteredLocations.flatMap { request.locationTriggers[it].orEmpty() }
     val locationSignalReferences = locationActions.flatMap { it.signals }.distinct()
     val directSignals = request.signals.keys.filter { name ->
         if (name !in references && name !in locationSignalReferences) return@filter false
         val definitions = request.signalChecks.filter { it.name == name }
-        val declarations = definitions.filter { !it.eventCheck }.ifEmpty { definitions }
-        declarations.isEmpty() || declarations.any { matchesRuntimeConditions(it.conditions, it.excludedConditions, request.flags, request.worldState.location) }
+        definitions.isEmpty() || definitions.any { matchesRuntimeConditions(it.conditions, it.excludedConditions, request.flags, request.worldState.location) }
     }.toSet()
     val emitted = directSignals.toMutableList()
     val diagnostics = mutableListOf<StreamDiagnostic>()

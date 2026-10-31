@@ -114,7 +114,7 @@ runtime-fragments:
         assertEquals(2, parsed.signalChecks.single().conditions.size)
     }
 
-    @Test fun `direct and named references retain separate signal declaration and event predicates`() {
+    @Test fun `direct and named references retain only the signal declaration conditions`() {
         val parsed = ScenarioFrontmatter.parse("""---
 flags: {ready: false, enabled: true}
 signals:
@@ -134,8 +134,7 @@ runtime-fragments:
 # Harbor
 """)
         assertEquals(listOf(
-            SignalCheckDefinition("visit", "visit", listOf(FlagCondition("enabled", true)), listOf("Signal guidance"), eventCheck = false),
-            SignalCheckDefinition("visit", "tower", listOf(FlagCondition("enabled", true)), listOf("Signal guidance"), excludedConditions = listOf(listOf(FlagCondition("ready", true)))),
+            SignalCheckDefinition("visit", null, listOf(FlagCondition("enabled", true)), listOf("Signal guidance")),
         ), parsed.signalChecks)
     }
 
@@ -181,15 +180,23 @@ runtime-fragments:
         assertEquals(listOf("Remember the tower."), parsed.signalChecks.single().emittedTexts)
     }
 
-    @Test fun `legacy signal without fragments uses its name as event fallback`() {
+    @Test fun `signal without event check retains conditions without a fallback predicate`() {
         val parsed = ScenarioFrontmatter.parse("---\nflags: {visited: false}\nsignals:\n  visit:\n    condition: {visited: false}\n    triggers:\n      - set-flag: {visited: true}\n---\n# Harbor")
-        assertEquals(listOf(SignalCheckDefinition("visit", "visit", listOf(FlagCondition("visited", false)))), parsed.signalChecks)
+        assertEquals(listOf(SignalCheckDefinition("visit", null, listOf(FlagCondition("visited", false)))), parsed.signalChecks)
     }
 
-    @Test fun `rejects malformed event descriptions and signal conditions with field paths`() {
+    @Test fun `absent null empty and blank event checks disable automatic predicates`() {
+        for (field in listOf("", "    event-check: null\n", "    event-check:\n", "    event-check: ''\n", "    event-check: '  '\n")) {
+            val parsed = ScenarioFrontmatter.parse("---\nsignals:\n  visit:\n${field}    triggers: [{emit-text: Arrival}]\n---\n# Harbor")
+            assertEquals(listOf(SignalCheckDefinition("visit", emittedTexts = listOf("Arrival"))), parsed.signalChecks)
+        }
+    }
+
+    @Test fun `rejects malformed event checks and signal conditions with field paths`() {
         listOf(
-            "description: ''" to "signals.visit.description",
-            "description: true" to "signals.visit.description",
+            "event-check: true" to "signals.visit.event-check",
+            "event-check: {}" to "signals.visit.event-check",
+            "description: Old predicate" to "signals.visit",
             "condition: {missing: true}" to "signals.visit.condition.missing",
             "condition: {visited: unknown}" to "signals.visit.condition.visited",
         ).forEach { (field, path) ->
@@ -200,12 +207,12 @@ runtime-fragments:
         }
     }
 
-    @Test fun `accepts explicit event description independently of fragment conditions`() {
+    @Test fun `accepts explicit event check independently of fragment conditions`() {
         val parsed = ScenarioFrontmatter.parse("""---
 flags: {visited: false, ready: true}
 signals:
   visit:
-    description: The player actually enters the tower.
+    event-check: The player actually enters the tower.
     condition: {visited: false}
     triggers:
       - set-flag: {visited: true}
@@ -247,7 +254,7 @@ runtime-fragments:
 
         assertEquals(mapOf("visited" to false, "has-map" to true), parsed.initialFlags)
         assertEquals(mapOf("visit" to listOf(FlagAssignment("visited", true))), parsed.signals)
-        assertEquals(listOf(SignalCheckDefinition("visit", "lighthouse\ndrawing", listOf(FlagCondition("has-map", true))), SignalCheckDefinition("visit", "lighthouse\nchart", listOf(FlagCondition("has-map", true)))), parsed.signalChecks)
+        assertEquals(listOf(SignalCheckDefinition("visit")), parsed.signalChecks)
         assertEquals(
             listOf(
                 RuntimeFragmentDefinition("lighthouse\ndrawing", "A tower stands ahead.\nA cross marks the coast.", listOf(FlagCondition("has-map", true)), listOf("visit")),
