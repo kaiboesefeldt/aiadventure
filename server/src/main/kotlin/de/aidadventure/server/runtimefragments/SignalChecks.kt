@@ -15,14 +15,17 @@ data class SignalCheckOutcome(
 internal fun eligibleSignalChecks(request: WarmupRequest): List<SignalCheckDefinition> = request.signals.mapNotNull { (name, assignments) ->
     val effectiveAssignments = assignments.associate { it.flag to it.value }
     if (request.signalChecks.none { it.name == name && it.emittedTexts.isNotEmpty() } && effectiveAssignments.none { (flag, value) -> request.flags[flag] != value }) return@mapNotNull null
-    val explicit = request.signalChecks.filter { it.name == name }
-    val predicates = if (explicit.isNotEmpty()) {
-        explicit.filter { definition -> definition.conditions.all { request.flags[it.flag] == it.value } }
+    val definitions = request.signalChecks.filter { it.name == name }
+    val explicit = definitions.filter { it.eventCheck }
+    val predicates = if (definitions.isNotEmpty()) {
+        explicit.filter { definition -> matchesRuntimeConditions(definition.conditions, definition.excludedConditions, request.flags) }
             .map { it.description }.distinct()
     } else {
-        val references = request.runtimeFragments.filter { name in it.emittedSignals }
-        if (references.isEmpty()) listOf(name) else references
-            .filter { fragment -> fragment.conditions.all { request.flags[it.flag] == it.value } }
+        val references = request.runtimeFragments.filter { !it.direct && name in it.emittedSignals }
+        if (references.isEmpty()) {
+            if (request.runtimeFragments.any { it.direct && name in it.emittedSignals }) emptyList() else listOf(name)
+        } else references
+            .filter { fragment -> matchesRuntimeConditions(fragment.conditions, fragment.excludedConditions, request.flags) }
             .map { it.matchText }.distinct()
     }
     predicates.takeIf { it.isNotEmpty() }?.let {
@@ -32,11 +35,19 @@ internal fun eligibleSignalChecks(request: WarmupRequest): List<SignalCheckDefin
 
 internal suspend fun runSignalChecks(
     request: WarmupRequest,
+    directRules: List<RuntimeFragmentDefinition> = selectedDirectRules(request.runtimeFragments, request.flags),
     check: suspend (SignalCheckDefinition) -> String,
 ): SignalCheckOutcome {
-    val emitted = mutableListOf<String>()
+    val references = directRules.flatMap { it.emittedSignals }.toSet()
+    val directSignals = request.signals.keys.filter { name ->
+        if (name !in references) return@filter false
+        val definitions = request.signalChecks.filter { it.name == name }
+        val declarations = definitions.filter { !it.eventCheck }.ifEmpty { definitions }
+        declarations.isEmpty() || declarations.any { matchesRuntimeConditions(it.conditions, it.excludedConditions, request.flags) }
+    }.toSet()
+    val emitted = directSignals.toMutableList()
     val diagnostics = mutableListOf<StreamDiagnostic>()
-    for (definition in eligibleSignalChecks(request)) {
+    for (definition in eligibleSignalChecks(request).filter { it.name !in directSignals }) {
         try {
             val answer = check(definition)
             if (answer == "Y") emitted += definition.name
@@ -48,12 +59,17 @@ internal suspend fun runSignalChecks(
                 fields = mapOf("signal" to definition.name, "failureCategory" to failure.javaClass.simpleName))
         }
     }
-    val flags = applyRuntimeSignals(request.flags, request.signals, emitted)
+    val orderedEmitted = request.signals.keys.filter { it in emitted }
+    val flags = applyRuntimeSignals(request.flags, request.signals, orderedEmitted)
     if (emitted.isNotEmpty()) diagnostics += StreamDiagnostic("signal", "emitted", transcriptRole = "game-master",
-        fields = mapOf("emittedSignals" to emitted.joinToString(", ")) + flags.filter { (name, value) -> request.flags[name] != value }
+        fields = mapOf("emittedSignals" to orderedEmitted.joinToString(", ")) + flags.filter { (name, value) -> request.flags[name] != value }
             .mapKeys { (name, _) -> "flag:$name" }.mapValues { (_, value) -> value.toString() })
     diagnostics += StreamDiagnostic("flags", "applied", transcriptRole = "game-master", fields = mapOf(
-        "emittedSignals" to emitted.joinToString(", "),
-        "appliedAssignments" to emitted.flatMap { request.signals[it].orEmpty() }.joinToString(", ") { "${it.flag}=${it.value}" }))
-    return SignalCheckOutcome(flags, emitted, diagnostics, emitted.flatMap { name -> request.signalChecks.firstOrNull { it.name == name }?.emittedTexts.orEmpty() })
+        "emittedSignals" to orderedEmitted.joinToString(", "),
+        "appliedAssignments" to orderedEmitted.flatMap { request.signals[it].orEmpty() }.joinToString(", ") { "${it.flag}=${it.value}" }))
+    // Each direct text contributes; signal actions are deduplicated by declaration name.
+    val texts = directRules.mapNotNull { it.fragment.takeIf(String::isNotBlank) } + orderedEmitted.flatMap { name ->
+        request.signalChecks.firstOrNull { it.name == name }?.emittedTexts.orEmpty()
+    }
+    return SignalCheckOutcome(flags, orderedEmitted, diagnostics, texts)
 }

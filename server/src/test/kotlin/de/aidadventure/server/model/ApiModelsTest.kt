@@ -11,6 +11,17 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class ApiModelsTest {
+    @kotlin.test.Test fun `direct rules permit repeated empty paths while exclusions validate declared flags`() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val direct = json.decodeFromString<RuntimeFragmentDefinition>("""{"matchText":"","fragment":"Hint","direct":true}""")
+        val request = WarmupRequest("direct", modelId = "configured-llama-cpp", scenarioMarkdown = "# Game", history = emptyList(), runtimeFragments = listOf(direct, direct))
+        assertNull(RequestValidator.validate(request))
+        val invalid = json.decodeFromString<RuntimeFragmentDefinition>("""{"matchText":"path","fragment":"Hint","excludedConditions":[[{"flag":"unknown","value":true}]]}""")
+        assertNotNull(RequestValidator.validate(request.copy(runtimeFragments = listOf(invalid))))
+        val empty = json.decodeFromString<RuntimeFragmentDefinition>("""{"matchText":"path","fragment":"Hint","excludedConditions":[[]]}""")
+        assertNotNull(RequestValidator.validate(request.copy(runtimeFragments = listOf(empty))))
+    }
+
     @Test fun `same signal fallback predicates require identical emitted texts`() {
         val request = TurnRequest("live", modelId = "model", scenarioMarkdown = "# Game", history = emptyList(), playerAction = "enter",
             signals = mapOf("enter" to emptyList()), signalChecks = listOf(

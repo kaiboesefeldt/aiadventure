@@ -1,5 +1,7 @@
 package de.aidadventure.server.prefill
 
+import de.aidadventure.server.runtimefragments.selectedDirectRules
+import de.aidadventure.server.runtimefragments.matchesRuntimeConditions
 import de.aidadventure.server.runtimefragments.SignalCheckOutcome
 import de.aidadventure.server.runtimefragments.runSignalChecks
 import de.aidadventure.server.model.SignalCheckDefinition
@@ -708,6 +710,8 @@ internal class SessionPrefillCoordinator(
         requestId: String,
         existingLease: Lease? = null,
     ): RerankingOperation {
+        // Reserve the direct branch selection before the caller starts embedding retrieval.
+        val directRules = selectedDirectRules(request.runtimeFragments, request.flags)
         nextFragment = null
         val lease = existingLease ?: acquireLease(request.llamaCppPort)
         val operation = RerankingOperation(RerankReservation(++generation))
@@ -737,7 +741,7 @@ internal class SessionPrefillCoordinator(
                             gateway.classifyFragment(relevanceRequest, lease.slot, callDiagnostics::add)
                         } catch (cancelled: CancellationException) { throw cancelled }
                         catch (failure: Exception) {
-                            if (request.signals.isEmpty()) throw failure
+                            if (request.signals.isEmpty() && directRules.isEmpty()) throw failure
                             logger.warn("requestId={} operation=fragment_relevance failure={}", requestId, failure.javaClass.simpleName)
                             callDiagnostics += StreamDiagnostic("background_rerank", "failed", transcriptRole = "game-master",
                                 fields = mapOf("failureCategory" to failure.javaClass.simpleName))
@@ -748,8 +752,8 @@ internal class SessionPrefillCoordinator(
                     val accepted = candidate != null && decision == true
                     operation.resolvedFragment = candidate?.takeIf { accepted }
                     rerankDiagnosticSink(RerankDiagnostic(response, decision, accepted))
-                    if (request.signals.isNotEmpty()) {
-                        operation.signalOutcome = runSignalChecks(prepared) { definition ->
+                    if (request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct }) {
+                        operation.signalOutcome = runSignalChecks(prepared, directRules) { definition ->
                             gateway.checkSignal(prepared, definition, lease.slot, callDiagnostics::add)
                         }.let { outcome -> outcome.copy(diagnostics = callDiagnostics.filter { it.stage == "signal_check" } + outcome.diagnostics) }
                         operation.signalOutcome?.diagnostics?.filter { it.stage == "failed" }?.forEach {
@@ -758,7 +762,7 @@ internal class SessionPrefillCoordinator(
                     }
                     val finalFlags = operation.signalOutcome?.flags ?: prepared.flags
                     operation.resolvedFragment = operation.resolvedFragment?.takeIf { fragment ->
-                        fragment.conditions.all { finalFlags[it.flag] == it.value }
+                        matchesRuntimeConditions(fragment.conditions, fragment.excludedConditions, finalFlags)
                     }
                     val texts = operation.signalOutcome?.emittedTexts.orEmpty()
                     if (texts.isNotEmpty()) {
@@ -981,7 +985,7 @@ internal class SessionPrefillCoordinator(
     )
 
     private fun TurnRequest.withNextFragment(): ResolvedTurn = nextFragment?.takeIf { candidate ->
-        candidate.conditions.all { flags[it.flag] == it.value }
+        matchesRuntimeConditions(candidate.conditions, candidate.excludedConditions, flags)
     }?.let { candidate ->
         ResolvedTurn(
             if (candidate.fragment.isBlank() || history.lastOrNull() == ChatEntry("runtime-fragment", candidate.fragment)) this
@@ -1096,7 +1100,7 @@ internal class SessionPrefillCoordinator(
 
         fun handoff(lease: Lease, resolvedTurn: ResolvedTurn, diagnostics: List<StreamDiagnostic>) {
             this.request = resolvedTurn.request
-            if (request.signals.isNotEmpty()) postTurnGate = PostTurnGate(requestId, request.flags)
+            if (request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct }) postTurnGate = PostTurnGate(requestId, request.flags)
             selectedFragment = resolvedTurn.fragment
             emittedSignals = resolvedTurn.emittedSignals
             priorDiagnostics = diagnostics

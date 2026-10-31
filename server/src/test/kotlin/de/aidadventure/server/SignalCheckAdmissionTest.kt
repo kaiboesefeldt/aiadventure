@@ -57,10 +57,17 @@ class SignalCheckAdmissionTest {
         val checkEntered = CompletableDeferred<Unit>()
         val releaseCheck = CompletableDeferred<Unit>()
         val cancellationReached = CompletableDeferred<Unit>()
+        val followingGateEntered = CompletableDeferred<Unit>()
         val gateway = CheckGateway(checkEntered, releaseCheck)
         val actual = SessionPrefillCoordinator(gateway)
         var cancellationReservation: RerankReservation? = null
         val coordinator = object : PrefillCoordinator by actual {
+            override suspend fun awaitPostTurn(request: TurnRequest): TurnRequest = coroutineScope {
+                // Enter the held gate before the test releases the original signal check.
+                val awaiting = async(start = CoroutineStart.UNDISPATCHED) { actual.awaitPostTurn(request) }
+                if (request.playerAction == "following") followingGateEntered.complete(Unit)
+                awaiting.await()
+            }
             override suspend fun reserveRerank(request: WarmupRequest, requestId: String): RerankReservation? =
                 actual.reserveRerank(request, requestId).also { if (request.history.any { it.content == "origin" }) cancellationReservation = it }
             override suspend fun awaitSignalChecks(reservation: RerankReservation): de.aidadventure.server.runtimefragments.SignalCheckOutcome {
@@ -79,7 +86,7 @@ class SignalCheckAdmissionTest {
                 val origin = async { runCatching { jsonClient.post("/api/turn") { contentType(ContentType.Application.Json); setBody(request("origin")) }.bodyAsText() } }
                 withTimeout(2_000) { cancellationReached.await() }
                 val following = async { jsonClient.post("/api/turn") { contentType(ContentType.Application.Json); setBody(request("following")) }.bodyAsText() }
-                yield()
+                withTimeout(2_000) { followingGateEntered.await() }
                 releaseCheck.complete(Unit)
                 withTimeout(2_000) { origin.await() }
                 val body = withTimeout(2_000) { following.await() }
