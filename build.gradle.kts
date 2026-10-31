@@ -10,6 +10,11 @@ plugins {
 
 // webpack-cli 6 requires commander 12; pin the root npm resolution accordingly.
 NpmExtension[rootProject].override("commander", "12.1.0")
+// Keep Karma and Kotlin-generated webpack plugins on the same Compilation class.
+NpmExtension[rootProject].override("webpack", "5.101.3")
+tasks.matching { it.name in setOf("rootPackageJson", "kotlinNpmInstall") }.configureEach {
+    inputs.property("webpackOverride", "5.101.3")
+}
 
 allprojects {
     project.plugins.withType<NodeJsPlugin> {

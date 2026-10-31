@@ -11,6 +11,40 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 class RequestBodyEncodingTest {
+    @Test fun `all request mappers preserve direct rules and else exclusions`() {
+        val scenario = Scenario("scenario", "Harbor", """---
+flags: {ready: false}
+signals:
+  visit:
+    triggers:
+      - emit-text: Signal guidance
+runtime-fragments:
+  condition:
+    - ready: true
+      then: {emit-text: Ready, signal: visit}
+    - else:
+        emit-text: Waiting
+        harbor: Retrieved
+---
+# Harbor
+""", 1)
+        val session = GameSession("session", scenario.id, "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+        val bodies = listOf(
+            encodeTurnRequest(TurnRequestMapper.map(session, scenario, "enter", "session")),
+            encodePrefillRequest(PrefillRequestMapper.map(session, scenario, "session", 1, "enter")),
+            encodeWarmupRequest(WarmupRequestMapper.map(session, scenario)),
+        )
+        bodies.forEach { encoded ->
+            val body = Json.parseToJsonElement(encoded).jsonObject
+            val rules = body["runtimeFragments"]!!.jsonArray.map { it.jsonObject }
+            assertEquals("true", rules.first()["direct"]?.jsonPrimitive?.content)
+            assertEquals("Waiting", rules[1]["fragment"]!!.jsonPrimitive.content)
+            assertEquals("ready", rules[1]["excludedConditions"]!!.jsonArray.single().jsonArray.single().jsonObject["flag"]!!.jsonPrimitive.content)
+            assertEquals("harbor", rules[2]["matchText"]!!.jsonPrimitive.content)
+            assertEquals("false", body["signalChecks"]!!.jsonArray.single().jsonObject["eventCheck"]?.jsonPrimitive?.content)
+        }
+    }
+
     @Test fun `all request mappers serialize explicit event checks and keep assignments`() {
         val scenario = Scenario("scenario", "Harbor", "---\nflags: {visited: false}\nsignals:\n  visit:\n    description: The player actually entered.\n    condition: {visited: false}\n    triggers:\n      - emit-text: First hint\n      - set-flag: {visited: true}\n      - emit-text: Second hint\n---\n# Harbor", 1)
         val session = GameSession("session", scenario.id, "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)

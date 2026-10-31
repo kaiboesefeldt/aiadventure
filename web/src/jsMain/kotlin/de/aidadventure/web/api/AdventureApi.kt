@@ -252,21 +252,14 @@ object TurnRequestMapper {
             history = session.messages.map { ChatEntry(it.role, it.content) },
             playerAction = playerAction,
             sessionId = sessionId,
-            runtimeFragments = parsed.runtimeFragments.map { fragment ->
-                RuntimeFragmentDefinition(
-                    fragment.matchText,
-                    fragment.fragment,
-                    fragment.conditions.map { FlagCondition(it.flag, it.value) },
-                    fragment.emittedSignals,
-                )
-            },
+            runtimeFragments = parsed.runtimeFragments.map { it.toApi() },
             worldState = session.worldState,
             contextCompression = session.contextCompression,
             locations = parsed.locations,
             initialSituation = if (includeInitialSituation) parsed.initialSituationSetting else "",
             flags = parsed.initialFlags + session.flags,
             signals = parsed.signals.mapValues { (_, assignments) -> assignments.map { FlagAssignment(it.flag, it.value) } },
-            signalChecks = parsed.signalChecks.map { SignalCheckDefinition(it.name, it.description, it.conditions.map { condition -> FlagCondition(condition.flag, condition.value) }, it.emittedTexts) },
+            signalChecks = parsed.signalChecks.map { it.toApi() },
         )
     }
 }
@@ -280,15 +273,13 @@ object PrefillRequestMapper {
             scenarioMarkdown = parsed.promptMarkdown,
             history = session.messages.map { ChatEntry(it.role, it.content) },
             playerAction = action,
-            runtimeFragments = parsed.runtimeFragments.map { fragment ->
-                RuntimeFragmentDefinition(fragment.matchText, fragment.fragment, fragment.conditions.map { FlagCondition(it.flag, it.value) }, fragment.emittedSignals)
-            },
+            runtimeFragments = parsed.runtimeFragments.map { it.toApi() },
             worldState = session.worldState,
             contextCompression = session.contextCompression,
             locations = parsed.locations,
             flags = parsed.initialFlags + session.flags,
             signals = parsed.signals.mapValues { (_, assignments) -> assignments.map { FlagAssignment(it.flag, it.value) } },
-            signalChecks = parsed.signalChecks.map { SignalCheckDefinition(it.name, it.description, it.conditions.map { condition -> FlagCondition(condition.flag, condition.value) }, it.emittedTexts) },
+            signalChecks = parsed.signalChecks.map { it.toApi() },
         )
     }
 }
@@ -300,18 +291,34 @@ object WarmupRequestMapper {
             sessionId = session.id,
             scenarioMarkdown = parsed.promptMarkdown,
             history = session.messages.map { ChatEntry(it.role, it.content) },
-            runtimeFragments = parsed.runtimeFragments.map { fragment ->
-                RuntimeFragmentDefinition(fragment.matchText, fragment.fragment, fragment.conditions.map { FlagCondition(it.flag, it.value) }, fragment.emittedSignals)
-            },
+            runtimeFragments = parsed.runtimeFragments.map { it.toApi() },
             worldState = session.worldState,
             contextCompression = session.contextCompression,
             locations = parsed.locations,
             flags = parsed.initialFlags + session.flags,
             signals = parsed.signals.mapValues { (_, assignments) -> assignments.map { FlagAssignment(it.flag, it.value) } },
-            signalChecks = parsed.signalChecks.map { SignalCheckDefinition(it.name, it.description, it.conditions.map { condition -> FlagCondition(condition.flag, condition.value) }, it.emittedTexts) },
+            signalChecks = parsed.signalChecks.map { it.toApi() },
         )
     }
 }
+
+private fun de.aidadventure.web.persistence.RuntimeFragmentDefinition.toApi() = RuntimeFragmentDefinition(
+    matchText = matchText,
+    fragment = fragment,
+    conditions = conditions.map { FlagCondition(it.flag, it.value) },
+    emittedSignals = emittedSignals,
+    direct = direct,
+    excludedConditions = excludedConditions.map { group -> group.map { FlagCondition(it.flag, it.value) } },
+)
+
+private fun de.aidadventure.web.persistence.SignalCheckDefinition.toApi() = SignalCheckDefinition(
+    name = name,
+    description = description,
+    conditions = conditions.map { FlagCondition(it.flag, it.value) },
+    emittedTexts = emittedTexts,
+    excludedConditions = excludedConditions.map { group -> group.map { FlagCondition(it.flag, it.value) } },
+    eventCheck = eventCheck,
+)
 
 @Serializable
 data class ChatEntry(val role: String, val content: String)
@@ -322,13 +329,22 @@ data class RuntimeFragmentDefinition(
     val fragment: String,
     val conditions: List<FlagCondition> = emptyList(),
     val emittedSignals: List<String> = emptyList(),
+    val direct: Boolean = false,
+    val excludedConditions: List<List<FlagCondition>> = emptyList(),
 )
 
 @Serializable
 data class FlagCondition(val flag: String, val value: Boolean)
 
 @Serializable
-data class SignalCheckDefinition(val name: String, val description: String, val conditions: List<FlagCondition> = emptyList(), val emittedTexts: List<String> = emptyList())
+data class SignalCheckDefinition(
+    val name: String,
+    val description: String,
+    val conditions: List<FlagCondition> = emptyList(),
+    val emittedTexts: List<String> = emptyList(),
+    val excludedConditions: List<List<FlagCondition>> = emptyList(),
+    val eventCheck: Boolean = true,
+)
 
 @Serializable
 data class FlagAssignment(val flag: String, val value: Boolean)
