@@ -5,6 +5,56 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.*
 
 class SignalChecksTest {
+    @Test fun `location entry runs its actions in order and fires referenced signals without model checks`() = runBlocking {
+        val request = request().copy(
+            flags = mapOf("visited" to false, "reward" to false),
+            signals = linkedMapOf(
+                "arrival" to listOf(FlagAssignment("visited", true)),
+                "reward" to listOf(FlagAssignment("reward", true)),
+            ),
+            signalChecks = listOf(
+                SignalCheckDefinition("arrival", "Arrive", emittedTexts = listOf("Signal text")),
+                SignalCheckDefinition("reward", "Get reward"),
+            ),
+            locationTriggers = mapOf("Kai" to listOf(
+                LocationTriggerAction(setFlags = listOf(FlagAssignment("reward", false))),
+                LocationTriggerAction(emitText = "Welcome to Kai."),
+                LocationTriggerAction(signals = listOf("arrival", "reward")),
+                LocationTriggerAction(setFlags = listOf(FlagAssignment("visited", false))),
+            )),
+            enteredLocations = listOf("Kai"),
+        )
+        var checks = 0
+        val result = runSignalChecks(request) { checks++; "N" }
+        assertEquals(0, checks)
+        assertEquals(listOf("arrival", "reward"), result.emittedSignals)
+        assertEquals(mapOf("visited" to false, "reward" to true), result.flags)
+        assertEquals(listOf("Welcome to Kai.", "Signal text"), result.emittedTexts)
+        val effects = result.diagnostics.filter { it.kind == "flag_set" || it.kind == "text_emitted" }
+        assertEquals(listOf("flag_set", "text_emitted", "flag_set", "text_emitted", "flag_set", "flag_set"), effects.map { it.kind })
+        assertEquals(listOf("reward", null, "visited", null, "reward", "visited"), effects.map { it.fields["flag"] })
+    }
+
+    @Test fun `location actions do not repeat unless a location entry is supplied`() = runBlocking {
+        val request = request().copy(
+            signals = mapOf("arrival" to listOf(FlagAssignment("visited", true))),
+            signalChecks = listOf(SignalCheckDefinition("arrival", "Arrive", listOf(FlagCondition(location = "Kai")))),
+            locationTriggers = mapOf("Kai" to listOf(LocationTriggerAction(signals = listOf("arrival")))),
+        )
+        var checks = 0
+        val noEntry = runSignalChecks(request) { checks++; "Y" }
+        assertTrue(noEntry.emittedSignals.isEmpty())
+        assertEquals(mapOf("visited" to false, "reward" to false), noEntry.flags)
+
+        val startEntry = runSignalChecks(request.copy(
+            enteredLocations = listOf("Kai"),
+            worldState = de.aidadventure.server.worldstate.WorldState(location = "Kai"),
+        )) { checks++; "N" }
+        assertEquals(listOf("arrival"), startEntry.emittedSignals)
+        assertEquals(mapOf("visited" to true, "reward" to false), startEntry.flags)
+        assertEquals(0, checks)
+    }
+
     @Test fun `location conditions gate event checks direct rules inherited references and else groups`() = runBlocking {
         val condition = kotlinx.serialization.json.Json.decodeFromString<FlagCondition>("""{"location":"Leuchtturm"}""")
         val predicates = listOf(condition, FlagCondition("visited", false))

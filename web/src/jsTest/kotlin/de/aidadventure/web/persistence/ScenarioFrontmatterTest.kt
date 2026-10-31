@@ -351,6 +351,32 @@ initial-situation:
             ScenarioFrontmatter.parse("---\nworld-state:\n  location: Kai\nlocations:\n  Kai:\n  Leuchtturm: ''\n---\n# Hafen").locations,
         )
     }
+    @Test fun `parses location entry triggers while preserving legacy descriptions`() {
+        val parsed = ScenarioFrontmatter.parse("""---
+world-state: {location: Kai}
+flags: {arrived: false}
+locations:
+  Kai:
+    description: Harbor at dawn.
+    triggers:
+      - set-flag: {arrived: true}
+      - emit-text: The harbor bells ring.
+      - signals: [met-keeper]
+  Leuchtturm: Old lighthouse.
+signals:
+  met-keeper:
+    triggers:
+      - set-flag: {arrived: false}
+---
+# Hafen
+""")
+        assertEquals(mapOf("Kai" to "Harbor at dawn.", "Leuchtturm" to "Old lighthouse."), parsed.locations)
+        assertEquals(listOf(
+            LocationTriggerAction(setFlags = listOf(FlagAssignment("arrived", true))),
+            LocationTriggerAction(emitText = "The harbor bells ring."),
+            LocationTriggerAction(signals = listOf("met-keeper")),
+        ), parsed.locationTriggers.getValue("Kai"))
+    }
     @Test fun `rejects a catalog without its initial location or duplicate locations`() {
         assertFailsWith<IllegalArgumentException> {
             ScenarioFrontmatter.parse("---\nworld-state:\n  location: Kai\nlocations:\n  Leuchtturm: ''\n---\n# Hafen")
@@ -358,6 +384,20 @@ initial-situation:
         assertFailsWith<IllegalArgumentException> {
             ScenarioFrontmatter.parse("---\nlocations:\n  Kai: ''\n  kai: ''\n---\n# Hafen")
         }
+    }
+    @Test fun `location signals must reference declared signals`() {
+        val error = assertFailsWith<IllegalArgumentException> {
+            ScenarioFrontmatter.parse("""---
+locations:
+  Kai:
+    description: Harbor.
+    triggers:
+      - signals: [unknown]
+---
+# Hafen
+""")
+        }
+        assertContains(error.message.orEmpty(), "locations.Kai.triggers[0].signals[0]")
     }
     @Test fun `rejects blank or additional location fields`() {
         assertFailsWith<IllegalArgumentException> { ScenarioFrontmatter.parse("---\nworld-state:\n  location: ''\n---\n# Haus") }

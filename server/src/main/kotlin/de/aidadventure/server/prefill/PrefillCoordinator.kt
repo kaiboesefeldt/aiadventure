@@ -62,6 +62,7 @@ private fun PrefillRequest.asTurnRequest() = TurnRequest(
     flags = flags,
     signals = signals,
     signalChecks = signalChecks,
+    locationTriggers = locationTriggers,
 )
 
 data class CoordinatorKey(val sessionId: String, val modelId: String, val port: Int)
@@ -752,7 +753,8 @@ internal class SessionPrefillCoordinator(
                     val accepted = candidate != null && decision == true
                     operation.resolvedFragment = candidate?.takeIf { accepted }
                     rerankDiagnosticSink(RerankDiagnostic(response, decision, accepted))
-                    if (request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct }) {
+                    if (request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct } ||
+                        request.enteredLocations.any { request.locationTriggers[it].orEmpty().isNotEmpty() }) {
                         operation.signalOutcome = runSignalChecks(prepared, directRules) { definition ->
                             gateway.checkSignal(prepared, definition, lease.slot, callDiagnostics::add)
                         }.let { outcome -> outcome.copy(diagnostics = callDiagnostics.filter { it.stage == "signal_check" } + outcome.diagnostics) }
@@ -1007,6 +1009,7 @@ internal class SessionPrefillCoordinator(
             this.request.flags == request.flags &&
             this.request.signals == request.signals &&
             this.request.signalChecks == request.signalChecks &&
+            this.request.locationTriggers == request.locationTriggers &&
             this.request.worldState == request.worldState &&
             this.request.contextCompression == request.contextCompression
     }
@@ -1080,7 +1083,7 @@ internal class SessionPrefillCoordinator(
                         output.send(TurnStreamEvent.InputReady)
                         val warmup = WarmupRequest(request.sessionId, request.modelId, request.llamaCppPort,
                             request.scenarioMarkdown, request.history + listOf(ChatEntry("player", request.playerAction), ChatEntry("game-master", generated.toString())),
-                            request.runtimeFragments, request.worldState, request.contextCompression, request.locations, request.flags, request.signals, request.signalChecks)
+                            request.runtimeFragments, request.worldState, request.contextCompression, request.locations, request.flags, request.signals, request.signalChecks, request.locationTriggers)
                         val maintenanceDiagnostics = mutableListOf<StreamDiagnostic>()
                         val artifact = try {
                             gateway.maintain(warmup, lease.slot, maintenanceDiagnostics::add)

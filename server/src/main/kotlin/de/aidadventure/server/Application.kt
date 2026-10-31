@@ -362,6 +362,7 @@ fun Application.adventureModule(
                             flags = completedFlags,
                             signals = request.signals,
                             signalChecks = request.signalChecks,
+                            locationTriggers = request.locationTriggers,
                         )
                         val operationDiagnostics = mutableListOf<StreamDiagnostic>()
                         val acceptedWorldState = activeCoordinator.resolveWorldStateAndWarmup(
@@ -388,7 +389,10 @@ fun Application.adventureModule(
                         if (logger.isTraceEnabled) {
                             logger.trace("operation=world_state phase=accepted sessionId={}", request.sessionId)
                         }
-                        val acceptedWarmupRequest = warmupRequest.copy(worldState = acceptedWorldState)
+                        val enteredLocations = enteredLocationsForTurn(request.history, request.worldState.location, acceptedWorldState.location)
+                        val acceptedWarmupRequest = warmupRequest.copy(worldState = acceptedWorldState, enteredLocations = enteredLocations)
+                        val hasPostTurnEffects = request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct } ||
+                            enteredLocations.any { request.locationTriggers[it].orEmpty().isNotEmpty() }
                         var reservation: de.aidadventure.server.prefill.RerankReservation? = null
                         try {
                             reservation = try {
@@ -407,7 +411,7 @@ fun Application.adventureModule(
                                 kind = "background_rerank", stage = "scheduled", transcriptRole = "game-master",
                                 fields = mapOf("operation" to "fragment_relevance_and_warmup", "operationId" to reservation.operationId),
                             ))
-                            if (request.signals.isEmpty() && request.runtimeFragments.none { it.direct }) {
+                            if (!hasPostTurnEffects) {
                                 diagnostic(StreamDiagnostic("turn_status", "completed", transcriptRole = "game-master"))
                                 sse("done", eventJson.encodeToString(StreamDone(metrics, acceptedWorldState, completedCompression, completedFlags, nextRuntimeContext)))
                             }
@@ -440,7 +444,7 @@ fun Application.adventureModule(
                                     }
                                 }
                                 rerankJob.invokeOnCompletion { rerankReservation.complete(null) }
-                                if (request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct }) {
+                                if (hasPostTurnEffects) {
                                     rerankJob.join()
                                     activeCoordinator.awaitSignalChecks(rerankReservation)?.let { outcome ->
                                         completedFlags = outcome.flags
@@ -450,7 +454,7 @@ fun Application.adventureModule(
                                     }
                                 }
                             }
-                            if (request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct }) {
+                            if (hasPostTurnEffects) {
                                 diagnostic(StreamDiagnostic("turn_status", "completed", transcriptRole = "game-master"))
                                 sse("done", eventJson.encodeToString(StreamDone(metrics, acceptedWorldState, completedCompression, completedFlags, nextRuntimeContext)))
                             }
@@ -632,6 +636,12 @@ private suspend fun <T> withIdleLeaseEvictionRetry(
 
 private fun invalidRequestError(): ApiError = ApiError("invalid_request", "Request contains invalid data.")
 
+internal fun enteredLocationsForTurn(history: List<ChatEntry>, previous: String, accepted: String): List<String> = when {
+    accepted.isBlank() -> emptyList()
+    history.isEmpty() || accepted != previous -> listOf(accepted)
+    else -> emptyList()
+}
+
 object RequestValidator {
     fun validate(request: TurnRequest): ApiError? = validate(
         sessionId = request.sessionId,
@@ -647,6 +657,7 @@ object RequestValidator {
         flags = request.flags,
         signals = request.signals,
         signalChecks = request.signalChecks,
+        locationTriggers = request.locationTriggers,
     )
 
     fun validate(request: PrefillRequest): ApiError? = when {
@@ -665,6 +676,7 @@ object RequestValidator {
             flags = request.flags,
             signals = request.signals,
             signalChecks = request.signalChecks,
+            locationTriggers = request.locationTriggers,
         )
     }
 
@@ -681,6 +693,8 @@ object RequestValidator {
         flags = request.flags,
         signals = request.signals,
         signalChecks = request.signalChecks,
+        locationTriggers = request.locationTriggers,
+        enteredLocations = request.enteredLocations,
     )
 
     private fun validate(
@@ -697,8 +711,9 @@ object RequestValidator {
         flags: Map<String, Boolean>,
         signals: Map<String, List<de.aidadventure.server.model.FlagAssignment>>,
         signalChecks: List<de.aidadventure.server.model.SignalCheckDefinition>,
+        locationTriggers: Map<String, List<de.aidadventure.server.model.LocationTriggerAction>>,
     ): ApiError? = when {
-        validateContext(sessionId, modelId, port, scenarioMarkdown, history, runtimeFragments, worldState, contextCompression, locations, flags, signals, signalChecks) != null -> invalid()
+        validateContext(sessionId, modelId, port, scenarioMarkdown, history, runtimeFragments, worldState, contextCompression, locations, flags, signals, signalChecks, locationTriggers) != null -> invalid()
         playerAction.isBlank() || playerAction.length > MAX_TEXT_LENGTH -> invalid()
         else -> null
     }
@@ -716,6 +731,8 @@ object RequestValidator {
         flags: Map<String, Boolean>,
         signals: Map<String, List<de.aidadventure.server.model.FlagAssignment>>,
         signalChecks: List<de.aidadventure.server.model.SignalCheckDefinition>,
+        locationTriggers: Map<String, List<de.aidadventure.server.model.LocationTriggerAction>>,
+        enteredLocations: List<String> = emptyList(),
     ): ApiError? = when {
         sessionId.isBlank() || sessionId.length > MAX_SESSION_ID_LENGTH -> invalid()
         modelId.isBlank() || modelId.length > MAX_MODEL_ID_LENGTH -> invalid()
@@ -724,6 +741,7 @@ object RequestValidator {
         history.size > MAX_HISTORY_ENTRIES -> invalid()
         history.any { !it.isValidHistoryEntry() } -> invalid()
         history.sumOf { it.content.length.toLong() } > MAX_HISTORY_CHARS -> invalid()
+        enteredLocations.any { it !in locations } -> invalid()
         runCatching { ContextEpochs.validate(sessionId, scenarioMarkdown, history, modelId, contextCompression, locations) }.isFailure -> invalid()
         runtimeFragments.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
         runtimeFragments.any { !it.isValidRuntimeFragmentDefinition() } -> invalid()
@@ -744,6 +762,13 @@ object RequestValidator {
         } -> invalid()
         signalChecks.groupBy { it.name }.values.any { definitions ->
             definitions.map { it.emittedTexts }.distinct().size > 1
+        } -> invalid()
+        locationTriggers.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS || locationTriggers.any { (location, actions) ->
+            location !in locations || actions.isEmpty() || actions.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS || actions.any { action ->
+                val variants = listOf(action.setFlags.isNotEmpty(), action.emitText != null, action.signals.isNotEmpty()).count { it }
+                variants != 1 || action.setFlags.any { it.flag !in flags } || action.emitText?.let { it.isBlank() || it.length > MAX_TEXT_LENGTH } == true ||
+                    action.signals.any { it !in signals } || action.signals.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS
+            }
         } -> invalid()
         runtimeFragments.any { fragment ->
             fragment.conditions.any { !validCondition(it, flags, locations) } || fragment.emittedSignals.any { it !in signals } ||

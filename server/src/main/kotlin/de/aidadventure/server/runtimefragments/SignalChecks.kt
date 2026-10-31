@@ -39,8 +39,10 @@ internal suspend fun runSignalChecks(
     check: suspend (SignalCheckDefinition) -> String,
 ): SignalCheckOutcome {
     val references = directRules.flatMap { it.emittedSignals }.toSet()
+    val locationActions = request.enteredLocations.flatMap { request.locationTriggers[it].orEmpty() }
+    val locationSignalReferences = locationActions.flatMap { it.signals }.distinct()
     val directSignals = request.signals.keys.filter { name ->
-        if (name !in references) return@filter false
+        if (name !in references && name !in locationSignalReferences) return@filter false
         val definitions = request.signalChecks.filter { it.name == name }
         val declarations = definitions.filter { !it.eventCheck }.ifEmpty { definitions }
         declarations.isEmpty() || declarations.any { matchesRuntimeConditions(it.conditions, it.excludedConditions, request.flags, request.worldState.location) }
@@ -59,15 +61,14 @@ internal suspend fun runSignalChecks(
                 fields = mapOf("signal" to definition.name, "failureCategory" to failure.javaClass.simpleName))
         }
     }
-    val orderedEmitted = request.signals.keys.filter { it in emitted }
+    val orderedEmitted = (locationSignalReferences.filter { it in emitted } + request.signals.keys.filter { it in emitted }).distinct()
     val workingFlags = request.flags.toMutableMap()
-    directRules.forEachIndexed { index, rule ->
-        if (rule.fragment.isNotBlank()) diagnostics += StreamDiagnostic("text_emitted", "emitted", transcriptRole = "game-master",
-            fields = mapOf("text" to rule.fragment, "sourceType" to "flag_rule", "sourceName" to directRuleName(rule, index)))
-    }
-    orderedEmitted.forEach { name ->
+    val texts = mutableListOf<String>()
+    val appliedLocationSignals = mutableSetOf<String>()
+
+    fun applySignal(name: String, detection: String) {
         diagnostics += StreamDiagnostic("signal_detected", "detected", transcriptRole = "game-master",
-            fields = mapOf("signal" to name, "detection" to if (name in directSignals) "direct" else "model"))
+            fields = mapOf("signal" to name, "detection" to detection))
         request.signals[name].orEmpty().forEach { assignment ->
             val previous = workingFlags[assignment.flag]?.toString() ?: "unset"
             workingFlags[assignment.flag] = assignment.value
@@ -77,19 +78,43 @@ internal suspend fun runSignalChecks(
         request.signalChecks.firstOrNull { it.name == name }?.emittedTexts.orEmpty().filter(String::isNotBlank).forEach { text ->
             diagnostics += StreamDiagnostic("text_emitted", "emitted", transcriptRole = "game-master",
                 fields = mapOf("text" to text, "sourceType" to "signal", "sourceName" to name))
+            texts += text
         }
     }
-    val flags = applyRuntimeSignals(request.flags, request.signals, orderedEmitted)
+
+    // Entry actions run in declaration order. Signal eligibility still uses request.flags,
+    // so assignments from one action cannot make another signal newly eligible this turn.
+    locationActions.forEach { action ->
+        action.setFlags.forEach { assignment ->
+            val previous = workingFlags[assignment.flag]?.toString() ?: "unset"
+            workingFlags[assignment.flag] = assignment.value
+            diagnostics += StreamDiagnostic("flag_set", "applied", transcriptRole = "game-master",
+                fields = mapOf("flag" to assignment.flag, "previousValue" to previous, "value" to assignment.value.toString(), "sourceType" to "location"))
+        }
+        action.emitText?.let { text ->
+            diagnostics += StreamDiagnostic("text_emitted", "emitted", transcriptRole = "game-master",
+                fields = mapOf("text" to text, "sourceType" to "location"))
+            texts += text
+        }
+        action.signals.distinct().forEach { name ->
+            if (name in directSignals && appliedLocationSignals.add(name)) applySignal(name, "location")
+        }
+    }
+
+    directRules.forEachIndexed { index, rule ->
+        if (rule.fragment.isNotBlank()) diagnostics += StreamDiagnostic("text_emitted", "emitted", transcriptRole = "game-master",
+            fields = mapOf("text" to rule.fragment, "sourceType" to "flag_rule", "sourceName" to directRuleName(rule, index))).also { texts += rule.fragment }
+    }
+    orderedEmitted.forEach { name ->
+        if (name !in appliedLocationSignals) applySignal(name, if (name in directSignals) "direct" else "model")
+    }
+    val flags = workingFlags.toMap()
     if (emitted.isNotEmpty()) diagnostics += StreamDiagnostic("signal", "emitted", transcriptRole = "game-master",
         fields = mapOf("emittedSignals" to orderedEmitted.joinToString(", ")) + flags.filter { (name, value) -> request.flags[name] != value }
             .mapKeys { (name, _) -> "flag:$name" }.mapValues { (_, value) -> value.toString() })
     diagnostics += StreamDiagnostic("flags", "applied", transcriptRole = "game-master", fields = mapOf(
         "emittedSignals" to orderedEmitted.joinToString(", "),
         "appliedAssignments" to orderedEmitted.flatMap { request.signals[it].orEmpty() }.joinToString(", ") { "${it.flag}=${it.value}" }))
-    // Each direct text contributes; signal actions are deduplicated by declaration name.
-    val texts = directRules.mapNotNull { it.fragment.takeIf(String::isNotBlank) } + orderedEmitted.flatMap { name ->
-        request.signalChecks.firstOrNull { it.name == name }?.emittedTexts.orEmpty()
-    }
     return SignalCheckOutcome(flags, orderedEmitted, diagnostics, texts)
 }
 

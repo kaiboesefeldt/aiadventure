@@ -39,6 +39,13 @@ data class SignalCheckDefinition(
 @Serializable
 data class FlagAssignment(val flag: String, val value: Boolean)
 
+@Serializable
+data class LocationTriggerAction(
+    val setFlags: List<FlagAssignment> = emptyList(),
+    val emitText: String? = null,
+    val signals: List<String> = emptyList(),
+)
+
 data class FragmentRelevanceRequest(
     val sessionId: String,
     val modelId: String = "",
@@ -67,6 +74,7 @@ data class TurnRequest(
     val flags: Map<String, Boolean> = emptyMap(),
     val signals: Map<String, List<FlagAssignment>> = emptyMap(),
     val signalChecks: List<SignalCheckDefinition> = emptyList(),
+    val locationTriggers: Map<String, List<LocationTriggerAction>> = emptyMap(),
 )
 
 @Serializable
@@ -85,6 +93,7 @@ data class PrefillRequest(
     val flags: Map<String, Boolean> = emptyMap(),
     val signals: Map<String, List<FlagAssignment>> = emptyMap(),
     val signalChecks: List<SignalCheckDefinition> = emptyList(),
+    val locationTriggers: Map<String, List<LocationTriggerAction>> = emptyMap(),
 )
 
 @Serializable
@@ -101,6 +110,8 @@ data class WarmupRequest(
     val flags: Map<String, Boolean> = emptyMap(),
     val signals: Map<String, List<FlagAssignment>> = emptyMap(),
     val signalChecks: List<SignalCheckDefinition> = emptyList(),
+    val locationTriggers: Map<String, List<LocationTriggerAction>> = emptyMap(),
+    val enteredLocations: List<String> = emptyList(),
 )
 
 @Serializable
