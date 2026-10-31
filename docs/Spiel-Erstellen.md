@@ -75,7 +75,9 @@ Gib Hinweise schrittweise und akzeptiere plausible Lösungswege.
 | `signals` | Mapping oder Liste benannter Signale | Ja; keine Ereignisprüfungen |
 | `signals.<name>.description` | Nichtleerer String mit Ereignisbeschreibung | Ja; siehe Rückfallregeln unten |
 | `signals.<name>.condition` | Mapping mit genau einem Flag und booleschem Sollwert | Ja; keine zusätzliche Flag-Schranke |
-| `signals.<name>.triggers` | Nichtleere Liste von `set-flag`-Aktionen | Pflicht je Signal |
+| `signals.<name>.triggers` | Nichtleere Liste von `set-flag`- und/oder `emit-text`-Aktionen | Pflicht je Signal |
+| Signalaktion `set-flag` | Nichtleeres Mapping deklarierter Flags auf boolesche Zielwerte | Optional je Signal |
+| Signalaktion `emit-text` | Nichtleerer fester Text für den verborgenen Kontext der nächsten Runde | Optional je Signal |
 | `runtime-fragments` | Mapping mit Textblättern oder verschachtelten Gruppen | Ja; keine Zusatzhinweise |
 | Fragmentfeld `emit-text` | Nichtleerer Zusatztext, an Nachfahren vererbt | Ja |
 | Fragmentfeld `signal` | Name eines deklarierten Signals, an Nachfahren vererbt | Ja |
@@ -96,7 +98,7 @@ Szenariokontext; der Ortskatalog wird zusätzlich in den Modellkontext aufgenomm
 Startsetting und aktueller World-State werden gesondert übergeben. Flags steuern
 Bedingungen und Signalprüfungen; sie werden nicht als allgemeine Flag-Liste in den
 Spielleitungs-Prompt geschrieben. Soll eine Flag-Änderung erzählerisch wirken,
-formuliere dafür passende bedingte Fragmente.
+formuliere dafür passende bedingte Fragmente oder eine `emit-text`-Signalaktion.
 
 ## 3. Die Welt und Spielregeln im Markdown
 
@@ -244,16 +246,60 @@ signals:
           turm-besucht: true
 ```
 
-Jedes Signal hat eine nichtleere `triggers`-Liste. Der einzige unterstützte
-Aktionstyp ist `set-flag`. Eine Aktion darf mehrere bereits deklarierte Flags
-setzen; mehrere Aktionen werden der Reihe nach angewendet. `false` setzt einen
-Zustand zurück. Ein mehrfach gesetztes Flag erhält den letzten zugewiesenen Wert.
+Jedes Signal hat eine nichtleere `triggers`-Liste. Unterstützt werden `set-flag`
+und `emit-text`; jeder Listeneintrag enthält genau einen dieser Aktionstypen.
+Eine `set-flag`-Aktion darf mehrere bereits deklarierte Flags setzen; mehrere
+Zuweisungen werden der Reihe nach angewendet. `false` setzt einen Zustand zurück.
+Ein mehrfach gesetztes Flag erhält den letzten zugewiesenen Wert.
 
 `description` beschreibt ein Ereignis im zuletzt abgeschlossenen Austausch.
 Formuliere sie als überprüfbare Tatsache und grenze Absicht, Versuch und Erfolg
 ab. Sie ist kein Befehl, das Ereignis herbeizuerzählen. Die zusätzliche `condition`
 schränkt die Prüfung auf genau einen deklarierten Flag-Sollwert ein.
 Ohne `condition` entfällt diese Schranke.
+
+### Signalaktionen mit `emit-text`
+
+```yaml
+flags: {nachricht-gefunden: false}
+signals:
+  nachricht-entdeckt:
+    description: Die Figur hat die Nachricht der Wärterin tatsächlich gefunden.
+    condition: {nachricht-gefunden: false}
+    triggers:
+      - set-flag: {nachricht-gefunden: true}
+      - emit-text: >
+          Die Nachricht nennt die Abfahrt zur dritten Glocke.
+          Nutze diesen Hinweis in der nächsten Antwort.
+```
+
+`emit-text` übernimmt einen festen, nichtleeren Text in den verborgenen
+Laufzeitkontext für die nächste Runde. Er wird nicht unmittelbar als sichtbare
+Antwort ausgegeben und verändert die bereits abgeschlossene Antwort nicht.
+Anders als Runtime-Fragmente durchlaufen diese Texte keine semantische
+Fragmentauswahl: Ein erfolgreich geprüftes Signal gibt seine Texte aus.
+
+Ein Signal darf ausschließlich `emit-text`-Aktionen enthalten und benötigt dann
+keine `flags`-Deklaration:
+
+```yaml
+signals:
+  glocke-gehoert:
+    description: Die Figur hat in diesem Austausch die Hafenglocke gehört.
+    triggers:
+      - emit-text: Erinnere in der nächsten Antwort an die bevorstehende Abfahrt.
+```
+
+Texte erfolgreicher Signale werden in Signal- und Triggerreihenfolge gesammelt.
+Danach folgt gegebenenfalls das ausgewählte, weiterhin flagberechtigte
+Runtime-Fragment. Leerzeilen trennen die Texte in einem gemeinsamen Kontexteintrag.
+Dieser wird mit dem Spielstand gespeichert und bleibt beim Neuladen erhalten,
+ohne dadurch doppelt eingefügt zu werden.
+
+Textausgebende Signale können bei späteren passenden Ereignissen erneut auslösen,
+auch wenn ihre Flag-Zuweisungen nichts mehr ändern würden. Soll ein Ereignis nur
+einmal auslösen, kombiniere wie im ersten Beispiel eine Bedingung auf `false`
+mit einer Zuweisung auf `true`.
 
 ### Signale als geordnete Liste
 
@@ -280,7 +326,8 @@ anders sortieren kann. Leere Signal-Mappings und leere Signallisten sind zuläss
 Nach der sichtbaren Antwort, der World-State-/Fokus-Aktualisierung und der
 Fragmentprüfung werden die relevanten Signale nacheinander vom Modell geprüft.
 Die Prüfung verlangt genau `Y` oder `N`; nur ein exaktes `Y` löst das Signal aus.
-Eine fehlgeschlagene oder ungültige Prüfung setzt dessen Flags nicht.
+Eine fehlgeschlagene oder ungültige Prüfung setzt dessen Flags nicht und gibt
+keine Signaltexte aus.
 
 Alle Flag-Bedingungen der Signalprüfungen beziehen sich auf die Werte **zu Beginn
 des Spielzugs**. Erst nach den Prüfungen werden die Zuweisungen erfolgreicher
@@ -288,8 +335,10 @@ Signale in Signalreihenfolge angewendet. Es gibt keine Kettenreaktion innerhalb
 desselben Zugs: Ein Signal, das `turm-besucht: true` setzt, aktiviert dadurch keine
 vorher ineligible Prüfung mit dieser Bedingung im selben Zug.
 
-Ein Signal wird übersprungen, wenn alle seine effektiven Zielwerte bereits
-erreicht sind. Konfliktbeispiel: Beginnt `alarm` mit `false`, wird ein Signal,
+Ein Signal ohne `emit-text` wird übersprungen, wenn alle seine effektiven
+Flag-Zielwerte bereits erreicht sind. Signale mit `emit-text` bleiben unter
+ihren jeweiligen Bedingungen prüfberechtigt, auch ohne Flag-Änderung.
+Konfliktbeispiel: Beginnt `alarm` mit `false`, wird ein Signal,
 das ausschließlich `alarm: false` setzen würde, gar nicht geprüft, auch wenn ein
 anderes Signal in diesem Zug `alarm: true` setzen könnte. Sind dagegen zwei
 konfligierende Signale beide prüfberechtigt und erfolgreich, gewinnt bei der
@@ -525,6 +574,9 @@ signals:
     condition: {nachricht-gefunden: false}
     triggers:
       - set-flag: {nachricht-gefunden: true}
+      - emit-text: >
+          Die Figur kennt jetzt die Nachricht der Wärterin.
+          Verknüpfe ihre nächsten Nachfragen mit der Abfahrt zur dritten Glocke.
   misstrauen-geweckt:
     description: Die Hafenmeisterin ist durch das Verhalten der Figur tatsächlich misstrauisch geworden.
     condition: {hafenmeisterin-misstrauisch: false}
@@ -580,7 +632,8 @@ Beende das Abenteuer, wenn die Wärterin gefunden und das dunkle Licht erklärt 
 ```
 
 Dieses Beispiel kombiniert strukturierte Ortswechsel, einmalige Fortschritte,
-einen reversiblen sozialen Zustand, eigenständige Ereignisprüfungen sowie
+einen reversiblen sozialen Zustand, eigenständige Ereignisprüfungen mit
+Textausgabe für die nächste Runde sowie
 geerbte und bedingte Hinweise. Das Ende bleibt eine erzählerische Regel;
 ein eigenes Engine-Feld `ending` oder ein automatischer Abschluss-Trigger existiert nicht.
 
@@ -596,8 +649,9 @@ ein eigenes Engine-Feld `ending` oder ein automatischer Abschluss-Trigger existi
 | Ortsbedingung wie `condition: {location: Kai}` | Ungültig, sofern `location` kein deklariertes boolesches Flag ist; Situation im Suchtext beschreiben |
 | Fragment immer oder alle passenden Fragmente ausführen | Nicht garantiert; semantische Kandidatenauswahl und Relevanzprüfung |
 | Inventar, Personen, Fakten als `world-state`-Felder | Im Frontmatter ungültig; im Markdown beschreiben, binäre Fortschritte als Flags |
-| Signal mit leerem `triggers` oder `set-flag: {}` | Ungültig; mindestens eine Zuweisung erforderlich |
-| `description` oder `setting` als leerer Text | Ungültig, wenn angegeben; weglassen, wenn nicht benötigt |
+| Signal mit leerem `triggers` | Ungültig; mindestens eine `set-flag`- oder `emit-text`-Aktion erforderlich |
+| `set-flag: {}` | Ungültig; eine `set-flag`-Aktion muss mindestens ein deklariertes Flag zuweisen |
+| `description`, `setting` oder `emit-text` als leerer Text | Ungültig, wenn angegeben; weglassen, wenn nicht benötigt |
 | Unbekannte oberste YAML-Felder wie `title` oder `inventory` | Der Parser ignoriert sie; sie konfigurieren kein Spielsystem |
 
 Innerhalb von `initial-situation`, `world-state` und Signaldefinitionen werden
@@ -619,6 +673,9 @@ YAML-Sonderzeichen solltest du zitieren. Doppelte Mapping-Schlüssel vermeiden.
    Flag-Zuweisungen aussagekräftiger als eine passende Erzählung allein.
 5. Prüfe bedingte Fragmente vor und nach einer Zustandsänderung. Beachte ihre
    Auswahl für folgende Antworten und die fehlende Signalkaskade im selben Zug.
+   Prüfe bei `emit-text`-Signalen den verborgenen Kontext der nächsten Runde
+   und bei einmaligen Ereignissen, dass Bedingung und Flag-Zuweisung eine
+   Wiederholung verhindern.
 6. Lade die Seite neu und setze den Spielstand fort. Orte, Flags und Verlauf
    sollen erhalten bleiben. Teste anschließend auch eine frische Sitzung.
 
