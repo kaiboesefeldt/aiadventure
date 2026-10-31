@@ -58,6 +58,15 @@ import kotlin.test.assertTrue
 
 class ApplicationTest {
     @Test
+    fun `location entry detection includes the initial location and only later changes`() {
+        assertEquals(listOf("Kai"), enteredLocationsForTurn(emptyList(), "Kai", "Kai"))
+        val history = listOf(ChatEntry("player", "Explore"))
+        assertEquals(listOf("Leuchtturm"), enteredLocationsForTurn(history, "Kai", "Leuchtturm"))
+        assertEquals(emptyList(), enteredLocationsForTurn(history, "Kai", "Kai"))
+        assertEquals(emptyList(), enteredLocationsForTurn(emptyList(), "", ""))
+    }
+
+    @Test
     fun `selected guidance never commits an event flag`() = testApplication {
         val registry = FakeRegistry()
         registry.coordinator.turnEvents = flowOf(

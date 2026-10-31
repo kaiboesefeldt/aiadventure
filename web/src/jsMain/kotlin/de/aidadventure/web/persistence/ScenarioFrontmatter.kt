@@ -25,6 +25,12 @@ data class RuntimeFragmentDefinition(
     val excludedConditions: List<List<FlagCondition>> = emptyList(),
 )
 
+data class LocationTriggerAction(
+    val setFlags: List<FlagAssignment> = emptyList(),
+    val emitText: String? = null,
+    val signals: List<String> = emptyList(),
+)
+
 data class ParsedScenario(
     val promptMarkdown: String,
     val runtimeFragments: List<RuntimeFragmentDefinition>,
@@ -34,6 +40,7 @@ data class ParsedScenario(
     val initialFlags: Map<String, Boolean> = emptyMap(),
     val signals: Map<String, List<FlagAssignment>> = emptyMap(),
     val signalChecks: List<SignalCheckDefinition> = emptyList(),
+    val locationTriggers: Map<String, List<LocationTriggerAction>> = emptyMap(),
 )
 
 object ScenarioFrontmatter {
@@ -44,11 +51,12 @@ object ScenarioFrontmatter {
         val rootEntries = readFrontmatter(frontmatter)
         val initialSituation = readInitialSituation(rootEntries, frontmatter)
         val initialWorldState = initialSituation.first ?: readInitialWorldState(rootEntries, frontmatter)
-        val locations = readLocations(rootEntries)
+        val locationNames = readLocationNames(rootEntries)
         val flags = readFlags(rootEntries)
         val declaredChecks = linkedMapOf<String, Pair<String?, List<FlagCondition>>>()
         val emittedTexts = linkedMapOf<String, List<String>>()
-        val signals = readSignals(rootEntries, flags.keys, locations.keys, declaredChecks, emittedTexts)
+        val signals = readSignals(rootEntries, flags.keys, locationNames, declaredChecks, emittedTexts)
+        val (locations, locationTriggers) = readLocations(rootEntries, flags.keys, signals.keys)
         val fragments = readRuntimeFragments(rootEntries, flags.keys, locations.keys, signals.keys, flagsEntryPresent = rootEntries.any { it[0] == "flags" } || rootEntries.any { it[0] == "signals" })
         val checks = signals.keys.flatMap { name ->
             val (description, conditions) = declaredChecks.getValue(name)
@@ -74,6 +82,7 @@ object ScenarioFrontmatter {
             initialFlags = flags,
             signals = signals,
             signalChecks = checks.map { it.copy(emittedTexts = emittedTexts[it.name].orEmpty()) },
+            locationTriggers = locationTriggers,
         )
     }
 
@@ -332,24 +341,93 @@ object ScenarioFrontmatter {
         return WorldState(location)
     }
 
-    private fun readLocations(rootEntries: Array<Array<dynamic>>): Map<String, String> {
-        val locationsEntry = rootEntries.firstOrNull { it[0] == "locations" } ?: return emptyMap()
+    private fun readLocationNames(rootEntries: Array<Array<dynamic>>): Set<String> {
+        val locationsEntry = rootEntries.firstOrNull { it[0] == "locations" } ?: return emptySet()
+        val entries = mappingEntries(locationsEntry[1]) ?: invalidFrontmatter()
+        return entries.map { it[0] as? String ?: invalidFrontmatter() }.toSet()
+    }
+
+    private fun readLocations(
+        rootEntries: Array<Array<dynamic>>,
+        declaredFlags: Set<String>,
+        declaredSignals: Set<String>,
+    ): Pair<Map<String, String>, Map<String, List<LocationTriggerAction>>> {
+        val locationsEntry = rootEntries.firstOrNull { it[0] == "locations" } ?: return emptyMap<String, String>() to emptyMap()
         val entries = mappingEntries(locationsEntry[1]) ?: invalidFrontmatter()
         val locations = linkedMapOf<String, String>()
+        val triggersByLocation = linkedMapOf<String, List<LocationTriggerAction>>()
         entries.forEach { entry ->
             val key = entry[0] as? String ?: invalidFrontmatter()
-            val description = when (val value = entry[1]) {
-                null -> ""
-                is String -> value
-                else -> invalidFrontmatter()
+            val value = entry[1]
+            val fields = mappingEntries(value)
+            val description: String
+            val triggerActions: List<LocationTriggerAction>
+            if (fields == null) {
+                description = when (value) {
+                    null -> ""
+                    is String -> value
+                    else -> invalidFrontmatter("locations.$key", "expected text or a mapping")
+                }
+                triggerActions = emptyList()
+            } else {
+                val path = "locations.$key"
+                if (fields.any { it[0] !in setOf("description", "triggers") }) invalidFrontmatter(path, "expected description or triggers")
+                description = fields.firstOrNull { it[0] == "description" }?.let { field ->
+                    when (val text = field[1]) {
+                        null -> ""
+                        is String -> text
+                        else -> invalidFrontmatter("$path.description", "expected text")
+                    }
+                } ?: ""
+                triggerActions = fields.firstOrNull { it[0] == "triggers" }?.let { field ->
+                    val triggerPath = "$path.triggers"
+                    val rawActions = field[1]
+                    if (!isArray(rawActions)) invalidFrontmatter(triggerPath, "expected a list")
+                    val actions = rawActions.unsafeCast<Array<dynamic>>()
+                    if (actions.isEmpty()) invalidFrontmatter(triggerPath, "expected at least one action")
+                    actions.mapIndexed { index, raw ->
+                        val actionPath = "$triggerPath[$index]"
+                        val action = mappingEntries(raw) ?: invalidFrontmatter(actionPath, "expected set-flag, emit-text, or signals")
+                        if (action.size != 1 || action.single()[0] !in setOf("set-flag", "emit-text", "signals")) {
+                            invalidFrontmatter(actionPath, "expected set-flag, emit-text, or signals")
+                        }
+                        when (action.single()[0]) {
+                            "set-flag" -> {
+                                val assignments = mappingEntries(action.single()[1]) ?: invalidFrontmatter("$actionPath.set-flag", "expected flag assignments")
+                                if (assignments.isEmpty()) invalidFrontmatter("$actionPath.set-flag", "must assign at least one flag")
+                                val values = assignments.map { assignment ->
+                                    val flag = assignment[0] as? String ?: invalidFrontmatter("$actionPath.set-flag", "flag name must be a string")
+                                    if (flag !in declaredFlags) invalidFrontmatter("$actionPath.set-flag.$flag", "flag is not declared")
+                                    val assigned = assignment[1] as? Boolean ?: invalidFrontmatter("$actionPath.set-flag.$flag", "expected true or false")
+                                    FlagAssignment(flag, assigned)
+                                }
+                                LocationTriggerAction(setFlags = values)
+                            }
+                            "emit-text" -> LocationTriggerAction(emitText = (action.single()[1] as? String)
+                                ?.takeIf { it.isNotBlank() } ?: invalidFrontmatter("$actionPath.emit-text", "expected nonblank text"))
+                            else -> {
+                                val names = action.single()[1]
+                                if (!isArray(names)) invalidFrontmatter("$actionPath.signals", "expected a list")
+                                val signals = names.unsafeCast<Array<dynamic>>().mapIndexed { signalIndex, rawName ->
+                                    val name = rawName as? String ?: invalidFrontmatter("$actionPath.signals[$signalIndex]", "expected a signal name")
+                                    if (name !in declaredSignals) invalidFrontmatter("$actionPath.signals[$signalIndex]", "signal '$name' is not declared")
+                                    name
+                                }
+                                if (signals.isEmpty()) invalidFrontmatter("$actionPath.signals", "expected at least one signal")
+                                LocationTriggerAction(signals = signals)
+                            }
+                        }
+                    }
+                }.orEmpty()
             }
             if (key.isBlank() || locations.keys.any { it.equals(key, ignoreCase = true) }) invalidFrontmatter()
             locations[key] = description
+            if (triggerActions.isNotEmpty()) triggersByLocation[key] = triggerActions
         }
         if (locations.isEmpty()) {
             invalidFrontmatter()
         }
-        return locations
+        return locations to triggersByLocation
     }
 
     private fun closingFrontmatterDelimiter(markdown: String): Int? {

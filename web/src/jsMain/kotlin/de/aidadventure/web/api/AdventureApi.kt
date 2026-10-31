@@ -260,6 +260,7 @@ object TurnRequestMapper {
             flags = parsed.initialFlags + session.flags,
             signals = parsed.signals.mapValues { (_, assignments) -> assignments.map { FlagAssignment(it.flag, it.value) } },
             signalChecks = parsed.signalChecks.map { it.toApi() },
+            locationTriggers = parsed.locationTriggers.mapValues { (_, actions) -> actions.map { it.toApi() } },
         )
     }
 }
@@ -280,6 +281,7 @@ object PrefillRequestMapper {
             flags = parsed.initialFlags + session.flags,
             signals = parsed.signals.mapValues { (_, assignments) -> assignments.map { FlagAssignment(it.flag, it.value) } },
             signalChecks = parsed.signalChecks.map { it.toApi() },
+            locationTriggers = parsed.locationTriggers.mapValues { (_, actions) -> actions.map { it.toApi() } },
         )
     }
 }
@@ -298,6 +300,7 @@ object WarmupRequestMapper {
             flags = parsed.initialFlags + session.flags,
             signals = parsed.signals.mapValues { (_, assignments) -> assignments.map { FlagAssignment(it.flag, it.value) } },
             signalChecks = parsed.signalChecks.map { it.toApi() },
+            locationTriggers = parsed.locationTriggers.mapValues { (_, actions) -> actions.map { it.toApi() } },
         )
     }
 }
@@ -318,6 +321,12 @@ private fun de.aidadventure.web.persistence.SignalCheckDefinition.toApi() = Sign
     emittedTexts = emittedTexts,
     excludedConditions = excludedConditions.map { group -> group.map { FlagCondition(it.flag, it.value, it.location) } },
     eventCheck = eventCheck,
+)
+
+private fun de.aidadventure.web.persistence.LocationTriggerAction.toApi() = LocationTriggerAction(
+    setFlags = setFlags.map { FlagAssignment(it.flag, it.value) },
+    emitText = emitText,
+    signals = signals,
 )
 
 @Serializable
@@ -351,6 +360,13 @@ data class SignalCheckDefinition(
 data class FlagAssignment(val flag: String, val value: Boolean)
 
 @Serializable
+data class LocationTriggerAction(
+    val setFlags: List<FlagAssignment> = emptyList(),
+    val emitText: String? = null,
+    val signals: List<String> = emptyList(),
+)
+
+@Serializable
 data class TurnRequest(
     val scenarioMarkdown: String,
     val history: List<ChatEntry>,
@@ -364,6 +380,7 @@ data class TurnRequest(
     val flags: Map<String, Boolean> = emptyMap(),
     val signals: Map<String, List<FlagAssignment>> = emptyMap(),
     val signalChecks: List<SignalCheckDefinition> = emptyList(),
+    val locationTriggers: Map<String, List<LocationTriggerAction>> = emptyMap(),
 )
 
 @Serializable
@@ -380,6 +397,7 @@ data class PrefillRequest(
     val flags: Map<String, Boolean> = emptyMap(),
     val signals: Map<String, List<FlagAssignment>> = emptyMap(),
     val signalChecks: List<SignalCheckDefinition> = emptyList(),
+    val locationTriggers: Map<String, List<LocationTriggerAction>> = emptyMap(),
 )
 
 @Serializable
@@ -394,6 +412,7 @@ data class WarmupRequest(
     val flags: Map<String, Boolean> = emptyMap(),
     val signals: Map<String, List<FlagAssignment>> = emptyMap(),
     val signalChecks: List<SignalCheckDefinition> = emptyList(),
+    val locationTriggers: Map<String, List<LocationTriggerAction>> = emptyMap(),
 )
 
 @Serializable

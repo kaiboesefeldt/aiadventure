@@ -11,6 +11,26 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class ApiModelsTest {
+    @Test fun `location trigger payloads validate declared locations flags and signals`() {
+        val request = WarmupRequest(
+            "location-triggers", modelId = "model", scenarioMarkdown = "# Game", history = emptyList(),
+            locations = mapOf("Kai" to "Harbor"),
+            flags = mapOf("arrived" to false),
+            signals = mapOf("met-keeper" to listOf(FlagAssignment("arrived", true))),
+            signalChecks = listOf(SignalCheckDefinition("met-keeper", "Meet the keeper")),
+            locationTriggers = mapOf("Kai" to listOf(
+                LocationTriggerAction(setFlags = listOf(FlagAssignment("arrived", true))),
+                LocationTriggerAction(emitText = "Welcome."),
+                LocationTriggerAction(signals = listOf("met-keeper")),
+            )),
+        )
+        assertNull(RequestValidator.validate(request))
+        assertNotNull(RequestValidator.validate(request.copy(locationTriggers = mapOf("Unknown" to request.locationTriggers.getValue("Kai")))))
+        assertNotNull(RequestValidator.validate(request.copy(locationTriggers = mapOf("Kai" to listOf(LocationTriggerAction(setFlags = listOf(FlagAssignment("missing", true))))))))
+        assertNotNull(RequestValidator.validate(request.copy(locationTriggers = mapOf("Kai" to listOf(LocationTriggerAction(signals = listOf("missing")))))))
+        assertNotNull(RequestValidator.validate(request.copy(enteredLocations = listOf("Unknown"))))
+    }
+
     @Test fun `location only condition JSON validates catalogs and exclusions without changing flag JSON`() {
         val condition = Json.decodeFromString<FlagCondition>("""{"location":"Leuchtturm"}""")
         val fragment = RuntimeFragmentDefinition("tower", "Hint", listOf(condition))

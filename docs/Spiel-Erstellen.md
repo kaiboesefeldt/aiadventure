@@ -186,10 +186,32 @@ locations:
   Steg:
 ```
 
-Alle fünf Formen sind gültig: einfacher Text, mehrzeiliger Text, zitierter Text,
-leerer String und ausgelassene Beschreibung (`null`). Die beiden letzten Formen
-erzeugen eine leere Beschreibung. Ortswerte dürfen keine Listen, Objekte, Zahlen
-oder booleschen Werte sein.
+Einfacher Text, mehrzeiliger Text, zitierter Text, leerer String und ausgelassene
+Beschreibung (`null`) bleiben gültig. Die beiden letzten Formen erzeugen eine
+leere Beschreibung. Für Betretungsaktionen kann ein Ort stattdessen ein Mapping
+mit `description` und `triggers` verwenden:
+
+```yaml
+locations:
+  Kai:
+    description: Umschlagplatz am Hafen mit Blick auf die Mole.
+    triggers:
+      - set-flag: {hafen-betreten: true}
+      - emit-text: Die Glocken am Kai läuten zur Begrüßung.
+      - signals: [trifft-hafenmeisterin]
+```
+
+`triggers` verwendet dieselben `set-flag`- und `emit-text`-Aktionen wie ein
+Signal. Die zusätzliche Aktion `signals` erwartet eine Liste deklarierter
+Signalnamen. Beim Betreten werden Ortsaktionen in Reihenfolge ausgeführt;
+genannte Signale gelten dabei als ausgelöst und führen ihre eigenen Aktionen
+aus, ohne eine Ereignisprüfung durch das Modell. Das gilt auch für den
+konfigurierten Startort. Bei späteren Zügen lösen nur tatsächliche Ortswechsel
+die Aktionen aus; Warmup und Wiederaufnahme wiederholen sie nicht.
+
+Ortswerte dürfen neben Text oder `null` nur dieses Mapping verwenden; Listen,
+Zahlen und boolesche Werte sind ungültig. `triggers` muss, falls angegeben,
+mindestens eine gültige Aktion enthalten.
 
 Die Schlüssel sind die kanonischen Ortsnamen. Ortsnamen dürfen nicht leer sein
 und nicht nur durch Groß-/Kleinschreibung voneinander abweichen. Ein angegebener
