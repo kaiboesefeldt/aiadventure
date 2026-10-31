@@ -196,16 +196,16 @@ Scenario frontmatter can declare signals independently of retrieval guidance:
 flags: {visited: false}
 signals:
   enters-tower:
-    description: The player actually entered the tower during this exchange.
+    event-check: The player actually entered the tower during this exchange.
     condition: {visited: false}
     triggers:
       - set-flag: {visited: true}
       - emit-text: The keeper now trusts the player; reveal the hidden stair on the next round.
 ```
 
-`description` is optional nonblank text describing an actual event, rather than
+A nonblank `event-check` describes an actual event, rather than
 an intention or a relevant fragment. `condition` optionally requires one or more
-declared flag values; all entries must match (AND). Explicit event descriptions use only this signal condition, regardless
+declared flag values; all entries must match (AND). Explicit event checks use only this signal condition, regardless
 of conditions on fragments referencing the signal. Checks run after the completed
 exchange, using flags from the start of the turn; successful assignments apply in
 declaration order without triggering further checks in that same turn.
@@ -218,12 +218,13 @@ This entry is saved with the session and survives reload without being added twi
 Text-emitting signals are checked even when their flag assignments would not change
 anything; use a condition and flag assignment when an event should fire only once.
 
-Older signals without descriptions use their signal-bearing fragment paths and
-inherited flag conditions as fallback event predicates, or the signal name when
-no fragment references it, except for undescribed signals referenced exclusively
-by direct rules (see below). Equivalent predicates are deduplicated; eligible paths
-for the same signal form one event question. Existing `signal` references and
-`triggers` assignment maps remain supported.
+Signals with absent, null, empty, or blank `event-check` never receive automatic model checks: signal names
+and fragment paths are not fallback predicates. A selected runtime fragment fires
+its referenced signals when the fragment and signal conditions match the turn-start
+flags and current world location. Direct rules and location entry triggers also fire
+signals without model checks. A deterministic trigger suppresses an additional event
+check for that signal in the same turn. The old signal `description` field is no
+longer accepted; location descriptions keep their `description` field.
 
 ### Conditional runtime guidance
 

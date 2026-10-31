@@ -24,14 +24,14 @@ class ExampleScenarioSmokeTest {
         assertEquals(expected.size, parsed.signalChecks.size)
         parsed.signalChecks.forEach { check ->
             val assignment = expected.getValue(check.name)
-            assertTrue(check.description.isNotBlank() && check.description != check.name)
+            assertTrue(!check.eventCheck.isNullOrBlank() && check.eventCheck != check.name)
             assertEquals(listOf(FlagCondition(assignment.flag, !assignment.value)), check.conditions)
         }
         assertTrue(parsed.runtimeFragments.isNotEmpty())
         assertTrue(parsed.runtimeFragments.all { it.emittedSignals.isEmpty() })
     }
 
-    @Test fun `real complex example retains conditional guidance and legacy signals`() = MainScope().promise {
+    @Test fun `real complex example retains conditional guidance and declared signals`() = MainScope().promise {
         val parsed = loadExample("test-game.md")
         assertTrue(parsed.initialSituationSetting.isNotBlank())
         assertTrue(parsed.locations.isNotEmpty())

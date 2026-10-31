@@ -2,7 +2,7 @@
 
 Importiere `signal-test-game.md` neu und starte **Signal-Test: Der Leuchtturm
 von Nebelhafen** als neues Spiel. Das getrennte `test-game.md` bleibt das
-komplexe Beispiel für bedingte Runtime-Fragmente und ältere Signalzuordnungen.
+komplexe Beispiel für bedingte Runtime-Fragmente und Signalverweise.
 Öffne das Debug-Panel; anfangs sind alle drei Flags `false`.
 
 Die Aktionen unten sind Anregungen. Entscheidend ist das tatsächlich erzählte
@@ -24,8 +24,9 @@ Prüfe im Debug-Panel die einzelnen Ereignisprüfungen: Beschreibung, Antwort
 Die angewendeten Flag-Änderungen müssen zur Antwort passen. Nur die gelieferten
 `tokens_cached` und `tokens_evaluated` belegen Cache-Wiederverwendung; Dauer
 allein genügt nicht. Ereignisprüfungen kommen nach Fokus-/Rerank-Auswahl und
-abgeschlossenem Austausch. Ein früh ausgewähltes Fragment ist kein Signalbeleg;
-auch ein Ereignis ohne ausgewähltes passendes Fragment kann erkannt werden.
+abgeschlossenem Austausch. Dieses einfache Beispiel enthält keine Signalverweise in Fragmenten. Seine Signale
+werden unabhängig über `event-check` geprüft. Ein ausgewähltes Fragment mit einem
+expliziten `signal`-Verweis löst dagegen dieses Signal unter seinen Bedingungen aus.
 
 Die Signalbedingungen entscheiden anhand der Flags zu Beginn des Zuges über
 die Berechtigung zur Prüfung. Die zwei Fortschrittsereignisse werden nur bei

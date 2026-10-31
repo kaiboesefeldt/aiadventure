@@ -64,7 +64,7 @@ class ApiModelsTest {
         assertNotNull(RequestValidator.validate(request.copy(runtimeFragments = listOf(empty))))
     }
 
-    @Test fun `same signal fallback predicates require identical emitted texts`() {
+    @Test fun `same signal event predicates require identical emitted texts`() {
         val request = TurnRequest("live", modelId = "model", scenarioMarkdown = "# Game", history = emptyList(), playerAction = "enter",
             signals = mapOf("enter" to emptyList()), signalChecks = listOf(
                 SignalCheckDefinition("enter", "Entry", emittedTexts = emptyList()),
@@ -90,12 +90,22 @@ class ApiModelsTest {
     }
 
     @Test
-    fun `independent check validation rejects unknown signals flags and blank descriptions`() {
+    fun `independent check validation rejects unknown signals flags and oversized event checks`() {
         val request = TurnRequest("live", modelId = "configured-llama-cpp", scenarioMarkdown = "# S", history = emptyList(), playerAction = "look",
             flags = mapOf("visited" to false), signals = mapOf("enter" to listOf(FlagAssignment("visited", true))))
-        for (check in listOf(SignalCheckDefinition("unknown", "Event"), SignalCheckDefinition("enter", " "),
+        for (check in listOf(SignalCheckDefinition("unknown", "Event"), SignalCheckDefinition("enter", "x".repeat(20_001)),
             SignalCheckDefinition("enter", "Event", listOf(FlagCondition("unknown", true))))) {
             assertNotNull(RequestValidator.validate(request.copy(signalChecks = listOf(check))))
+        }
+    }
+
+    @Test fun `signal metadata accepts absent null and blank predicates without removing deterministic conditions`() {
+        for (field in listOf("", ",\"eventCheck\":null", ",\"eventCheck\":\" \"")) {
+            val check = Json.decodeFromString<SignalCheckDefinition>("{\"name\":\"enter\",\"conditions\":[{\"flag\":\"visited\",\"value\":false}]$field}")
+            val request = WarmupRequest("optional-check", modelId = "model", scenarioMarkdown = "# Game", history = emptyList(),
+                flags = mapOf("visited" to false), signals = mapOf("enter" to listOf(FlagAssignment("visited", true))), signalChecks = listOf(check))
+            assertNull(RequestValidator.validate(request))
+            assertEquals(listOf(FlagCondition("visited", false)), check.conditions)
         }
     }
 
@@ -104,7 +114,7 @@ class ApiModelsTest {
         val request = Json.decodeFromString<TurnRequest>("""
             {"sessionId":"live-1","scenarioMarkdown":"# S","history":[],"playerAction":"enter",
              "flags":{"visited":false},"signals":{"enter":[{"flag":"visited","value":true}]},
-             "signalChecks":[{"name":"enter","description":"The player entered the lighthouse.","conditions":[{"flag":"visited","value":false}]}]}
+             "signalChecks":[{"name":"enter","eventCheck":"The player entered the lighthouse.","conditions":[{"flag":"visited","value":false}]}]}
         """.trimIndent())
         assertNull(RequestValidator.validate(request.copy(modelId = "configured-llama-cpp")))
         assertContains(Json.encodeToString(request), "The player entered the lighthouse.")

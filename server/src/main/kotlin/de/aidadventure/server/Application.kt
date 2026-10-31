@@ -755,7 +755,7 @@ object RequestValidator {
         } -> invalid()
         signalChecks.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
         signalChecks.any { check ->
-            check.name !in signals || (check.eventCheck && check.description.isBlank()) || check.description.length > MAX_TEXT_LENGTH ||
+            check.name !in signals || (check.eventCheck?.length ?: 0) > MAX_TEXT_LENGTH ||
                 check.emittedTexts.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS || check.emittedTexts.any { it.isBlank() || it.length > MAX_TEXT_LENGTH } ||
                 check.conditions.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS || check.conditions.any { !validCondition(it, flags, locations) } ||
                 !validExclusions(check.excludedConditions, flags, locations)

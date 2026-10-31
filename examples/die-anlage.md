@@ -107,7 +107,7 @@ flags:
   entscheidung-getroffen: false
 signals:
   papier-tatsaechlich-gelesen:
-    description: >
+    event-check: >
       Die Figur hat das zerknitterte Blatt auf dem Tisch im Aufwachraum
       tatsächlich entfaltet und gelesen; bloßes Betrachten reicht nicht.
     condition: {papier-gelesen: false}
@@ -118,7 +118,7 @@ signals:
           dich nach deinem Namen fragt, antworte nicht sofort.
           Zuerst die drei Schläge zählen.“ Keine Unterschrift.
   klopfcode-verstanden:
-    description: >
+    event-check: >
       Die Figur hat das rhythmische Klopfen bewusst untersucht und das
       Muster aus drei kurzen und einem langen Schlag nachvollziehbar
       erkannt, etwa durch wiederholtes Hören oder Gegenklopfen.
@@ -131,7 +131,7 @@ signals:
           Gegenklopfen kommt eine abgewandelte Antwort. Es könnte
           eine Kommunikation sein, ihre Herkunft bleibt offen.
   stimme-bewusst-befragt:
-    description: >
+    event-check: >
       Die Figur hat die Lautsprecherstimme tatsächlich nach ihrer
       Identität, Aufgabe oder nach dem Grund des Erwachens gefragt.
     condition: {stimme-befragt: false}
@@ -143,7 +143,7 @@ signals:
           dass Bereiche ihrer Erinnerung gesperrt sind. Sie kann
           irren und hat nicht überall Zugriff.
   medizinakte-wirklich-gelesen:
-    description: >
+    event-check: >
       Die Figur hat das Terminal der Krankenstation zugänglich gemacht
       und einen individuellen medizinischen Datensatz tatsächlich gelesen.
       Eine bloße Suche oder ein gescheiterter Login genügt nicht.
@@ -157,7 +157,7 @@ signals:
           „rekonstruktiv, instabil“. Das beweist noch nicht, wer
           Subjekt A ist.
   zugangskarte-wirklich-genommen:
-    description: >
+    event-check: >
       Die Figur hat eine brauchbare Zugangskarte im Leitstand oder in
       der Krankenstation tatsächlich gefunden und an sich genommen.
     condition: {zugangskarte-erhalten: false}
@@ -168,7 +168,7 @@ signals:
           Sie öffnet einfache Technikverschlüsse, aber keine
           Hochsicherheitsschleusen.
   notstrom-wirklich-stabilisiert:
-    description: >
+    event-check: >
       Die Figur hat im Generatorraum nach glaubwürdiger Untersuchung
       die fehlerhafte Notstromverteilung tatsächlich stabilisiert.
       Ein Versuch ohne Erfolg genügt nicht.
@@ -180,7 +180,7 @@ signals:
           Einige elektronische Sperren sind jetzt ansprechbar.
           Strom allein überwindet keine Sicherheitsberechtigungen.
   wasserprobe-tatsaechlich-analysiert:
-    description: >
+    event-check: >
       Die Figur hat eine Probe im Wasserwerk tatsächlich mit einem
       verfügbaren Testgerät untersucht und ein Ergebnis erhalten.
     condition: {wasserprobe-analysiert: false, location: Wasserwerk}
@@ -192,7 +192,7 @@ signals:
           aktiv. Es gibt also noch einen funktionierenden Kreislauf;
           woher er gespeist wird, ist unbekannt.
   leitstand-protokoll-wirklich-gelesen:
-    description: >
+    event-check: >
       Die Figur hat im Leitstand das Schichtprotokoll tatsächlich
       geöffnet und wenigstens einen relevanten Eintrag gelesen.
     condition: {leitstand-protokoll-gelesen: false, location: Leitstand}
@@ -204,7 +204,7 @@ signals:
           Zeitangaben sind widersprüchlich. Eine handschriftliche
           Notiz warnt: „KORA kennt nur ihren Auftrag, nicht seinen Grund.“
   projekt-morgen-dokument-gelesen:
-    description: >
+    event-check: >
       Die Figur hat im Archiv tatsächlich einen Projekt-MORGEN-Bericht
       gelesen, nicht bloß eine Akte oder den Projektnamen gesehen.
     condition: {projekt-morgen-entdeckt: false, location: Archiv}
@@ -217,7 +217,7 @@ signals:
           voneinander abwichen. Unklar bleibt, ob die Figur eine
           ursprüngliche Person, eine Kopie oder etwas anderes ist.
   beobachtungssperre-wirklich-geoeffnet:
-    description: >
+    event-check: >
       Die Figur hat nach Stabilisierung der Energieversorgung mit
       einer plausiblen Berechtigung oder Reparatur die Sicherheitssperre
       zur Beobachtungskammer tatsächlich geöffnet.
@@ -229,7 +229,7 @@ signals:
           zwei getrennte Versuchsplätze A und B. Die übrigen
           Interpretationen sind noch nicht gesichert.
   identitaet-durch-belege-erschlossen:
-    description: >
+    event-check: >
       Die Figur hat anhand eines tatsächlich gelesenen MORGEN-Berichts
       und der untersuchten Beobachtungskammer den Zusammenhang zwischen
       ihrem Erwachen und Subjekt A ausdrücklich erkannt oder schlüssig
@@ -244,7 +244,7 @@ signals:
           Rekonstruktion fortsetzt, beantworten die Akten nicht.
           KORA wusste vom Wiederanlauf, nicht von der Identität.
   ursache-nachvollziehbar-aufgeklaert:
-    description: >
+    event-check: >
       Die Figur hat die externe Unterbrechung anhand des Schichtprotokolls
       und der MORGEN-Akten tatsächlich schlüssig rekonstruiert; sie hat
       nicht nur eine unbewiesene Vermutung ausgesprochen.
@@ -260,7 +260,7 @@ signals:
           ist weiterhin unbekannt. Kein Hinweis belegt eine
           weltweite Katastrophe.
   sicherheitsschleuse-wirklich-freigegeben:
-    description: >
+    event-check: >
       Die Figur hat am Leitstand oder an der Schleusensteuerung die
       Außenfreigabe tatsächlich abgeschlossen. Sie benötigt stabile
       Energie und einen belegten Identitätsstatus; ein Versuch oder
@@ -273,7 +273,7 @@ signals:
           von innen bedient werden. KORA fragt, ob die Figur gehen
           will, behauptet aber nicht, den Zustand draußen zu kennen.
   letzte-entscheidung-wirklich-getroffen:
-    description: >
+    event-check: >
       Die Figur hat nach Aufklärung ihrer Identität bewusst eine
       abschließende Entscheidung getroffen: die Anlage verlassen,
       bleiben und die Systeme betreuen oder die Wiederanläufe beenden.

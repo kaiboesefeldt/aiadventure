@@ -316,7 +316,6 @@ private fun de.aidadventure.web.persistence.RuntimeFragmentDefinition.toApi() = 
 
 private fun de.aidadventure.web.persistence.SignalCheckDefinition.toApi() = SignalCheckDefinition(
     name = name,
-    description = description,
     conditions = conditions.map { FlagCondition(it.flag, it.value, it.location) },
     emittedTexts = emittedTexts,
     excludedConditions = excludedConditions.map { group -> group.map { FlagCondition(it.flag, it.value, it.location) } },
@@ -349,11 +348,10 @@ data class FlagCondition(val flag: String? = null, val value: Boolean? = null, v
 @Serializable
 data class SignalCheckDefinition(
     val name: String,
-    val description: String,
+    val eventCheck: String? = null,
     val conditions: List<FlagCondition> = emptyList(),
     val emittedTexts: List<String> = emptyList(),
     val excludedConditions: List<List<FlagCondition>> = emptyList(),
-    val eventCheck: Boolean = true,
 )
 
 @Serializable

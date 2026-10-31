@@ -28,28 +28,28 @@ flags:
   hafenmeisterin-misstrauisch: false
 signals:
   betritt-leuchtturm:
-    description: >
+    event-check: >
       Die Figur hat den Leuchtturm in diesem Austausch tatsächlich betreten; Absicht, erfolgloser Versuch und Außenansicht zählen nicht.
     condition: {war-im-leuchtturm: false}
     triggers:
       - set-flag:
           war-im-leuchtturm: true
   entdeckt-hinweis:
-    description: >
+    event-check: >
       Die Figur hat in diesem Austausch einen konkreten Hinweis zum Hafenfall gefunden oder erkannt; bloßes Suchen zählt nicht.
     condition: {hat-hinweis: false}
     triggers:
       - set-flag:
           hat-hinweis: true
   verunsichert-hafenmeisterin:
-    description: >
+    event-check: >
       Die Hafenmeisterin ist in diesem Austausch durch das Verhalten der Figur tatsächlich misstrauisch geworden; ein neutrales Gespräch zählt nicht.
     condition: {hafenmeisterin-misstrauisch: false}
     triggers:
       - set-flag:
           hafenmeisterin-misstrauisch: true
   beruhigt-hafenmeisterin:
-    description: >
+    event-check: >
       Die zuvor misstrauische Hafenmeisterin hat sich in diesem Austausch durch das Verhalten der Figur tatsächlich beruhigt; ein erfolgloser Versuch zählt nicht.
     condition: {hafenmeisterin-misstrauisch: true}
     triggers:

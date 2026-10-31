@@ -48,7 +48,7 @@ flags:
   turm-besucht: false
 signals:
   turm-betreten:
-    description: Die Figur hat in diesem Austausch den Leuchtturm tatsächlich betreten.
+    event-check: Die Figur hat in diesem Austausch den Leuchtturm tatsächlich betreten.
     condition: {turm-besucht: false}
     triggers:
       - set-flag: {turm-besucht: true}
@@ -73,7 +73,7 @@ Gib Hinweise schrittweise und akzeptiere plausible Lösungswege.
 | `locations` | Mapping von kanonischen Ortsnamen auf Beschreibungen | Ja; kein Ortskatalog |
 | `flags` | Mapping von Flag-Namen auf `true` oder `false` | Ja; keine Flags |
 | `signals` | Mapping oder Liste benannter Signale | Ja; keine Ereignisprüfungen |
-| `signals.<name>.description` | Nichtleerer String mit Ereignisbeschreibung | Ja; siehe Rückfallregeln unten |
+| `signals.<name>.event-check` | String mit Ereignisbeschreibung; `null` oder leer deaktiviert die Modellprüfung | Ja; keine automatische Prüfung ohne dieses Feld |
 | `signals.<name>.condition` | Nichtleeres Mapping mit deklarierten Flags auf boolesche Sollwerte und/oder `location` auf einen Ortsnamen (UND) | Ja; keine zusätzliche Flag-Schranke |
 | `signals.<name>.triggers` | Nichtleere Liste von `set-flag`- und/oder `emit-text`-Aktionen | Pflicht je Signal |
 | Signalaktion `set-flag` | Nichtleeres Mapping deklarierter Flags auf boolesche Zielwerte | Optional je Signal |
@@ -257,7 +257,7 @@ Flag-Zustand.
 ```yaml
 signals:
   nachricht-entdeckt:
-    description: >
+    event-check: >
       Die Figur hat in diesem Austausch die versteckte Nachricht tatsächlich
       gefunden oder gelesen. Bloßes Suchen oder die Absicht zu suchen zählt nicht.
     condition: {nachricht-gefunden: false}
@@ -275,7 +275,7 @@ Eine `set-flag`-Aktion darf mehrere bereits deklarierte Flags setzen; mehrere
 Zuweisungen werden der Reihe nach angewendet. `false` setzt einen Zustand zurück.
 Ein mehrfach gesetztes Flag erhält den letzten zugewiesenen Wert.
 
-`description` beschreibt ein Ereignis im zuletzt abgeschlossenen Austausch.
+`event-check` beschreibt ein Ereignis im zuletzt abgeschlossenen Austausch.
 Formuliere sie als überprüfbare Tatsache und grenze Absicht, Versuch und Erfolg
 ab. Sie ist kein Befehl, das Ereignis herbeizuerzählen. Die zusätzliche `condition`
 schränkt die Prüfung auf deklarierte Flag-Sollwerte und/oder den aktuellen Ort ein. Mehrere Einträge
@@ -290,7 +290,7 @@ Ohne `condition` entfällt diese Schranke.
 flags: {nachricht-gefunden: false}
 signals:
   nachricht-entdeckt:
-    description: Die Figur hat die Nachricht der Wärterin tatsächlich gefunden.
+    event-check: Die Figur hat die Nachricht der Wärterin tatsächlich gefunden.
     condition: {nachricht-gefunden: false}
     triggers:
       - set-flag: {nachricht-gefunden: true}
@@ -311,7 +311,7 @@ keine `flags`-Deklaration:
 ```yaml
 signals:
   glocke-gehoert:
-    description: Die Figur hat in diesem Austausch die Hafenglocke gehört.
+    event-check: Die Figur hat in diesem Austausch die Hafenglocke gehört.
     triggers:
       - emit-text: Erinnere in der nächsten Antwort an die bevorstehende Abfahrt.
 ```
@@ -332,11 +332,11 @@ mit einer Zuweisung auf `true`.
 ```yaml
 signals:
   - turm-betreten:
-      description: Die Figur hat den Turm tatsächlich betreten.
+      event-check: Die Figur hat den Turm tatsächlich betreten.
       triggers:
         - set-flag: {turm-besucht: true}
   - nachricht-entdeckt:
-      description: Die Figur hat die versteckte Nachricht tatsächlich gefunden.
+      event-check: Die Figur hat die versteckte Nachricht tatsächlich gefunden.
       triggers:
         - set-flag: {nachricht-gefunden: true}
 ```
@@ -366,7 +366,7 @@ erfolgreicher Signale in Signalreihenfolge angewendet. Es gibt keine Kettenreakt
 desselben Zugs: Ein Signal, das `turm-besucht: true` setzt, aktiviert dadurch keine
 vorher ineligible Prüfung mit dieser Bedingung im selben Zug.
 
-Ein Signal ohne `emit-text` wird übersprungen, wenn alle seine effektiven
+Eine automatische Ereignisprüfung ohne `emit-text` wird übersprungen, wenn alle effektiven
 Flag-Zielwerte bereits erreicht sind. Signale mit `emit-text` bleiben unter
 ihren jeweiligen Bedingungen prüfberechtigt, auch ohne Flag-Änderung.
 Konfliktbeispiel: Beginnt `alarm` mit `false`, wird ein Signal,
@@ -375,24 +375,22 @@ anderes Signal in diesem Zug `alarm: true` setzen könnte. Sind dagegen zwei
 konfligierende Signale beide prüfberechtigt und erfolgreich, gewinnt bei der
 Anwendung die spätere Zuweisung. Vermeide solche Konflikte im Spieldesign.
 
-### Signale ohne `description`: kompatible Varianten
+### Signale ohne `event-check`
 
-Ohne explizite Beschreibung wird die Ereignisfrage so gebildet:
+Ohne `event-check` erfolgt keine automatische Ereignisprüfung durch das Modell.
+Auch `null`, leerer Text oder nur Leerzeichen deaktivieren diese Prüfung.
+Weder Signalname noch Fragmentpfad dienen als Ersatz. Das Signal kann weiterhin
+über `signal: <name>` in einem ausgewählten Runtime-Fragment, einer passenden
+direkten Regel oder einem Ortstrigger ausgelöst werden. Dabei müssen die
+Bedingungen des jeweiligen Fragments und des Signals erfüllt sein.
 
-1. Gibt es Fragmente mit einem Verweis `signal: <name>`, dienen deren vollständige
-   Schlüsselpfade als Ereignisbeschreibungen. Ihre geerbten Flag- und Ortsbedingungen werden
-   mit der Signalbedingung kombiniert.
-2. Mehrere passende Pfade desselben Signals bilden Alternativen: Ein tatsächlich
-   eingetretenes Ereignis genügt. Gleichwertige Beschreibungen werden dedupliziert.
-3. Ohne Fragmentverweis wird der Signalname selbst zur Ereignisbeschreibung,
-   sofern das Signal nicht ausschließlich von direkten Regeln referenziert wird.
-   Ein solches Signal ohne `description` wartet auf seine direkte Regel und wird
-   nicht zusätzlich als unabhängiges Ereignis geprüft.
-
-Mit expliziter `description` gelten ausschließlich diese Beschreibung und die
-Signalbedingung; Bedingungen der referenzierenden Fragmente schränken die
-Signalprüfung dann nicht ein. Für neue Spiele sind explizite Beschreibungen die
-klarste Form. Ein Signal benötigt kein Runtime-Fragment.
+Mit `event-check` kann das Ereignis zusätzlich unabhängig von der Fragmentauswahl
+erkannt werden. Diese Modellprüfung verwendet die Signalbedingung; Bedingungen
+referenzierender Fragmente begrenzen nur deren eigene Auswahl und Auslösung.
+Bereits deterministisch ausgelöste Signale werden im selben Durchlauf nicht
+nochmals vom Modell geprüft. Ein Signal benötigt kein Runtime-Fragment.
+Das frühere Signalfeld `description` wird nicht als Alias unterstützt; verwende
+für Ereignisprüfungen `event-check`. Ortsbeschreibungen heißen weiterhin `description`.
 
 ## 7. Runtime-Fragmente: situationsabhängige Hinweise
 
@@ -424,7 +422,7 @@ runtime-fragments:
 
 Einfache, zitierte und mehrzeilige nichtleere Strings sind zulässig.
 `>` faltet YAML-Zeilen zu Fließtext; `|` erhält Zeilenumbrüche. Diese YAML-Formen
-kannst du auch für Ortsbeschreibungen, `setting`, `description` und `emit-text` nutzen.
+kannst du auch für Ortsbeschreibungen, `setting`, `event-check` und `emit-text` nutzen.
 
 ### B. Beliebig verschachtelte Gruppen
 
@@ -595,11 +593,14 @@ durch Verschachtelung zusammenkommen. Eine Liste von Signalnamen im Feld
 `signal` wird nicht unterstützt.
 
 Auch ein Knoten mit ausschließlich `signal` und optionaler einfacher Bedingung
-ist gültig: Er definiert einen Ereignispfad ohne eigenen Zusatztext.
-**Die Auswahl eines benannten Fragments löst das Signal nicht automatisch aus.**
-Der Verweis dient der Rückfall-Ereignisbeschreibung von Signalen ohne
-`description`; tatsächliches Eintreten wird separat geprüft. Direkte Regeln
-ohne Suchpfad unterscheiden sich hiervon, siehe den folgenden Abschnitt.
+ist gültig: Er definiert einen auswählbaren Ereignispfad ohne eigenen Zusatztext.
+**Ein ausgewähltes benanntes Fragment löst seine referenzierten Signale aus.**
+Die Auswahl samt erfolgreicher Relevanzprüfung genügt als Beleg; eine weitere
+Ereignisfrage ist dafür nicht nötig. Geerbte Bedingungen, `else`-Ausschlüsse und
+die eigene Signalbedingung müssen mit den Flags vom Zugbeginn und dem aktuellen
+World-State-Ort erfüllt sein. Ein abgelehntes oder gesperrtes Fragment löst nichts aus.
+Ein eigenes `event-check` erlaubt außerdem eine unabhängige automatische Prüfung,
+wenn das Signal nicht bereits durch Fragment, direkte Regel oder Ort ausgelöst wurde.
 
 ### G. Direkte Regeln ohne semantische Suche
 
@@ -649,8 +650,7 @@ Ein direktes `signal` führt die deklarierten Signalaktionen aus; für diese
 Auslösung wird keine Ereignisfrage an das Modell gestellt. Eine eigene
 `condition` der Signaldefinition muss ebenfalls im Ausgangszustand erfüllt sein.
 Verwende die Flag- und Ortsbedingungen der Regel und des Signals, um die Voraussetzungen
-eindeutig festzulegen. Ein ausschließlich direkt referenziertes Signal ohne
-`description` wird nicht zusätzlich unabhängig als Ereignis geprüft.
+eindeutig festzulegen. Ein Signal ohne `event-check` wird nicht zusätzlich unabhängig als Ereignis geprüft.
 Es gibt keine Kettenreaktion zwischen Regeln desselben Durchlaufs: Ein dabei
 neu gesetztes Flag macht einen vorher unpassenden Zweig erst bei einer
 späteren Auswertung passend.
@@ -736,14 +736,14 @@ flags:
   spur-erklaert: false
 signals:
   turm-betreten:
-    description: >
+    event-check: >
       Die Figur hat in diesem Austausch den Leuchtturm tatsächlich betreten.
       Eine Absicht, Außenansicht oder ein gescheiterter Versuch genügt nicht.
     condition: {turm-besucht: false}
     triggers:
       - set-flag: {turm-besucht: true}
   nachricht-entdeckt:
-    description: >
+    event-check: >
       Die Figur hat in diesem Austausch die Nachricht der Wärterin tatsächlich
       gefunden oder gelesen. Bloßes Suchen genügt nicht.
     condition: {nachricht-gefunden: false}
@@ -753,12 +753,12 @@ signals:
           Die Figur kennt jetzt die Nachricht der Wärterin.
           Verknüpfe ihre nächsten Nachfragen mit der Abfahrt zur dritten Glocke.
   misstrauen-geweckt:
-    description: Die Hafenmeisterin ist durch das Verhalten der Figur tatsächlich misstrauisch geworden.
+    event-check: Die Hafenmeisterin ist durch das Verhalten der Figur tatsächlich misstrauisch geworden.
     condition: {hafenmeisterin-misstrauisch: false}
     triggers:
       - set-flag: {hafenmeisterin-misstrauisch: true}
   misstrauen-abgebaut:
-    description: Die zuvor misstrauische Hafenmeisterin hat sich durch das Verhalten der Figur tatsächlich beruhigt.
+    event-check: Die zuvor misstrauische Hafenmeisterin hat sich durch das Verhalten der Figur tatsächlich beruhigt.
     condition: {hafenmeisterin-misstrauisch: true}
     triggers:
       - set-flag: {hafenmeisterin-misstrauisch: false}
@@ -839,7 +839,7 @@ ein eigenes Engine-Feld `ending` oder ein automatischer Abschluss-Trigger existi
 | Inventar, Personen, Fakten als `world-state`-Felder | Im Frontmatter ungültig; im Markdown beschreiben, binäre Fortschritte als Flags |
 | Signal mit leerem `triggers` | Ungültig; mindestens eine `set-flag`- oder `emit-text`-Aktion erforderlich |
 | `set-flag: {}` | Ungültig; eine `set-flag`-Aktion muss mindestens ein deklariertes Flag zuweisen |
-| `description`, `setting` oder `emit-text` als leerer Text | Ungültig, wenn angegeben; weglassen, wenn nicht benötigt |
+| `setting` oder `emit-text` als leerer Text | Ungültig, wenn angegeben; weglassen, wenn nicht benötigt |
 | Unbekannte oberste YAML-Felder wie `title` oder `inventory` | Der Parser ignoriert sie; sie konfigurieren kein Spielsystem |
 
 Innerhalb von `initial-situation`, `world-state` und Signaldefinitionen werden

@@ -299,7 +299,7 @@ class LlamaCppGateway private constructor(
         slot: LlamaCppSlot, onCall: (StreamDiagnostic) -> Unit): String = runInterruptible {
         val port = requirePort(request.llamaCppPort)
         val started = System.nanoTime()
-        val prompt = applyTemplate(request.sessionId, "signal_check", port, promptFactory.buildSignalCheck(request, definition.description))
+        val prompt = applyTemplate(request.sessionId, "signal_check", port, promptFactory.buildSignalCheck(request, requireNotNull(definition.eventCheck)))
         guard(port, slot, prompt, 1)
         val response = postCompletion(port, CompletionRequest(prompt, slot.id, predictedTokens = 1, stream = false, grammar = YES_NO_GRAMMAR))
         requireNotNull(response.content) { "llama.cpp signal response did not include content." }.also { content ->
