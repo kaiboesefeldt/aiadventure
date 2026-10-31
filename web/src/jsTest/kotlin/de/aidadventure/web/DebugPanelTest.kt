@@ -18,6 +18,58 @@ import react.dom.flushSync
 import web.dom.document
 
 class DebugPanelTest {
+    @Test fun `partial text effect does not hide legacy flag changes or positive checks`() {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        try {
+            flushSync { root.render(DebugPanel.create {
+                scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+                session = GameSession("session", "scenario", "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+                events = listOf(
+                    DebugEvent("text", "session", "turn", 0, 1, "text_emitted", "emitted", fields = mapOf("text" to "Secret", "sourceType" to "signal", "sourceName" to "arrive", "operationId" to "one")),
+                    DebugEvent("legacy-flag", "session", "turn", 1, 1, "signal", "emitted", fields = mapOf("flag:door" to "true", "operationId" to "one")),
+                    DebugEvent("positive-check", "session", "turn", 2, 1, "signal_check", "completed", fields = mapOf("signal" to "arrive", "result" to "triggered", "operationId" to "one")),
+                    DebugEvent("negative-background", "session", "turn", 3, 1, "background_rerank", "prior_completed", fields = mapOf("effectsReported" to "true", "signal_missing_result" to "not_triggered", "signal_invalid_result" to "invalid")),
+                )
+                onClose = {}; onClear = {}; onShowTranscript = {}
+            }) }
+            assertNotNull(container.querySelector("#debug-event-legacy-flag"))
+            assertNotNull(container.querySelector("#debug-event-positive-check"))
+            assertEquals(true, container.querySelector("#debug-event-negative-background .debug-event-body")?.textContent?.contains("not_triggered"))
+            assertEquals(true, container.querySelector("#debug-event-negative-background .debug-event-body")?.textContent?.contains("invalid"))
+        } finally { flushSync { root.unmount() }; container.remove() }
+    }
+    @Test fun `effects show full readable content sources and repeated writes as separate collapsible cards`() {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        try {
+            flushSync { root.render(DebugPanel.create {
+                scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+                session = GameSession("session", "scenario", "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+                events = listOf(
+                    DebugEvent("text", "session", "turn", 0, 1, "text_emitted", "emitted", fields = mapOf("text" to "**The entire secret**", "sourceType" to "signal", "sourceName" to "arrive")),
+                    DebugEvent("flag", "session", "turn", 1, 1, "flag_set", "applied", fields = mapOf("flag" to "door", "previousValue" to "true", "value" to "true", "signal" to "arrive")),
+                    DebugEvent("signal", "session", "turn", 2, 1, "signal_detected", "detected", fields = mapOf("signal" to "arrive", "detection" to "model")),
+                    DebugEvent("bulk", "session", "turn", 3, 1, "signal", "emitted", fields = mapOf("flag:door" to "true")),
+                    DebugEvent("fragment-bulk", "session", "turn", 4, 1, "fragment", "selected", fields = mapOf("fragment" to "Combined text", "effectsReported" to "true")),
+                )
+                onClose = {}; onClear = {}; onShowTranscript = {}
+            }) }
+            assertEquals(3, container.querySelectorAll(".debug-event").length)
+            assertEquals(0, container.querySelectorAll(".debug-stage").length)
+            assertEquals("The entire secret", container.querySelector("#debug-event-text strong")?.textContent)
+            assertEquals(true, container.querySelector("#debug-event-text .debug-event-body")?.textContent?.contains("Signal: arrive"))
+            assertEquals(true, container.querySelector("#debug-event-flag .debug-event-body")?.textContent?.contains("door: true → true"))
+            assertEquals(true, container.querySelector("#debug-event-signal .debug-event-body")?.textContent?.contains("Model"))
+            val toggle = assertNotNull(container.querySelector("#debug-event-text .debug-event-toggle"))
+            assertEquals("Text emitted", toggle.textContent)
+            flushSync { toggle.asDynamic().click() }
+            assertEquals(true, container.querySelector("#debug-event-text .debug-event-body")?.asDynamic()?.hidden as Boolean)
+        } finally { flushSync { root.unmount() }; container.remove() }
+    }
+
     @Test
     fun `each card title toggles its body without triggering transcript navigation`() {
         val container = document.createElement("div")

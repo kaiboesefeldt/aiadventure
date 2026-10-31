@@ -123,6 +123,8 @@ internal val DebugPanel = FC<DebugPanelProps> { props ->
                 .mapNotNull { it.fields["operationId"] }.toSet()
             val displayedMessages = DisplayedChatMessages()
             ordered.filterNot {
+                it.isRedundantEffectSummary(ordered) ||
+                (it.kind == "fragment" && it.fields["effectsReported"] == "true") ||
                 it.kind == "background_rerank" && it.stage.startsWith("prior_") && it.fields["operationId"] in scheduledOperationIds
             }.forEach { storedEvent ->
                 val completedEvent = if (storedEvent.kind == "background_rerank" && storedEvent.stage == "scheduled") {
@@ -188,7 +190,8 @@ private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex:
                     +(if (event.kind == "signal" && deltas.isNotEmpty()) "Flag changes" else humanLabel(event.kind))
                 }
             }
-            ReactHTML.span { className = ClassName("debug-stage"); +humanLabel(event.stage) }
+            if (event.kind !in setOf("text_emitted", "flag_set", "signal_detected"))
+                ReactHTML.span { className = ClassName("debug-stage"); +humanLabel(event.stage) }
             ReactHTML.div {
                 className = ClassName("debug-event-tools")
                 onDoubleClick = { it.stopPropagation() }
@@ -213,6 +216,24 @@ private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex:
             id = "debug-event-body-${event.id}".unsafeCast<web.dom.ElementId>()
             className = ClassName("debug-event-body")
             asDynamic().hidden = !expanded
+            when (event.kind) {
+                "text_emitted" -> {
+                    ReactHTML.p { className = ClassName("debug-effect-source"); +when (event.fields["sourceType"]) {
+                        "signal" -> "Signal: ${event.fields["sourceName"].orEmpty()}"
+                        "runtime_fragment" -> "Runtime fragment: ${event.fields["sourceName"].orEmpty()}"
+                        else -> "Flag rule: ${event.fields["sourceName"].orEmpty()}"
+                    } }
+                    ReactHTML.div { className = ClassName("debug-markdown"); MarkdownMessage { content = event.fields["text"].orEmpty() } }
+                }
+                "flag_set" -> {
+                    ReactHTML.p { className = ClassName("debug-effect-value"); +"${event.fields["flag"].orEmpty()}: ${event.fields["previousValue"] ?: "unset"} → ${event.fields["value"].orEmpty()}" }
+                    ReactHTML.p { className = ClassName("debug-effect-source"); +"Signal: ${event.fields["signal"].orEmpty()}" }
+                }
+                "signal_detected" -> {
+                    ReactHTML.p { className = ClassName("debug-effect-value"); +event.fields["signal"].orEmpty() }
+                    ReactHTML.p { className = ClassName("debug-effect-source"); +(if (event.fields["detection"] == "direct") "Direct rule" else "Model detection") }
+                }
+            }
             val domainFields = event.fields.filter { (key, value) ->
                 event.isInlineDomainField(key, value)
             }
@@ -237,6 +258,22 @@ private fun ChildrenBuilder.renderDebugEvent(event: DebugEvent, transcriptIndex:
                 deltas.forEach { (name, value) -> ReactHTML.span { +"$name: $value" } }
             }
         }
+    }
+}
+
+/** Hide only a legacy summary whose visible effects have individual cards. */
+private fun DebugEvent.isRedundantEffectSummary(events: List<DebugEvent>): Boolean {
+    if (kind !in setOf("signal", "flags", "signal_check")) return false
+    val operation = fields["operationId"]
+    val effects = events.filter {
+        if (operation != null) it.fields["operationId"] == operation else it.turnId == turnId
+    }
+    fun detected(name: String) = effects.any { it.kind == "signal_detected" && it.fields["signal"] == name }
+    if (kind == "signal_check") return fields["result"] == "triggered" && fields["signal"]?.let(::detected) == true
+    val deltas = flagDeltas(this)
+    val names = fields["emittedSignals"].orEmpty().split(", ").filter(String::isNotBlank)
+    return (deltas.isNotEmpty() || names.isNotEmpty()) && names.all(::detected) && deltas.all { (name, value) ->
+        effects.any { it.kind == "flag_set" && it.fields["flag"] == name && it.fields["value"] == value }
     }
 }
 
@@ -268,6 +305,9 @@ private fun String.hasChatContent(): Boolean =
     isNotBlank() && (parseChatHistory(this)?.any { it.content.isNotBlank() } ?: true)
 
 private fun DebugEvent.hasDisplayInformation(): Boolean {
+    if (kind == "text_emitted") return !fields["text"].isNullOrBlank()
+    if (kind == "flag_set") return !fields["flag"].isNullOrBlank()
+    if (kind == "signal_detected") return !fields["signal"].isNullOrBlank()
     // Completion events already expose these metrics; the aggregate repeats them.
     if (kind == "turn_metrics") return false
     // The signal event already reports changed flags. Repeated assignments are not new state.
@@ -287,6 +327,8 @@ private fun DebugEvent.hasBodyInformation(): Boolean =
     }
 
 private fun DebugEvent.isInlineDomainField(key: String, value: String): Boolean {
+    if (kind in setOf("text_emitted", "flag_set", "signal_detected") && key in setOf("text", "sourceType", "sourceName", "flag", "previousValue", "value", "signal", "detection")) return false
+    if (fields["effectsReported"] == "true" && (key == "fragment" || key.startsWith("signal_") && key.endsWith("_result") && value == "triggered")) return false
     if (!isDiagnosticMetadataField(key) || value.isBlank()) return false
     if (!isTechnicalDetailField(key)) return true
     // The server reports real compression through checkpoint coverage and recap size.
@@ -306,7 +348,7 @@ private fun isTechnicalDetailField(key: String): Boolean {
     val normalized = key.lowercase().filter(Char::isLetter)
     return normalized.endsWith("id") || normalized.endsWith("tokens") ||
         normalized.endsWith("durationms") || normalized.endsWith("tokenspersecond") ||
-        normalized in setOf("source", "operation", "epoch", "active", "pending") ||
+        normalized in setOf("source", "operation", "epoch", "active", "pending", "effectindex", "effectsreported") ||
         normalized.startsWith("activecovers") || normalized.startsWith("pendingcovers") ||
         normalized.endsWith("recapchars")
 }

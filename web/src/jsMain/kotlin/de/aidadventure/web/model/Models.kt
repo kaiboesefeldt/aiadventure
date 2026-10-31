@@ -61,6 +61,7 @@ data class StreamDiagnostic(
     val fields: Map<String, String> = emptyMap(),
     val transcriptRole: String? = null,
     val metrics: DiagnosticMetrics? = null,
+    val effects: List<StreamDiagnostic> = emptyList(),
 )
 
 @Serializable

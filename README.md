@@ -57,6 +57,15 @@ that port in the browser. API requests use the same origin as the page.
 Set `ADVENTURE_EXPOSE_LAN=true` only when you intentionally need the API reachable on
 your LAN. Do not use that setting on an untrusted network.
 
+### Debug panel
+
+The session's debug panel keeps a separate, initially expanded card for each
+emitted text, flag assignment (including unchanged values), and detected signal.
+Cards show the source and link back to the associated turn. Click a title to
+collapse it; use the information icon for technical details. Diagnostics stay in
+this browser with the session, including results that finish in the background.
+“Clear debug log” removes the session's diagnostics.
+
 ### TRACE diagnostics
 
 `LOG_LEVEL=TRACE` is an opt-in local diagnostic mode. It deliberately records

@@ -39,6 +39,73 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
+    @Test fun `flag only failed warmup retains assignments but excludes uncommitted named text from both transports`() = runBlocking {
+        for (cancelled in listOf(false, true)) {
+            val fake = ControllableGateway(classify = { "Y" }, signalCheck = { _, _ -> "Y" }, warmup = {
+                if (cancelled) throw CancellationException("private") else throw java.io.IOException("private")
+            })
+            val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+            try {
+                val request = warmup().copy(flags = mapOf("visited" to false),
+                    signals = mapOf("enter" to listOf(de.aidadventure.server.model.FlagAssignment("visited", true))),
+                    signalChecks = listOf(de.aidadventure.server.model.SignalCheckDefinition("enter", "Entered")))
+                val reservation = coordinator.reserveRerank(request, "origin")!!
+                coordinator.completeReservedRerank(reservation, candidate())
+                val outcome = coordinator.awaitSignalChecks(reservation)
+                val terminal = coordinator.awaitBackgroundDiagnostic(reservation.operationId)!!
+                assertEquals(mapOf("visited" to true), outcome.flags)
+                assertEquals("", outcome.nextRuntimeContext)
+                val immediateEffects = outcome.diagnostics.filter { it.kind in setOf("text_emitted", "flag_set", "signal_detected") }
+                assertEquals(listOf("signal_detected", "flag_set"), immediateEffects.map { it.kind })
+                assertEquals(immediateEffects, terminal.effects)
+            } finally { coordinator.close() }
+        }
+    }
+    @Test fun `named text diagnostics require classifier acceptance and final flag guard while direct text remains`() = runBlocking {
+        for (accepted in listOf(false, true)) for (visited in listOf(false, true)) {
+            val fake = ControllableGateway(classify = { if (accepted) "Y" else "N" }, warmup = { CacheMetrics(8, 2) })
+            val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+            try {
+                val request = warmup().copy(flags = mapOf("visited" to false),
+                    signals = mapOf("enter" to listOf(de.aidadventure.server.model.FlagAssignment("visited", visited))),
+                    signalChecks = listOf(de.aidadventure.server.model.SignalCheckDefinition("enter", "", eventCheck = false)),
+                    runtimeFragments = listOf(RuntimeFragmentDefinition("", "Direct", emittedSignals = listOf("enter"), direct = true)))
+                val reservation = coordinator.reserveRerank(request, "origin")!!
+                coordinator.completeReservedRerank(reservation, candidate().copy(conditions = listOf(de.aidadventure.server.model.FlagCondition("visited", false))))
+                val outcome = coordinator.awaitSignalChecks(reservation)
+                val texts = coordinator.awaitBackgroundDiagnostic(reservation.operationId)!!.effects.filter { it.kind == "text_emitted" }
+                val expected = if (accepted && !visited) listOf("Direct", "fragment text") else listOf("Direct")
+                assertEquals(expected, texts.map { it.fields["text"] })
+                assertEquals(expected.joinToString("\n\n"), outcome.nextRuntimeContext)
+                assertEquals(outcome.nextRuntimeContext, fake.warmupRequests.single().history.last().content)
+                assertEquals(listOf(LlamaCppSlot(1)), fake.slotLifecycle.map { it.slot }.distinct())
+            } finally { coordinator.close() }
+        }
+    }
+    @Test fun `terminal warmup failure retains committed signal context effects but no pure named effects`() = runBlocking {
+        for (direct in listOf(false, true)) for (cancelled in listOf(false, true)) {
+            val fake = ControllableGateway(classify = { "Y" }, warmup = {
+                if (cancelled) throw CancellationException("private") else throw java.io.IOException("private")
+            })
+            val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+            try {
+                val request = warmup().copy(flags = mapOf("visited" to false),
+                    signals = if (direct) mapOf("enter" to listOf(de.aidadventure.server.model.FlagAssignment("visited", true))) else emptyMap(),
+                    signalChecks = if (direct) listOf(de.aidadventure.server.model.SignalCheckDefinition("enter", "", emittedTexts = listOf("Signal"), eventCheck = false)) else emptyList(),
+                    runtimeFragments = if (direct) listOf(RuntimeFragmentDefinition("", "Direct", emittedSignals = listOf("enter"), direct = true)) else emptyList())
+                val reservation = coordinator.reserveRerank(request, "origin")!!
+                coordinator.completeReservedRerank(reservation, candidate())
+                val outcome = coordinator.awaitSignalChecks(reservation)
+                val terminal = coordinator.awaitBackgroundDiagnostic(reservation.operationId)!!
+                assertEquals(if (cancelled) "prior_cancelled" else "prior_failed", terminal.stage)
+                assertEquals(mapOf("visited" to direct), outcome.flags)
+                assertEquals(if (direct) "Direct\n\nSignal\n\nfragment text" else "", outcome.nextRuntimeContext)
+                assertEquals(outcome.diagnostics.filter { it.kind in setOf("text_emitted", "flag_set", "signal_detected") }, terminal.effects)
+                assertEquals(if (direct) listOf("Direct", "Signal", "fragment text") else emptyList(), terminal.effects.filter { it.kind == "text_emitted" }.map { it.fields["text"] })
+                assertFalse(terminal.toString().contains("private"))
+            } finally { coordinator.close() }
+        }
+    }
     @Test fun `failed named fragment classifier preserves independent direct text and warm slot`() = runBlocking {
         val fake = ControllableGateway(classify = { throw java.io.IOException("unavailable") }, warmup = { CacheMetrics(8, 2) })
         val coordinator = SessionPrefillCoordinator(fake)
@@ -66,6 +133,11 @@ class PrefillCoordinatorTest {
             val outcome = coordinator.awaitSignalChecks(reservation)
             val expected = if (fragment) "Remember\n\nfragment text" else "Remember"
             assertEquals(expected, outcome.nextRuntimeContext)
+            val emittedText = outcome.diagnostics.filter { it.kind == "text_emitted" }
+            assertEquals(if (fragment) listOf("Remember", "fragment text") else listOf("Remember"), emittedText.map { it.fields["text"] })
+            assertEquals(if (fragment) listOf("flag_rule", "runtime_fragment") else listOf("flag_rule"), emittedText.map { it.fields["sourceType"] })
+            assertEquals(outcome.diagnostics.filter { it.kind in setOf("text_emitted", "flag_set", "signal_detected") },
+                coordinator.awaitBackgroundDiagnostic(reservation.operationId)?.effects)
             val persisted = completed.history + ChatEntry("runtime-fragment", expected)
             val next = turn("open", persisted).copy(runtimeFragments = completed.runtimeFragments)
             assertEquals(PrefillDisposition.STARTED, coordinator.submit(prefill(1, "open").copy(history = persisted,
@@ -122,6 +194,10 @@ class PrefillCoordinatorTest {
             val outcome = coordinator.awaitSignalChecks(reservation)
             val expected = if (fragment) "Remember\n\nfragment text" else "Remember"
             assertEquals(expected, outcome.nextRuntimeContext)
+            assertEquals(if (fragment) listOf("Remember", "fragment text") else listOf("Remember"),
+                outcome.diagnostics.filter { it.kind == "text_emitted" }.map { it.fields["text"] })
+            assertEquals(if (fragment) listOf("signal", "runtime_fragment") else listOf("signal"),
+                outcome.diagnostics.filter { it.kind == "text_emitted" }.map { it.fields["sourceType"] })
             val persisted = completed.history + ChatEntry("runtime-fragment", expected)
             val next = turn("open", persisted).copy(signals = completed.signals, signalChecks = completed.signalChecks)
             assertEquals(PrefillDisposition.STARTED, coordinator.submit(prefill(1, "open").copy(history = persisted,
@@ -267,6 +343,10 @@ class PrefillCoordinatorTest {
         assertEquals(reservation.operationId, result?.fields?.get("operationId"))
         assertEquals("Y", result?.fields?.get("classifierResponse"))
         assertEquals(8, result?.metrics?.cacheTokens)
+        assertEquals(listOf("text_emitted"), result?.effects?.map { it.kind })
+        assertEquals("runtime_fragment", result?.effects?.single()?.fields?.get("sourceType"))
+        assertEquals(candidate().fragment, result?.effects?.single()?.fields?.get("text"))
+        assertEquals(reservation.operationId, result?.effects?.single()?.fields?.get("operationId"))
         assertEquals(result, coordinator.awaitBackgroundDiagnostic(reservation.operationId))
         assertFalse(coordinator.tryBeginIdleClose())
         val nextTurn = coordinator.beginTurn(turn("look")).toList()

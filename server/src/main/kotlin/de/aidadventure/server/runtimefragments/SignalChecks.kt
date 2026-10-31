@@ -60,6 +60,25 @@ internal suspend fun runSignalChecks(
         }
     }
     val orderedEmitted = request.signals.keys.filter { it in emitted }
+    val workingFlags = request.flags.toMutableMap()
+    directRules.forEachIndexed { index, rule ->
+        if (rule.fragment.isNotBlank()) diagnostics += StreamDiagnostic("text_emitted", "emitted", transcriptRole = "game-master",
+            fields = mapOf("text" to rule.fragment, "sourceType" to "flag_rule", "sourceName" to directRuleName(rule, index)))
+    }
+    orderedEmitted.forEach { name ->
+        diagnostics += StreamDiagnostic("signal_detected", "detected", transcriptRole = "game-master",
+            fields = mapOf("signal" to name, "detection" to if (name in directSignals) "direct" else "model"))
+        request.signals[name].orEmpty().forEach { assignment ->
+            val previous = workingFlags[assignment.flag]?.toString() ?: "unset"
+            workingFlags[assignment.flag] = assignment.value
+            diagnostics += StreamDiagnostic("flag_set", "applied", transcriptRole = "game-master",
+                fields = mapOf("flag" to assignment.flag, "previousValue" to previous, "value" to assignment.value.toString(), "signal" to name))
+        }
+        request.signalChecks.firstOrNull { it.name == name }?.emittedTexts.orEmpty().filter(String::isNotBlank).forEach { text ->
+            diagnostics += StreamDiagnostic("text_emitted", "emitted", transcriptRole = "game-master",
+                fields = mapOf("text" to text, "sourceType" to "signal", "sourceName" to name))
+        }
+    }
     val flags = applyRuntimeSignals(request.flags, request.signals, orderedEmitted)
     if (emitted.isNotEmpty()) diagnostics += StreamDiagnostic("signal", "emitted", transcriptRole = "game-master",
         fields = mapOf("emittedSignals" to orderedEmitted.joinToString(", ")) + flags.filter { (name, value) -> request.flags[name] != value }
@@ -72,4 +91,12 @@ internal suspend fun runSignalChecks(
         request.signalChecks.firstOrNull { it.name == name }?.emittedTexts.orEmpty()
     }
     return SignalCheckOutcome(flags, orderedEmitted, diagnostics, texts)
+}
+
+private fun directRuleName(rule: RuntimeFragmentDefinition, index: Int): String {
+    if (rule.matchText.isNotBlank()) return rule.matchText
+    val predicates = rule.conditions.map { "${it.flag}=${it.value}" } + rule.excludedConditions.map { excluded ->
+        "not (${excluded.joinToString(" and ") { "${it.flag}=${it.value}" }})"
+    }
+    return predicates.joinToString(" and ").ifBlank { "Root rule ${index + 1}" }
 }
