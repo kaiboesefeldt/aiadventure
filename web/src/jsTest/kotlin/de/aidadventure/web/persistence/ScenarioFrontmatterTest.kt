@@ -7,6 +7,93 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertContains
 
 class ScenarioFrontmatterTest {
+    @Test fun `root condition supports direct effects AND nested retrieval and final else`() {
+        val parsed = ScenarioFrontmatter.parse("""---
+flags: {ready: true, visited: false}
+signals:
+  enter:
+    condition: {ready: true, visited: false}
+    triggers:
+      - set-flag: {visited: true}
+runtime-fragments:
+  condition:
+    - ready: true
+      visited: false
+      then:
+        emit-text: Direct guidance
+        signal: enter
+        nearby tower: Retrieved guidance
+        condition:
+          - visited: false
+            then: {emit-text: Nested guidance}
+    - ready: true
+      then: {emit-text: Another match}
+    - else: {emit-text: Fallback}
+---
+# Harbor
+""")
+        assertEquals(listOf("Direct guidance", "Nested guidance", "Another match", "Fallback"), parsed.runtimeFragments.filter { it.direct }.map { it.fragment })
+        val retrieved = parsed.runtimeFragments.single { !it.direct }
+        assertEquals("nearby tower", retrieved.matchText)
+        assertEquals("Retrieved guidance", retrieved.fragment)
+        assertEquals(listOf(FlagCondition("ready", true), FlagCondition("visited", false)), retrieved.conditions)
+        assertEquals(listOf("enter"), parsed.runtimeFragments.first().emittedSignals)
+        assertEquals(listOf(listOf(FlagCondition("ready", true), FlagCondition("visited", false)), listOf(FlagCondition("ready", true))), parsed.runtimeFragments.last().excludedConditions)
+        assertEquals(2, parsed.signalChecks.single().conditions.size)
+    }
+
+    @Test fun `direct and named references retain separate signal declaration and event predicates`() {
+        val parsed = ScenarioFrontmatter.parse("""---
+flags: {ready: false, enabled: true}
+signals:
+  visit:
+    condition: {enabled: true}
+    triggers:
+      - emit-text: Signal guidance
+runtime-fragments:
+  condition:
+    - ready: true
+      then: {signal: visit}
+    - else:
+        tower:
+          signal: visit
+          emit-text: Retrieved guidance
+---
+# Harbor
+""")
+        assertEquals(listOf(
+            SignalCheckDefinition("visit", "visit", listOf(FlagCondition("enabled", true)), listOf("Signal guidance"), eventCheck = false),
+            SignalCheckDefinition("visit", "tower", listOf(FlagCondition("enabled", true)), listOf("Signal guidance"), excludedConditions = listOf(listOf(FlagCondition("ready", true)))),
+        ), parsed.signalChecks)
+    }
+
+    @Test fun `named final else requires a nonempty fragment mapping`() {
+        for (fallback in listOf("scalar", "7", "[]", "{}")) {
+            val error = assertFailsWith<IllegalArgumentException> {
+                ScenarioFrontmatter.parse("---\nflags: {ready: true}\nruntime-fragments:\n  tower:\n    condition:\n      - ready: true\n        then: {known: guidance}\n      - else: $fallback\n---\n# Harbor")
+            }
+            assertContains(error.message.orEmpty(), "runtime-fragments.tower.condition[1].else")
+        }
+    }
+
+    @Test fun `rejects invalid root conditional branches with useful paths`() {
+        for (branches in listOf(
+            "[{else: {emit-text: fallback}}, {ready: true, then: {emit-text: x}}]",
+            "[{else: {emit-text: a}}, {else: {emit-text: b}}]",
+            "[{ready: true, then: {}}]",
+            "[{unknown: true, then: {emit-text: x}}]",
+            "[{ready: yes, then: {emit-text: x}}]",
+            "[{then: {emit-text: x}}]",
+            "[{ready: true, else: {emit-text: x}}]",
+            "[{ready: true, then: {signal: unknown}}]",
+        )) {
+            val error = assertFailsWith<IllegalArgumentException> {
+                ScenarioFrontmatter.parse("---\nflags: {ready: true}\nruntime-fragments: {condition: $branches}\n---\n# Harbor")
+            }
+            assertContains(error.message.orEmpty(), "runtime-fragments.condition")
+        }
+    }
+
     @Test fun `rejects malformed emitted signal text with trigger path`() {
         for (value in listOf("''", "true", "{}")) {
             val error = assertFailsWith<IllegalArgumentException> {

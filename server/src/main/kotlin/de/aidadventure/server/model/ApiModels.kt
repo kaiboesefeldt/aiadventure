@@ -18,13 +18,22 @@ data class RuntimeFragmentDefinition(
     val fragment: String,
     val conditions: List<FlagCondition> = emptyList(),
     val emittedSignals: List<String> = emptyList(),
+    val direct: Boolean = false,
+    val excludedConditions: List<List<FlagCondition>> = emptyList(),
 )
 
 @Serializable
 data class FlagCondition(val flag: String, val value: Boolean)
 
 @Serializable
-data class SignalCheckDefinition(val name: String, val description: String, val conditions: List<FlagCondition> = emptyList(), val emittedTexts: List<String> = emptyList())
+data class SignalCheckDefinition(
+    val name: String,
+    val description: String,
+    val conditions: List<FlagCondition> = emptyList(),
+    val emittedTexts: List<String> = emptyList(),
+    val excludedConditions: List<List<FlagCondition>> = emptyList(),
+    val eventCheck: Boolean = true,
+)
 
 @Serializable
 data class FlagAssignment(val flag: String, val value: Boolean)

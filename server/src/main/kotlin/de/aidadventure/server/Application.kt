@@ -406,7 +406,7 @@ fun Application.adventureModule(
                                 kind = "background_rerank", stage = "scheduled", transcriptRole = "game-master",
                                 fields = mapOf("operation" to "fragment_relevance_and_warmup", "operationId" to reservation.operationId),
                             ))
-                            if (request.signals.isEmpty()) {
+                            if (request.signals.isEmpty() && request.runtimeFragments.none { it.direct }) {
                                 diagnostic(StreamDiagnostic("turn_status", "completed", transcriptRole = "game-master"))
                                 sse("done", eventJson.encodeToString(StreamDone(metrics, acceptedWorldState, completedCompression, completedFlags, nextRuntimeContext)))
                             }
@@ -414,7 +414,8 @@ fun Application.adventureModule(
                                 val rerankJob = postTurnScope.launch {
                                     var candidate: de.aidadventure.server.model.RuntimeFragmentDefinition? = null
                                     try {
-                                        if (acceptedWorldState.location.isNotBlank() || acceptedWorldState.narrativeFocus.isNotBlank()) {
+                                        if ((acceptedWorldState.location.isNotBlank() || acceptedWorldState.narrativeFocus.isNotBlank()) &&
+                                            (request.runtimeFragments.none { it.direct } || eligibleRuntimeFragments(request.runtimeFragments, completedFlags).isNotEmpty())) {
                                             candidate = runtimeFragmentResolver.resolve(
                                                 completedHistory,
                                                 eligibleRuntimeFragments(request.runtimeFragments, completedFlags),
@@ -438,7 +439,7 @@ fun Application.adventureModule(
                                     }
                                 }
                                 rerankJob.invokeOnCompletion { rerankReservation.complete(null) }
-                                if (request.signals.isNotEmpty()) {
+                                if (request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct }) {
                                     rerankJob.join()
                                     activeCoordinator.awaitSignalChecks(rerankReservation)?.let { outcome ->
                                         completedFlags = outcome.flags
@@ -448,7 +449,7 @@ fun Application.adventureModule(
                                     }
                                 }
                             }
-                            if (request.signals.isNotEmpty()) {
+                            if (request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct }) {
                                 diagnostic(StreamDiagnostic("turn_status", "completed", transcriptRole = "game-master"))
                                 sse("done", eventJson.encodeToString(StreamDone(metrics, acceptedWorldState, completedCompression, completedFlags, nextRuntimeContext)))
                             }
@@ -725,7 +726,7 @@ object RequestValidator {
         runCatching { ContextEpochs.validate(sessionId, scenarioMarkdown, history, modelId, contextCompression, locations) }.isFailure -> invalid()
         runtimeFragments.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
         runtimeFragments.any { !it.isValidRuntimeFragmentDefinition() } -> invalid()
-        runtimeFragments.map { it.matchText }.toSet().size != runtimeFragments.size -> invalid()
+        runtimeFragments.filterNot { it.direct }.let { named -> named.map { it.matchText }.toSet().size != named.size } -> invalid()
         flags.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
         flags.keys.any { it.isBlank() || it.length > MAX_NAME_LENGTH } -> invalid()
         signals.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
@@ -735,15 +736,17 @@ object RequestValidator {
         } -> invalid()
         signalChecks.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS -> invalid()
         signalChecks.any { check ->
-            check.name !in signals || check.description.isBlank() || check.description.length > MAX_TEXT_LENGTH ||
+            check.name !in signals || (check.eventCheck && check.description.isBlank()) || check.description.length > MAX_TEXT_LENGTH ||
                 check.emittedTexts.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS || check.emittedTexts.any { it.isBlank() || it.length > MAX_TEXT_LENGTH } ||
-                check.conditions.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS || check.conditions.any { it.flag !in flags }
+                check.conditions.size > MAX_RUNTIME_FRAGMENT_DEFINITIONS || check.conditions.any { it.flag !in flags } ||
+                !validExclusions(check.excludedConditions, flags)
         } -> invalid()
         signalChecks.groupBy { it.name }.values.any { definitions ->
             definitions.map { it.emittedTexts }.distinct().size > 1
         } -> invalid()
         runtimeFragments.any { fragment ->
-            fragment.conditions.any { it.flag !in flags } || fragment.emittedSignals.any { it !in signals }
+            fragment.conditions.any { it.flag !in flags } || fragment.emittedSignals.any { it !in signals } ||
+                !validExclusions(fragment.excludedConditions, flags)
         } -> invalid()
         else -> null
     }
@@ -753,9 +756,14 @@ object RequestValidator {
             content.length.toLong() <= if (role == "runtime-fragment") MAX_HISTORY_CHARS else MAX_TEXT_LENGTH.toLong()
 
     private fun de.aidadventure.server.model.RuntimeFragmentDefinition.isValidRuntimeFragmentDefinition(): Boolean =
-        matchText.isNotBlank() && (fragment.isNotBlank() || emittedSignals.isNotEmpty()) &&
+        (direct || matchText.isNotBlank()) && (fragment.isNotBlank() || emittedSignals.isNotEmpty()) &&
             matchText.length <= MAX_TEXT_LENGTH && fragment.length <= MAX_TEXT_LENGTH &&
             conditions.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS && emittedSignals.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS
+
+    private fun validExclusions(groups: List<List<de.aidadventure.server.model.FlagCondition>>, flags: Map<String, Boolean>): Boolean =
+        groups.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS && groups.all { group ->
+            group.isNotEmpty() && group.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS && group.all { it.flag in flags }
+        }
 
     private fun invalid() = invalidRequestError()
 

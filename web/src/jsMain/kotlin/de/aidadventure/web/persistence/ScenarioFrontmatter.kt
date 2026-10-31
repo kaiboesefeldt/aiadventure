@@ -6,13 +6,22 @@ import kotlin.js.JsNonModule
 
 data class FlagCondition(val flag: String, val value: Boolean)
 data class FlagAssignment(val flag: String, val value: Boolean)
-data class SignalCheckDefinition(val name: String, val description: String, val conditions: List<FlagCondition> = emptyList(), val emittedTexts: List<String> = emptyList())
+data class SignalCheckDefinition(
+    val name: String,
+    val description: String,
+    val conditions: List<FlagCondition> = emptyList(),
+    val emittedTexts: List<String> = emptyList(),
+    val excludedConditions: List<List<FlagCondition>> = emptyList(),
+    val eventCheck: Boolean = true,
+)
 
 data class RuntimeFragmentDefinition(
     val matchText: String,
     val fragment: String,
     val conditions: List<FlagCondition> = emptyList(),
     val emittedSignals: List<String> = emptyList(),
+    val direct: Boolean = false,
+    val excludedConditions: List<List<FlagCondition>> = emptyList(),
 )
 
 data class ParsedScenario(
@@ -42,10 +51,15 @@ object ScenarioFrontmatter {
         val fragments = readRuntimeFragments(rootEntries, flags.keys, signals.keys, flagsEntryPresent = rootEntries.any { it[0] == "flags" } || rootEntries.any { it[0] == "signals" })
         val checks = signals.keys.flatMap { name ->
             val (description, conditions) = declaredChecks.getValue(name)
+            val directReference = fragments.any { it.direct && name in it.emittedSignals }
             if (description != null) listOf(SignalCheckDefinition(name, description, conditions))
-            else fragments.filter { name in it.emittedSignals }.map {
-                SignalCheckDefinition(name, it.matchText, (conditions + it.conditions).distinct())
-            }.distinct().ifEmpty { listOf(SignalCheckDefinition(name, name, conditions)) }
+            else {
+                val metadata = if (directReference) listOf(SignalCheckDefinition(name, name, conditions, eventCheck = false)) else emptyList()
+                val events = fragments.filter { !it.direct && name in it.emittedSignals }.map {
+                    SignalCheckDefinition(name, it.matchText, (conditions + it.conditions).distinct(), excludedConditions = it.excludedConditions)
+                }.distinct()
+                metadata + events.ifEmpty { if (directReference) emptyList() else listOf(SignalCheckDefinition(name, name, conditions)) }
+            }
         }
         if (locations.isNotEmpty() && initialWorldState.location.isNotBlank() && initialWorldState.location !in locations.keys) {
             invalidFrontmatter()
@@ -136,7 +150,7 @@ object ScenarioFrontmatter {
                     ?: invalidFrontmatter("$path.description", "expected nonblank text")
             }
             val conditions = fields.firstOrNull { it[0] == "condition" }?.let {
-                listOf(readFlagCondition(it[1], "$path.condition", declaredFlags))
+                readFlagConditions(it[1], "$path.condition", declaredFlags)
             } ?: emptyList()
             declaredChecks[name] = description to conditions
             val triggers = fields.firstOrNull { it[0] == "triggers" }?.get(1)
@@ -188,88 +202,94 @@ object ScenarioFrontmatter {
             conditions: List<FlagCondition>,
             emittedSignals: List<String>,
             emittedText: List<String>,
+            excludedConditions: List<List<FlagCondition>>,
+            path: String,
         ) {
-            val path = "runtime-fragments" + keyPath.joinToString("") { ".$it" }
-            when {
-                value is String -> {
-                    val textValue = value as String
-                    if (keyPath.isEmpty() || textValue.isBlank()) invalidFrontmatter(path, "fragment text cannot be blank")
-                    definitions += RuntimeFragmentDefinition(
-                        keyPath.joinToString("\n"), joinEmittedText(emittedText + textValue), conditions, emittedSignals,
-                    )
-                }
-                else -> {
-                    val entries = mappingEntries(value) ?: invalidFrontmatter(path, "expected a mapping or text")
-                    if (entries.isEmpty()) {
-                        if (keyPath.isEmpty()) return
-                        invalidFrontmatter(path, "empty fragment group")
-                    }
-                    if (keyPath.isEmpty()) {
-                        entries.forEach { field ->
-                            val key = field[0] as? String ?: invalidFrontmatter(path, "fragment names must be strings")
-                            if (key.isBlank()) invalidFrontmatter(path, "fragment names cannot be blank")
-                            visit(field[1], listOf(key), conditions, emittedSignals, emittedText)
+            if (value is String) {
+                val textValue = value as String
+                if (keyPath.isEmpty() || textValue.isBlank()) invalidFrontmatter(path, "fragment text cannot be blank")
+                definitions += RuntimeFragmentDefinition(keyPath.joinToString("\n"), joinEmittedText(emittedText + textValue), conditions, emittedSignals, excludedConditions = excludedConditions)
+                return
+            }
+            val entries = mappingEntries(value) ?: invalidFrontmatter(path, "expected a mapping or text")
+            if (entries.isEmpty()) {
+                if (keyPath.isEmpty() && path == "runtime-fragments") return
+                invalidFrontmatter(path, "empty fragment group")
+            }
+            // Preserve reserved-looking legacy labels when there are no flag/signal declarations.
+            val metadata = flagsEntryPresent
+            val ownText = entries.firstOrNull { metadata && it[0] == "emit-text" }?.let {
+                (it[1] as? String)?.takeIf { text -> text.isNotBlank() }
+                    ?: invalidFrontmatter("$path.emit-text", "expected nonblank text")
+            }
+            val ownSignal = entries.firstOrNull { metadata && it[0] == "signal" }?.let {
+                val name = (it[1] as? String)?.takeIf { text -> text.isNotBlank() }
+                    ?: invalidFrontmatter("$path.signal", "expected a signal name")
+                if (name !in declaredSignals) invalidFrontmatter("$path.signal", "signal '$name' is not declared")
+                name
+            }
+            val ownCondition = entries.firstOrNull { metadata && it[0] == "condition" }
+            val nextConditions = conditions + if (ownCondition != null && !isArray(ownCondition[1])) {
+                readFlagConditions(ownCondition[1], "$path.condition", declaredFlags)
+            } else emptyList()
+            val nextText = emittedText + listOfNotNull(ownText)
+            val nextSignals = (emittedSignals + listOfNotNull(ownSignal)).distinct()
+            val children = entries.filter { !metadata || it[0] !in setOf("emit-text", "signal", "condition") }
+            val conditionalBranches = ownCondition != null && isArray(ownCondition[1])
+            // Root effects are immediate independent rules. Named descendants only inherit predicates.
+            if (keyPath.isEmpty() && (ownText != null || ownSignal != null)) {
+                definitions += RuntimeFragmentDefinition("", joinEmittedText(nextText), nextConditions, nextSignals, direct = true, excludedConditions = excludedConditions)
+            }
+            val childText = if (keyPath.isEmpty()) emptyList() else nextText
+            val childSignals = if (keyPath.isEmpty()) emptyList() else nextSignals
+            children.forEach { child ->
+                val key = child[0] as? String ?: invalidFrontmatter(path, "fragment names must be strings")
+                if (key.isBlank()) invalidFrontmatter(path, "fragment names cannot be blank")
+                visit(child[1], keyPath + key, nextConditions, childSignals, childText, excludedConditions, "$path.$key")
+            }
+            if (conditionalBranches) {
+                val branches = ownCondition[1].unsafeCast<Array<dynamic>>()
+                if (branches.isEmpty()) invalidFrontmatter("$path.condition", "expected at least one branch")
+                val preceding = mutableListOf<List<FlagCondition>>()
+                branches.forEachIndexed { index, branch ->
+                    val branchPath = "$path.condition[$index]"
+                    val fields = mappingEntries(branch) ?: invalidFrontmatter(branchPath, "expected flag conditions and then, or final else")
+                    val elseField = fields.firstOrNull { it[0] == "else" }
+                    if (elseField != null) {
+                        if (fields.size != 1 || index != branches.lastIndex || preceding.isEmpty()) {
+                            invalidFrontmatter(branchPath, "else must be the final branch after at least one condition")
                         }
-                        return
-                    }
-                    val ownText = entries.firstOrNull { flagsEntryPresent && it[0] == "emit-text" }?.let { field ->
-                        (field[1] as? String)?.takeIf { it.isNotBlank() }
-                            ?: invalidFrontmatter("$path.emit-text", "expected nonblank text")
-                    }
-                    val ownSignal = entries.firstOrNull { flagsEntryPresent && it[0] == "signal" }?.let { field ->
-                        val name = (field[1] as? String)?.takeIf { it.isNotBlank() }
-                            ?: invalidFrontmatter("$path.signal", "expected a signal name")
-                        if (name !in declaredSignals) invalidFrontmatter("$path.signal", "signal '$name' is not declared")
-                        name
-                    }
-                    val nextText = emittedText + listOfNotNull(ownText)
-                    val nextSignals = emittedSignals + listOfNotNull(ownSignal)
-                    val ownCondition = entries.firstOrNull { flagsEntryPresent && it[0] == "condition" }
-                    var nextConditions = conditions
-                    if (ownCondition != null && !isArray(ownCondition[1])) {
-                        nextConditions += readFlagCondition(ownCondition[1], "$path.condition", declaredFlags)
-                    }
-                    val children = entries.filter { !flagsEntryPresent || it[0] !in setOf("emit-text", "signal", "condition") }
-                    children.forEach { child ->
-                        val key = child[0] as? String ?: invalidFrontmatter(path, "fragment names must be strings")
-                        if (key.isBlank()) invalidFrontmatter(path, "fragment names cannot be blank")
-                        visit(child[1], keyPath + key, nextConditions, nextSignals, nextText)
-                    }
-                    if (ownCondition != null && isArray(ownCondition[1])) {
-                        val branches = ownCondition[1].unsafeCast<Array<dynamic>>()
-                        if (branches.isEmpty()) invalidFrontmatter("$path.condition", "expected at least one branch")
-                        branches.forEachIndexed { index, branch ->
-                            val branchPath = "$path.condition[$index]"
-                            val fields = mappingEntries(branch) ?: invalidFrontmatter(branchPath, "expected a flag and then mapping")
-                            if (fields.size != 2 || fields.none { it[0] == "then" }) {
-                                invalidFrontmatter(branchPath, "expected one flag and then")
-                            }
-                            val flagField = fields.single { it[0] != "then" }
-                            val flag = flagField[0] as? String ?: invalidFrontmatter(branchPath, "flag name must be a string")
-                            val flagCondition = readNamedFlagCondition(flag, flagField[1], "$branchPath.$flag", declaredFlags)
-                            val thenEntries = mappingEntries(fields.single { it[0] == "then" }[1])
-                                ?: invalidFrontmatter("$branchPath.then", "expected fragment mapping")
-                            if (thenEntries.isEmpty()) invalidFrontmatter("$branchPath.then", "expected at least one fragment")
-                            thenEntries.forEach { child ->
-                                val key = child[0] as? String ?: invalidFrontmatter("$branchPath.then", "fragment names must be strings")
-                                if (key.isBlank()) invalidFrontmatter("$branchPath.then", "fragment names cannot be blank")
-                                visit(child[1], keyPath + key, nextConditions + flagCondition, nextSignals, nextText)
-                            }
+                        val elseEntries = mappingEntries(elseField[1])
+                            ?: invalidFrontmatter("$branchPath.else", "expected fragment mapping")
+                        if (elseEntries.isEmpty()) invalidFrontmatter("$branchPath.else", "expected at least one effect or fragment")
+                        visit(elseField[1], keyPath, nextConditions, childSignals, childText, excludedConditions + preceding, "$branchPath.else")
+                    } else {
+                        val then = fields.firstOrNull { it[0] == "then" }
+                            ?: invalidFrontmatter(branchPath, "expected conditions and then")
+                        val predicates = fields.filter { it[0] != "then" }
+                        if (predicates.isEmpty()) invalidFrontmatter(branchPath, "expected at least one flag")
+                        val branchConditions = predicates.map {
+                            val flag = it[0] as? String ?: invalidFrontmatter(branchPath, "flag name must be a string")
+                            readNamedFlagCondition(flag, it[1], "$branchPath.$flag", declaredFlags)
                         }
-                    }
-                    if (children.isEmpty() && (ownCondition == null || !isArray(ownCondition[1])) && (ownText != null || ownSignal != null)) {
-                        definitions += RuntimeFragmentDefinition(
-                            keyPath.joinToString("\n"), joinEmittedText(nextText), nextConditions, nextSignals,
-                        )
-                    } else if (children.isEmpty() && (ownCondition == null || !isArray(ownCondition[1]))) {
-                        invalidFrontmatter(path, "fragment has no text, signal, or children")
+                        val thenEntries = mappingEntries(then[1]) ?: invalidFrontmatter("$branchPath.then", "expected fragment mapping")
+                        if (thenEntries.isEmpty()) invalidFrontmatter("$branchPath.then", "expected at least one effect or fragment")
+                        visit(then[1], keyPath, nextConditions + branchConditions, childSignals, childText, excludedConditions, "$branchPath.then")
+                        preceding += branchConditions
                     }
                 }
             }
+            if (keyPath.isNotEmpty() && children.isEmpty() && !conditionalBranches) {
+                if (ownText == null && ownSignal == null) invalidFrontmatter(path, "fragment has no text, signal, or children")
+                definitions += RuntimeFragmentDefinition(keyPath.joinToString("\n"), joinEmittedText(nextText), nextConditions, nextSignals, excludedConditions = excludedConditions)
+            }
+            if (keyPath.isEmpty() && children.isEmpty() && !conditionalBranches && ownText == null && ownSignal == null) {
+                invalidFrontmatter(path, "rule has no text, signal, or children")
+            }
         }
 
-        visit(fragmentsEntry[1], emptyList(), emptyList(), emptyList(), emptyList())
-        val duplicatePath = definitions.groupBy { it.matchText }.entries.firstOrNull { it.value.size > 1 }
+        visit(fragmentsEntry[1], emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), "runtime-fragments")
+        val duplicatePath = definitions.filter { !it.direct }.groupBy { it.matchText }.entries.firstOrNull { it.value.size > 1 }
         if (duplicatePath != null) {
             invalidFrontmatter("runtime-fragments.${duplicatePath.key.replace('\n', '.')}", "conditional branches create the same retrieval path")
         }
@@ -278,11 +298,13 @@ object ScenarioFrontmatter {
 
     private fun joinEmittedText(values: List<String>): String = values.joinToString("\n") { it.trimEnd('\n', '\r') }
 
-    private fun readFlagCondition(value: dynamic, path: String, declaredFlags: Set<String>): FlagCondition {
-        val entries = mappingEntries(value) ?: invalidFrontmatter(path, "expected one flag with true or false")
-        if (entries.size != 1) invalidFrontmatter(path, "expected exactly one flag")
-        val flag = entries.single()[0] as? String ?: invalidFrontmatter(path, "flag name must be a string")
-        return readNamedFlagCondition(flag, entries.single()[1], "$path.$flag", declaredFlags)
+    private fun readFlagConditions(value: dynamic, path: String, declaredFlags: Set<String>): List<FlagCondition> {
+        val entries = mappingEntries(value) ?: invalidFrontmatter(path, "expected flags with true or false")
+        if (entries.isEmpty()) invalidFrontmatter(path, "expected at least one flag")
+        return entries.map {
+            val flag = it[0] as? String ?: invalidFrontmatter(path, "flag name must be a string")
+            readNamedFlagCondition(flag, it[1], "$path.$flag", declaredFlags)
+        }
     }
 
     private fun readNamedFlagCondition(flag: String, value: dynamic, path: String, declaredFlags: Set<String>): FlagCondition {

@@ -5,6 +5,52 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.*
 
 class SignalChecksTest {
+    @Test fun `inactive direct only signal never becomes a legacy event predicate without check metadata`() = runBlocking {
+        val request = request().copy(signals = mapOf("enter" to listOf(FlagAssignment("visited", true))),
+            runtimeFragments = listOf(RuntimeFragmentDefinition("", "", listOf(FlagCondition("visited", true)), listOf("enter"), direct = true)))
+        var checks = 0
+        val outcome = runSignalChecks(request) { checks++; "Y" }
+        assertEquals(emptyList(), outcome.emittedSignals)
+        assertEquals(mapOf("visited" to false, "reward" to false), outcome.flags)
+        assertEquals(0, checks)
+    }
+
+    @Test fun `direct declaration metadata overrides unrelated named fallback conditions and deduplicates event check`() = runBlocking {
+        val checks = listOf(
+            SignalCheckDefinition("enter", "", listOf(FlagCondition("reward", false)), listOf("Signal"), eventCheck = false),
+            SignalCheckDefinition("enter", "Named fallback", listOf(FlagCondition("visited", true)), listOf("Signal")))
+        val direct = RuntimeFragmentDefinition("", "", emittedSignals = listOf("enter"), direct = true)
+        val result = runSignalChecks(request().copy(signals = mapOf("enter" to listOf(FlagAssignment("visited", true))),
+            signalChecks = checks, runtimeFragments = listOf(direct, direct))) { error("Direct signal must deduplicate classifier") }
+        assertEquals(listOf("enter"), result.emittedSignals)
+        assertEquals(listOf("Signal"), result.emittedTexts)
+    }
+
+    @Test fun `direct rules select all matches and else exclusions from original flags without classification`() = runBlocking {
+        val request = request().copy(signalChecks = listOf(
+            SignalCheckDefinition("enter", "Entry", emittedTexts = listOf("Signal text"), eventCheck = false),
+            SignalCheckDefinition("reward", "Reward", listOf(FlagCondition("visited", true)), eventCheck = false)),
+            runtimeFragments = listOf(
+                RuntimeFragmentDefinition("", "Direct one", listOf(FlagCondition("visited", false)), listOf("enter"), direct = true),
+                RuntimeFragmentDefinition("", "Direct two", listOf(FlagCondition("reward", false)), listOf("enter", "reward"), direct = true),
+                RuntimeFragmentDefinition("", "Else", direct = true, excludedConditions = listOf(listOf(FlagCondition("visited", false)), listOf(FlagCondition("reward", false))))))
+        val result = runSignalChecks(request) { error("Direct rules must not call the event classifier") }
+        assertEquals(listOf("enter"), result.emittedSignals)
+        assertEquals(mapOf("visited" to true, "reward" to false), result.flags)
+        assertEquals(listOf("Direct one", "Direct two", "Signal text"), result.emittedTexts)
+        assertTrue(eligibleRuntimeFragments(request.runtimeFragments, request.flags).isEmpty())
+    }
+
+    @Test fun `excluded predicates gate named retrieval and signal event checks`() = runBlocking {
+        val exclusion = listOf(listOf(FlagCondition("visited", false)))
+        val fragment = RuntimeFragmentDefinition("else", "Fallback", excludedConditions = exclusion)
+        assertTrue(eligibleRuntimeFragments(listOf(fragment), mapOf("visited" to false)).isEmpty())
+        assertEquals(listOf(fragment), eligibleRuntimeFragments(listOf(fragment), mapOf("visited" to true)))
+        val check = SignalCheckDefinition("enter", "Fallback", excludedConditions = exclusion)
+        val result = runSignalChecks(request().copy(signalChecks = listOf(check), signals = mapOf("enter" to listOf(FlagAssignment("visited", true))))) { "Y" }
+        assertEquals(emptyList(), result.emittedSignals)
+    }
+
     @Test fun `texts follow signal declaration and trigger order without flag cascades`() = runBlocking {
         val request = request().copy(signalChecks = listOf(
             SignalCheckDefinition("reward", "Reward", emittedTexts = listOf("Third")),
