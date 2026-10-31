@@ -30,7 +30,8 @@ interface SessionRepository {
 interface DebugEventRepository {
     suspend fun listForSession(sessionId: String): List<DebugEvent>
     suspend fun append(event: DebugEvent)
-    suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String): Boolean
+    // The schedule, outcome and effect identities are checked in the same transaction as all writes.
+    suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String, effects: List<DebugEvent> = emptyList()): Boolean
     suspend fun clearSession(sessionId: String)
     suspend fun deleteForSessions(sessionIds: Set<String>)
 }
@@ -80,7 +81,7 @@ class AdventureDatabase private constructor(private val database: dynamic) {
             observer.awaitCompletion()
         }
 
-        override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String): Boolean {
+        override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String, effects: List<DebugEvent>): Boolean {
             val transaction = database.transaction(arrayOf(SESSIONS, DEBUG_EVENTS), "readwrite")
             val observer = TransactionObserver(transaction, "saving background diagnostic")
             if (!diagnosticSessionExists(transaction, event.sessionId)) {
@@ -98,8 +99,15 @@ class AdventureDatabase private constructor(private val database: dynamic) {
             val outcomeExists = existing.any {
                 it.kind == "background_rerank" && it.stage.startsWith("prior_") && it.fields["operationId"] == operationId
             }
-            val appended = scheduledExists && !outcomeExists
-            if (appended) eventsStore.put(JSON.parse(Json.encodeToString(DebugEvent.serializer(), event)))
+            val existingIds = existing.map { it.id }.toMutableSet()
+            val appended = scheduledExists && !outcomeExists && event.id !in existingIds
+            if (appended) {
+                (listOf(event) + effects).forEach { diagnostic ->
+                    if (existingIds.add(diagnostic.id)) {
+                        eventsStore.put(JSON.parse(Json.encodeToString(DebugEvent.serializer(), diagnostic)))
+                    }
+                }
+            }
             observer.awaitCompletion()
             return appended
         }

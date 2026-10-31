@@ -31,6 +31,74 @@ import kotlinx.coroutines.yield
 class TurnSubmissionTest {
     @OptIn(DelicateCoroutinesApi::class)
     @Test
+    fun `effect ordinals preserve equal text and dedupe stream replay`() = GlobalScope.promise<Unit> {
+        val events = RecordingDebugEvents()
+        val effects = listOf(0, 1).map { index -> StreamDiagnostic(
+            "text_emitted", "applied", mapOf("operationId" to "effect-operation", "effectIndex" to "$index",
+                "text" to "Same text", "sourceType" to "signal", "sourceName" to "door"), "player",
+        ) }
+        val api = effectApi { diagnostic ->
+            diagnostic(StreamDiagnostic("background_rerank", "scheduled", mapOf("operationId" to "effect-operation"), "game-master"))
+            effects.forEach(diagnostic)
+            effects.forEach(diagnostic)
+        }
+        val completed = TurnSubmission(RecordingSessions(), api, debugEvents = events)
+            .submit(sessionWithPreviousPair(), scenario(), "look", {}, {})
+        yield()
+        val rows = events.saved.filter { it.kind == "text_emitted" }
+        assertEquals(listOf("0", "1"), rows.map { it.fields["effectIndex"] })
+        assertEquals(2, rows.map { it.id }.toSet().size)
+        assertTrue(rows.all { it.transcriptMessageId == completed.session.messages.last().messageId })
+        assertEquals(listOf("player", "game-master", "player", "game-master"), completed.session.messages.map { it.role })
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
+    fun `polled effects expand on original output and dedupe later aggregate`() = GlobalScope.promise<Unit> {
+        val events = RecordingDebugEvents()
+        val operationId = "effect-background"
+        val effects = listOf(
+            StreamDiagnostic("signal_detected", "applied", mapOf("operationId" to operationId, "effectIndex" to "0", "signal" to "door", "detection" to "model")),
+            StreamDiagnostic("flag_set", "applied", mapOf("operationId" to operationId, "effectIndex" to "1", "flag" to "open", "previousValue" to "false", "value" to "true", "signal" to "door")),
+            StreamDiagnostic("flag_set", "applied", mapOf("operationId" to operationId, "effectIndex" to "2", "flag" to "open", "previousValue" to "true", "value" to "true", "signal" to "door")),
+        )
+        val outcome = StreamDiagnostic("background_rerank", "prior_completed", mapOf("operationId" to operationId, "source" to "prior_turn"), effects = effects.reversed())
+        val persisted = CompletableDeferred<Unit>()
+        events.onAppend = { if (it.kind == "background_rerank" && it.stage == "prior_completed") persisted.complete(Unit) }
+        var turn = 0
+        val api = effectApi(outcome) { diagnostic ->
+            if (turn++ == 0) {
+                diagnostic(StreamDiagnostic("background_rerank", "scheduled", mapOf("operationId" to operationId), "game-master"))
+                diagnostic(effects[1])
+            } else diagnostic(outcome)
+        }
+        val submission = TurnSubmission(RecordingSessions(), api, debugEvents = events)
+        val first = submission.submit(sessionWithPreviousPair(), scenario(), "look", {}, {})
+        withTimeout(1000) { persisted.await() }
+        submission.submit(first.session, scenario(), "again", {}, {})
+        yield()
+        val scheduled = events.saved.single { it.stage == "scheduled" }
+        val rows = events.saved.filter { it.kind in setOf("signal_detected", "flag_set") }.sortedBy { it.sequence }
+        assertEquals(listOf("0", "1", "2"), rows.map { it.fields["effectIndex"] })
+        assertTrue(rows.all { it.turnId == scheduled.turnId && it.turnOrder == scheduled.turnOrder &&
+            it.transcriptMessageId == scheduled.transcriptMessageId && it.transcriptIndex == scheduled.transcriptIndex })
+        assertEquals(3, rows.map { it.id }.toSet().size)
+    }
+
+    private fun effectApi(outcome: StreamDiagnostic? = null, emit: ((StreamDiagnostic) -> Unit) -> Unit) = object : AdventureApi {
+        override suspend fun prefill(request: PrefillRequest): PrefillAccepted = error("unused")
+        override suspend fun warmup(request: WarmupRequest): PrefillAccepted = error("unused")
+        override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("Use diagnostic overload")
+        override suspend fun play(request: TurnRequest, onGenerationReady: () -> Unit, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit, onDiagnostic: (StreamDiagnostic) -> Unit): TurnCompletion {
+            onToken("Output")
+            emit(onDiagnostic)
+            return TurnCompletion(TurnMetrics(null, null, null), de.aidadventure.web.model.WorldState())
+        }
+        override suspend fun awaitBackgroundDiagnostic(sessionId: String, operationId: String): StreamDiagnostic? = outcome
+    }
+
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
     fun `clearing diagnostics while followup waits does not recreate an outcome`() = GlobalScope.promise<Unit> {
         verifyRemovedScheduledEventDoesNotReappear(deleteSession = false)
     }
@@ -78,7 +146,8 @@ class TurnSubmissionTest {
         if (deleteSession) sessions.delete("session-1") else events.clearSession("session-1")
         removed = true
         releaseFollowup.complete(StreamDiagnostic("background_rerank", "prior_completed", mapOf(
-            "operationId" to "operation-removed", "source" to "prior_turn"), "player"))
+            "operationId" to "operation-removed", "source" to "prior_turn"), "player", effects = listOf(StreamDiagnostic(
+                "text_emitted", "applied", mapOf("operationId" to "operation-removed", "effectIndex" to "0", "text" to "late")))))
         withTimeout(1000) { postRemovalRead.await() }
         yield()
         assertEquals(emptyList(), events.saved)
@@ -212,9 +281,10 @@ class TurnSubmissionTest {
                 saved += event
                 if (event.stage == "prior_completed") outcomeSaved.complete(event)
             }
-            override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String): Boolean {
+            override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String, effects: List<DebugEvent>): Boolean {
                 if (saved.none { it.stage == "scheduled" && it.fields["operationId"] == operationId }) return false
                 append(event)
+                effects.forEach { effect -> if (saved.none { it.id == effect.id }) append(effect) }
                 return true
             }
             override suspend fun clearSession(sessionId: String) = Unit
@@ -765,7 +835,7 @@ class TurnSubmissionTest {
         val events = object : DebugEventRepository {
             override suspend fun listForSession(sessionId: String): List<DebugEvent> = emptyList()
             override suspend fun append(event: DebugEvent): Unit = error("IndexedDB write failed")
-            override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String): Boolean = false
+            override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String, effects: List<DebugEvent>): Boolean = false
             override suspend fun clearSession(sessionId: String) = Unit
             override suspend fun deleteForSessions(sessionIds: Set<String>) = Unit
         }
@@ -791,7 +861,7 @@ class TurnSubmissionTest {
                 writeStarted.complete(Unit)
                 releaseWrite.await()
             }
-            override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String): Boolean = false
+            override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String, effects: List<DebugEvent>): Boolean = false
             override suspend fun clearSession(sessionId: String) = Unit
             override suspend fun deleteForSessions(sessionIds: Set<String>) = Unit
         }
@@ -843,12 +913,13 @@ private class RecordingDebugEvents : DebugEventRepository {
         return saved.filter { it.sessionId == sessionId }
     }
     override suspend fun append(event: DebugEvent) { saved += event; onAppend?.invoke(event) }
-    override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String): Boolean {
+    override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String, effects: List<DebugEvent>): Boolean {
         if (saved.none { it.sessionId == event.sessionId && it.turnId == event.turnId &&
                 it.stage == "scheduled" && it.fields["operationId"] == operationId }) return false
         if (saved.any { it.sessionId == event.sessionId && it.stage.startsWith("prior_") &&
                 it.fields["operationId"] == operationId }) return false
         append(event)
+        effects.forEach { effect -> if (saved.none { it.id == effect.id }) append(effect) }
         return true
     }
     override suspend fun clearSession(sessionId: String) { saved.removeAll { it.sessionId == sessionId } }

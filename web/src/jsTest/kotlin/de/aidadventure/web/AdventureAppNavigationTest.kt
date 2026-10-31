@@ -1187,12 +1187,13 @@ class AdventureAppNavigationTest {
         val saved = events.toMutableList()
         override suspend fun listForSession(sessionId: String) = saved.filter { it.sessionId == sessionId }
         override suspend fun append(event: DebugEvent) { saved += event }
-        override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String): Boolean {
+        override suspend fun appendBackgroundOutcome(event: DebugEvent, operationId: String, effects: List<DebugEvent>): Boolean {
             if (saved.none { it.sessionId == event.sessionId && it.turnId == event.turnId &&
                     it.stage == "scheduled" && it.fields["operationId"] == operationId }) return false
             if (saved.any { it.sessionId == event.sessionId && it.stage.startsWith("prior_") &&
                     it.fields["operationId"] == operationId }) return false
             append(event)
+            effects.forEach { effect -> if (saved.none { it.id == effect.id }) append(effect) }
             return true
         }
         override suspend fun clearSession(sessionId: String) { saved.removeAll { it.sessionId == sessionId } }
