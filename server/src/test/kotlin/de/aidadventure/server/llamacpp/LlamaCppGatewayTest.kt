@@ -65,20 +65,32 @@ class LlamaCppGatewayTest {
 
     @Test
     fun `native final timings become measured diagnostic metrics while absent values stay absent`() = runBlocking {
-        nativeServer(finalTimingFields = ",\"tokens_predicted\":7,\"timings\":{\"prompt_n\":3,\"prompt_ms\":12.5,\"prompt_per_second\":240.0,\"predicted_n\":7,\"predicted_ms\":35.0,\"predicted_per_second\":200.0}").use { server ->
+        nativeServer(finalTimingFields = ",\"tokens_predicted\":7,\"timings\":{\"cache_n\":8,\"prompt_n\":3,\"prompt_ms\":12.5,\"prompt_per_second\":240.0,\"predicted_n\":7,\"predicted_ms\":35.0,\"predicted_per_second\":200.0}").use { server ->
             val events = LlamaCppGateway().stream(request(server.port), LlamaCppSlot(2)).toList()
             val metrics = events.filterIsInstance<TurnStreamEvent.Diagnostic>().single { it.value.kind == "llama_completion" }.value.metrics
-            assertEquals(DiagnosticMetrics(promptTokens = 3, contextTokens = 8192, predictedTokens = 7,
-                cacheTokens = 17, evaluatedTokens = 20, promptDurationMs = 12.5, predictedDurationMs = 35.0,
+            assertEquals(DiagnosticMetrics(promptTokens = 10, contextTokens = 8192, predictedTokens = 7,
+                cacheTokens = 8, evaluatedTokens = 3, promptDurationMs = 12.5, predictedDurationMs = 35.0,
                 promptTokensPerSecond = 240.0, predictedTokensPerSecond = 200.0), metrics)
+            assertEquals(TurnStreamEvent.Done(TurnMetrics(null, 10, 8, evaluatedTokens = 3)), events.filterIsInstance<TurnStreamEvent.Done>().single())
             assertTrue(events.indexOfFirst { it is TurnStreamEvent.Diagnostic } < events.indexOfFirst { it is TurnStreamEvent.Done })
         }
-        nativeServer().use { server ->
+        nativeServer(finalTimingFields = "").use { server ->
             val metrics = LlamaCppGateway().stream(request(server.port), LlamaCppSlot(2)).toList()
                 .filterIsInstance<TurnStreamEvent.Diagnostic>().single { it.value.kind == "llama_completion" }.value.metrics!!
-            assertEquals(17, metrics.cacheTokens)
+            assertEquals(null, metrics.cacheTokens)
+            assertEquals(null, metrics.evaluatedTokens)
             assertEquals(null, metrics.promptDurationMs)
             assertEquals(null, metrics.predictedTokens)
+        }
+    }
+
+    @Test
+    fun `nonstreaming cache metrics use timings and remain unknown when timings are absent`() = runBlocking {
+        nativeServer(responseTimingFields = ",\"timings\":{\"cache_n\":8,\"prompt_n\":2}").use { server ->
+            assertEquals(CacheMetrics(8, 2), LlamaCppGateway().prefill(request(server.port), LlamaCppSlot(2)))
+        }
+        nativeServer(responseTimingFields = "").use { server ->
+            assertEquals(CacheMetrics(null, null), LlamaCppGateway().prefill(request(server.port), LlamaCppSlot(2)))
         }
     }
 
@@ -197,7 +209,7 @@ class LlamaCppGatewayTest {
                 val chatTrace = RecordingTraceLogger()
 
                 assertEquals(
-                    listOf(TurnStreamEvent.Done(TurnMetrics(null, 20, 17))),
+                    listOf(TurnStreamEvent.Done(TurnMetrics(null, 10, 17, evaluatedTokens = 20))),
                     LlamaCppGateway(traceLogger = nativeTrace).stream(request(native.port), LlamaCppSlot(2)).toList().withoutDiagnostics(),
                 )
                 assertEquals(
@@ -369,6 +381,28 @@ class LlamaCppGatewayTest {
     }
 
     @Test
+    fun `suggestion streams on retained slot with temporary instruction`() = runBlocking {
+        nativeServer().use { server ->
+            val events = LlamaCppGateway().suggest(request(server.port), LlamaCppSlot(2)).toList().withoutDiagnostics()
+            assertEquals(TurnStreamEvent.Token("Hello"), events.first())
+            assertEquals(TurnStreamEvent.Done(TurnMetrics(null, 10, 17, evaluatedTokens = 20)), events.last())
+            assertEquals(2, server.completionBodies.single().jsonObject.getValue("id_slot").jsonPrimitive.int)
+            assertTrue(server.templateBodies.single().contains("PLAYER ACTION SO FAR"))
+            assertTrue(server.completionBodies.single().jsonObject.getValue("cache_prompt").jsonPrimitive.boolean)
+        }
+    }
+
+    @Test
+    fun `empty action prefill restores canonical history without an empty player message`() = runBlocking {
+        nativeServer().use { server ->
+            LlamaCppGateway().prefill(request(server.port).copy(playerAction = ""), LlamaCppSlot(2))
+            val messages = server.templateBodies.single().jsonObject.getValue("messages").jsonArray
+            assertEquals(3, messages.size)
+            assertEquals("Misty trees surround you.", messages.last().jsonObject.getValue("content").jsonPrimitive.content)
+        }
+    }
+
+    @Test
     fun `turn uses the same slot and maps cache metrics`() = runBlocking {
         nativeServer().use { server ->
             val gateway = LlamaCppGateway(promptFactory = PromptFactory())
@@ -376,7 +410,7 @@ class LlamaCppGatewayTest {
             assertEquals(
                 listOf(
                     TurnStreamEvent.Token("Hello"),
-                    TurnStreamEvent.Done(TurnMetrics(null, 20, 17)),
+                    TurnStreamEvent.Done(TurnMetrics(null, 10, 17, evaluatedTokens = 20)),
                 ),
                 gateway.stream(request(server.port), LlamaCppSlot(2)).toList().withoutDiagnostics(),
             )
@@ -513,10 +547,11 @@ class LlamaCppGatewayTest {
         streamContents: List<String> = listOf("Hello"),
         contextCapacity: Int = 8192,
         tokenCount: Int = 10,
-        finalTimingFields: String = "",
+        finalTimingFields: String = ",\"timings\":{\"cache_n\":17,\"prompt_n\":20}",
+        responseTimingFields: String = ",\"timings\":{\"cache_n\":17,\"prompt_n\":3}",
     ): NativeServer {
         val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
-        return NativeServer(server, templatePrompt, templateDelayMillis, completionDelayMillis, completionContent, streamContents, contextCapacity, tokenCount, finalTimingFields).also { it.start() }
+        return NativeServer(server, templatePrompt, templateDelayMillis, completionDelayMillis, completionContent, streamContents, contextCapacity, tokenCount, finalTimingFields, responseTimingFields).also { it.start() }
     }
 
     private fun chatServer(streamContents: List<String>): ChatServer {
@@ -534,6 +569,7 @@ class LlamaCppGatewayTest {
         private val contextCapacity: Int,
         private val tokenCount: Int,
         private val finalTimingFields: String,
+        private val responseTimingFields: String,
     ) : AutoCloseable {
         private val executor = Executors.newSingleThreadExecutor()
         val tokenizeBodies = mutableListOf<String>()
@@ -580,7 +616,7 @@ class LlamaCppGatewayTest {
                     }
                 } else {
                     val content = completionContent?.let { ",\"content\":${Json.encodeToString(it)}" }.orEmpty()
-                    exchange.respondJson("{\"tokens_cached\":17,\"tokens_evaluated\":3$content}")
+                    exchange.respondJson("{\"tokens_cached\":17,\"tokens_evaluated\":3$content$responseTimingFields}")
                 }
             }
         }

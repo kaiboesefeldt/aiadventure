@@ -58,6 +58,35 @@ import kotlin.test.assertTrue
 
 class ApplicationTest {
     @Test
+    fun `prefill accepts an empty action to restore cache after cancelled suggestion`() = testApplication {
+        val registry = FakeRegistry()
+        application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolving(null)) }
+        configureJsonClient()
+        val response = client.post("/api/prefill") {
+            contentType(ContentType.Application.Json)
+            setBody(PrefillRequest(sessionId = "live-1", revision = 1, scenarioMarkdown = "# Scenario", history = emptyList(), playerAction = ""))
+        }
+        assertEquals(HttpStatusCode.Accepted, response.status)
+        assertEquals("", registry.coordinator.prefillRequests.single().playerAction)
+    }
+    @Test
+    fun `suggestion endpoint accepts empty input and streams tokens`() = testApplication {
+        val registry = FakeRegistry()
+        application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolving(null)) }
+        configureJsonClient()
+        val response = client.post("/api/suggestion") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest().copy(playerAction = ""))
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = response.bodyAsText()
+        assertContains(body, "event: waiting")
+        assertContains(body, "event: generation_ready")
+        assertContains(body, "event: token")
+        assertContains(body, "event: done")
+        assertEquals("", registry.coordinator.suggestionRequests.single().playerAction)
+    }
+    @Test
     fun `location entry detection includes the initial location and only later changes`() {
         assertEquals(listOf("Kai"), enteredLocationsForTurn(emptyList(), "Kai", "Kai"))
         val history = listOf(ChatEntry("player", "Explore"))
@@ -178,7 +207,7 @@ class ApplicationTest {
         registry.coordinator.turnEvents = flowOf(
             TurnStreamEvent.Fragment("A hidden route opens.", listOf("found-map")),
             TurnStreamEvent.Token("SECRET_GAME_MASTER_OUTPUT"),
-            TurnStreamEvent.Done(TurnMetrics(42, 24, 18)),
+            TurnStreamEvent.Done(TurnMetrics(42, 24, 18, evaluatedTokens = 6)),
         )
         registry.coordinator.acceptedWorldState = WorldState("Harbour", "Find the keeper")
         application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolving(null)) }
@@ -204,6 +233,11 @@ class ApplicationTest {
         )
         assertEquals("Quay", diagnostics.first().getValue("fields").jsonObject.getValue("location").jsonPrimitive.content)
         assertEquals("42", diagnostics[2].getValue("metrics").jsonObject.getValue("totalDurationMs").jsonPrimitive.content)
+        assertEquals("24", diagnostics[2].getValue("metrics").jsonObject.getValue("promptTokens").jsonPrimitive.content)
+        assertEquals("6", diagnostics[2].getValue("metrics").jsonObject.getValue("evaluatedTokens").jsonPrimitive.content)
+        val done = body.split("\n\n").single { it.startsWith("event: done\n") }.substringAfter("data: ")
+        val doneMetrics = Json.parseToJsonElement(done).jsonObject.getValue("metrics").jsonObject
+        assertEquals(setOf("totalDurationMs", "promptTokens", "cacheTokens"), doneMetrics.keys)
         assertEquals("Harbour", diagnostics[3].getValue("fields").jsonObject.getValue("location").jsonPrimitive.content)
         assertFalse(diagnostics.joinToString().contains("SECRET_PLAYER_ACTION"))
         assertFalse(diagnostics.joinToString().contains("SECRET_GAME_MASTER_OUTPUT"))
@@ -955,6 +989,11 @@ class ApplicationTest {
     }
 
     private class FakeCoordinator : PrefillCoordinator {
+        val suggestionRequests = mutableListOf<TurnRequest>()
+        override fun beginSuggestion(request: TurnRequest): Flow<TurnStreamEvent> {
+            suggestionRequests += request
+            return flowOf(TurnStreamEvent.GenerationReady, TurnStreamEvent.Token("look"), TurnStreamEvent.Done(TurnMetrics(null, 2, 1)))
+        }
         val prefillRequests = mutableListOf<PrefillRequest>()
         val warmupRequests = mutableListOf<WarmupRequest>()
         val rerankRequests = mutableListOf<WarmupRequest>()

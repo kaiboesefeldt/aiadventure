@@ -12,6 +12,12 @@ import dev.langchain4j.data.message.SystemMessage
 import dev.langchain4j.data.message.UserMessage
 
 class PromptFactory {
+    fun buildSuggestion(request: TurnRequest): List<ChatMessage> = build(request) + UserMessage.from(
+        "Suggest only a continuation of the player's action below, in the same language and voice. " +
+            "Do not repeat the existing text, narrate the game's response, or add explanations. " +
+            "If the action is empty, suggest one plausible action.\nPLAYER ACTION SO FAR:\n${request.playerAction}",
+    )
+
     fun build(request: TurnRequest): List<ChatMessage> = buildList {
         add(stableSystemContext(request.scenarioMarkdown, request.locations))
         ContextEpochs.history(request.sessionId, request.scenarioMarkdown, request.history, request.modelId, request.contextCompression, request.locations).forEach { add(historyMessage(it)) }

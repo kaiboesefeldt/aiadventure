@@ -23,11 +23,11 @@ internal class PrefillSubmission(
     private var nextRevision = 0L
     private var turnActive = false
 
-    fun changed(session: GameSession, scenario: Scenario, sessionId: String, action: String) {
+    fun changed(session: GameSession, scenario: Scenario, sessionId: String, action: String, includeEmpty: Boolean = false) {
         pending?.let(scheduler::cancel)
         pending = null
         val revision = ++nextRevision
-        if (turnActive || action.isBlank()) return
+        if (turnActive || (action.isBlank() && !includeEmpty)) return
         pending = scheduler.schedule(150) {
             pending = null
             if (!turnActive && revision == nextRevision) scope.launch {
@@ -49,6 +49,11 @@ internal class PrefillSubmission(
     fun supersede(session: GameSession, scenario: Scenario, sessionId: String, action: String) {
         turnActive = false
         changed(session, scenario, sessionId, action)
+    }
+
+    fun restore(session: GameSession, scenario: Scenario, sessionId: String, action: String) {
+        turnActive = false
+        changed(session, scenario, sessionId, action, includeEmpty = true)
     }
 }
 
