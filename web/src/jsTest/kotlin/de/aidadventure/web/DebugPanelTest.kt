@@ -18,6 +18,35 @@ import react.dom.flushSync
 import web.dom.document
 
 class DebugPanelTest {
+    @Test fun `runtime fragment emission from a completed background rerank appears once`() {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        try {
+            flushSync { root.render(DebugPanel.create {
+                scenario = Scenario("scenario", "scenario.md", "# Harbor", 1)
+                session = GameSession("session", "scenario", "Harbor", messages = emptyList(), createdAt = 1, updatedAt = 1)
+                events = listOf(
+                    DebugEvent("scheduled", "session", "turn", 0, 1, "background_rerank", "scheduled", fields = mapOf("operationId" to "operation-1")),
+                    DebugEvent("fragment-card", "session", "turn", 1, 1, "fragment", "selected", fields = mapOf("fragment" to "The man introduces himself.", "effectsReported" to "true")),
+                    DebugEvent("runtime-text", "session", "turn", 2, 1, "text_emitted", "emitted", fields = mapOf(
+                        "text" to "The man introduces himself.", "sourceType" to "runtime_fragment", "sourceName" to "introduction",
+                        "operationId" to "operation-1", "effectIndex" to "0",
+                    )),
+                    DebugEvent("outcome", "session", "turn", 3, 1, "background_rerank", "prior_completed", fields = mapOf(
+                        "operationId" to "operation-1", "effectsReported" to "true", "fragment" to "The man introduces himself.",
+                    )),
+                )
+                onClose = {}; onClear = {}; onShowTranscript = {}
+            }) }
+            assertEquals(1, container.querySelectorAll("#debug-event-runtime-text").length)
+            assertEquals("The man introduces himself.", container.querySelector("#debug-event-runtime-text .debug-markdown")?.textContent)
+            assertEquals(true, container.querySelector("#debug-event-runtime-text .debug-event-body")?.textContent?.contains("Runtime fragment: introduction"))
+            assertEquals(null, container.querySelector("#debug-event-fragment-card"))
+            assertEquals(null, container.querySelector("#debug-event-outcome"))
+        } finally { flushSync { root.unmount() }; container.remove() }
+    }
+
     @Test fun `partial text effect does not hide legacy flag changes or positive checks`() {
         val container = document.createElement("div")
         document.body.appendChild(container)
