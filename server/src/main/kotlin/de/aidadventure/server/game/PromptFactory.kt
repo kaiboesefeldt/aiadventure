@@ -13,9 +13,9 @@ import dev.langchain4j.data.message.UserMessage
 
 class PromptFactory {
     fun buildSuggestion(request: TurnRequest): List<ChatMessage> = build(request) + UserMessage.from(
-        "Suggest only a continuation of the player's action below, in the same language and voice. " +
-            "Do not repeat the existing text, narrate the game's response, or add explanations. " +
-            "If the action is empty, suggest one plausible action.\nPLAYER ACTION SO FAR:\n${request.playerAction}",
+        "Write only as the player, describing an action you choose to take in the game, in the same language and voice as the player's text. " +
+            "Do not write as the game master or narrator, repeat the existing text, narrate the game's response, or add explanations. " +
+            "If the action is empty, suggest one plausible action the player could take.\nPLAYER ACTION SO FAR:\n${request.playerAction}",
     )
 
     fun build(request: TurnRequest): List<ChatMessage> = buildList {
