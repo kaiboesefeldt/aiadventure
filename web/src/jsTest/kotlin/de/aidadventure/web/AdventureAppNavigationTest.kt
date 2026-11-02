@@ -38,6 +38,26 @@ import web.html.HTMLElement
 
 class AdventureAppNavigationTest {
     @OptIn(DelicateCoroutinesApi::class)
+    @Test fun `single tab from empty composer reaches visible debug controls`() = GlobalScope.promise<Unit> {
+        val stylesheet = document.createElement("link")
+        stylesheet.asDynamic().rel = "stylesheet"; stylesheet.asDynamic().href = "/app.css"
+        val loaded = Promise<Unit> { resolve, reject -> stylesheet.asDynamic().onload = { resolve(Unit) }; stylesheet.asDynamic().onerror = { reject(IllegalStateException("Cannot load app.css")) } }
+        document.head.appendChild(stylesheet); loaded.await()
+        val container = document.createElement("div"); document.body.appendChild(container)
+        val root = createRoot(container)
+        val scenario = Scenario("tab-suggestion", "Harbor", "# Harbor", 1)
+        val session = GameSession("tab-session", scenario.id, "Saved", messages = listOf(GameMessage("game-master", "Welcome", 1)), createdAt = 1, updatedAt = 1)
+        try {
+            flushSync { root.render(AdventureApp.create { scenarioRepository = scenarioRepository(scenario); sessionRepository = fixedSessions(session); api = unusedApi(); initialScenarios = listOf(scenario) }) }
+            container.clickButtonNamed(scenario.name); nextBrowserTick(); container.clickButtonNamed(session.title); nextBrowserTick()
+            container.click("button[aria-label='Open debug panel']"); nextBrowserTick()
+            val input = container.querySelector("#player-action").asDynamic(); input.focus()
+            input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })"))
+            Promise<Unit> { resolve, _ -> window.setTimeout({ resolve(Unit) }, 650) }.await()
+            assertEquals(true, container.querySelector(".debug-panel")!!.contains(document.activeElement), "focus advances to visible debug controls")
+        } finally { flushSync { root.unmount() }; container.remove(); stylesheet.remove() }
+    }
+    @OptIn(DelicateCoroutinesApi::class)
     @Test fun `escape before first token restores empty prefill`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)
@@ -62,7 +82,10 @@ class AdventureAppNavigationTest {
             input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })"))
             input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })"))
             withTimeout(2000) { started.await() }; nextBrowserTick()
-            input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })")); nextBrowserTick()
+            container.querySelector(".secondary-button")!!.asDynamic().focus()
+            document.activeElement!!.asDynamic().dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true, cancelable: true })")); nextBrowserTick()
+            assertEquals(true, input.readOnly, "IME Escape must not cancel")
+            document.activeElement!!.asDynamic().dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })")); nextBrowserTick()
             assertEquals(false, input.readOnly)
             assertEquals("", withTimeout(2000) { prefill.await() }.playerAction)
         } finally {

@@ -187,6 +187,21 @@ private class SuggestionUiState {
     var text = ""
     var tabTimer: Int? = null
 }
+private fun focusNextFromComposer() {
+    val elements = document.querySelectorAll("a[href], button, input, select, textarea, summary, [tabindex]")
+    var pastComposer = false
+    for (index in 0 until elements.length) {
+        val element = elements.item(index)?.asDynamic() ?: continue
+        if (!pastComposer) {
+            if (element.id == "player-action") pastComposer = true
+            continue
+        }
+        if (element.disabled == true || element.tabIndex.unsafeCast<Int>() < 0 || element.getClientRects().length.unsafeCast<Int>() == 0) continue
+        if (window.getComputedStyle(element).visibility == "hidden") continue
+        element.focus()
+        return
+    }
+}
 private val PlayView = FC<PlayViewProps> { props ->
     var action by useState(""); var pending by useState(props.session.introductionPending); var leaving by useState(false); var inputReady by useState(false); val (turnInput) = useState(TurnInputState(props.session)); var error by useState<String?>(null); var streamed by useState<GameSession?>(null)
     var debugOpen by useState(false)
@@ -231,6 +246,19 @@ private val PlayView = FC<PlayViewProps> { props ->
         suggestion.started = false
         suggestion.restore = true
         suggestionStatus = null
+    }
+    useEffectWithCleanup(dependencies = arrayOf(liveId, suggestionStatus)) {
+        if (suggestionStatus != null) {
+            val onEscape = { event: dynamic ->
+                if (event.key == "Escape" && event.isComposing != true && event.defaultPrevented != true) {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    stopSuggestion()
+                }
+            }
+            document.asDynamic().addEventListener("keydown", onEscape, true)
+            onCleanup { document.asDynamic().removeEventListener("keydown", onEscape, true) }
+        }
     }
     useEffectWithCleanup(dependencies = arrayOf(liveId)) {
         onCleanup {
@@ -482,7 +510,7 @@ private val PlayView = FC<PlayViewProps> { props ->
             onChange = { val value = it.target.unsafeCast<HTMLTextAreaElement>().value; action = value; suggestion.text = value; if (turnInput.phase == TurnPhase.IDLE && suggestionStatus == null) prefill.changed(props.session, props.scenario, liveId, value) }
             onKeyDown = { event ->
                 val native = event.nativeEvent.asDynamic()
-                if (event.key == "Escape" && suggestionStatus != null) { event.preventDefault(); stopSuggestion() }
+                if (event.key == "Escape" && suggestionStatus != null && native.isComposing != true) { event.preventDefault(); stopSuggestion() }
                 else if (event.key == "Tab" && !event.shiftKey && native.ctrlKey != true && native.altKey != true && native.metaKey != true && native.isComposing != true && native.repeat != true && suggestionStatus == null) {
                     event.preventDefault()
                     if (suggestion.tabTimer != null) {
@@ -492,7 +520,7 @@ private val PlayView = FC<PlayViewProps> { props ->
                     } else {
                         suggestion.tabTimer = window.setTimeout({
                             suggestion.tabTimer = null
-                            if (document.activeElement?.asDynamic()?.id == "player-action") document.querySelector(".action-form button.primary-button:not(:disabled), .debug-open-button:not(:disabled)")?.asDynamic()?.focus()
+                            if (document.activeElement?.asDynamic()?.id == "player-action") focusNextFromComposer()
                         }, 500)
                     }
                 } else {
