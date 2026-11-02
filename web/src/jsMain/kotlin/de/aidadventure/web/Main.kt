@@ -200,7 +200,10 @@ private val PlayView = FC<PlayViewProps> { props ->
     }
     useEffectWithCleanup(dependencies = arrayOf(liveId)) {
         val onEnd = { event: dynamic ->
-            if (event.key == "End" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey &&
+            val composerFocused = document.activeElement?.asDynamic()?.id == "player-action"
+            val shouldJump = if (composerFocused) event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey
+                else !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey
+            if (event.key == "End" && shouldJump &&
                 event.isComposing != true) {
                 event.preventDefault()
                 scrollToTranscriptEnd()

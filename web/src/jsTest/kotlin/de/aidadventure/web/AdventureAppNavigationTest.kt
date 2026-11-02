@@ -948,15 +948,20 @@ class AdventureAppNavigationTest {
             assertBottom()
 
             scrollTo(200)
+            input.focus()
             val end = js("new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true })")
             input.dispatchEvent(end)
-            assertEquals(true, end.defaultPrevented, "Plain End in composer must jump the dialog")
+            assertEquals(false, end.defaultPrevented, "Plain End in composer retains native editing")
+            assertEquals(200, transcript.scrollTop)
+            val ctrlEnd = js("new KeyboardEvent('keydown', { key: 'End', ctrlKey: true, bubbles: true, cancelable: true })")
+            input.dispatchEvent(ctrlEnd)
+            assertEquals(true, ctrlEnd.defaultPrevented, "Ctrl+End in composer must jump the dialog")
             assertBottom()
             appendText()
             assertBottom()
 
             scrollTo(200)
-            for (modifier in listOf("shiftKey", "ctrlKey", "altKey", "metaKey")) {
+            for (modifier in listOf("shiftKey", "altKey", "metaKey")) {
                 val options = js("({ key: 'End', bubbles: true, cancelable: true })")
                 options[modifier] = true
                 val modifiedEnd = js("new KeyboardEvent('keydown', options)")
@@ -970,6 +975,7 @@ class AdventureAppNavigationTest {
             assertEquals(false, composingEnd.defaultPrevented, "IME composition retains native keys")
             assertEquals(200, transcript.scrollTop)
 
+            input.blur()
             val bodyEnd = js("new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true })")
             document.body.dispatchEvent(bodyEnd)
             assertEquals(true, bodyEnd.defaultPrevented, "End with body focus must jump the dialog")
