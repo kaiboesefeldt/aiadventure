@@ -27,6 +27,9 @@ class PromptFactoryTest {
         val suggestionInstruction = (suggestion.last() as UserMessage).singleText()
         assertTrue(suggestionInstruction.contains("only as the player"))
         assertTrue(suggestionInstruction.contains("Do not write as the game master or narrator"))
+        assertTrue(suggestionInstruction.contains("Output only playable action text"))
+        assertTrue(suggestionInstruction.contains("reasoning, deliberation, meta commentary, stage directions"))
+        assertTrue(suggestionInstruction.contains("parenthetical remarks"))
         assertTrue(suggestionInstruction.contains("I open"))
         assertEquals(canonical.map(::segment), factory.build(request).map(::segment))
     }
