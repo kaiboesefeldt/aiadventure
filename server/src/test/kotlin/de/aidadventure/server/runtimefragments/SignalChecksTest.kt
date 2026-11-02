@@ -5,6 +5,30 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.*
 
 class SignalChecksTest {
+    @Test fun `selected fragment assigns flags without signals and rejects ineligible fragments`() = runBlocking {
+        val fragment = kotlinx.serialization.json.Json.decodeFromString<RuntimeFragmentDefinition>(
+            """{"matchText":"tower","fragment":"","conditions":[{"flag":"visited","value":false}],"setFlags":[{"flag":"visited","value":true}]}""")
+        val result = runSignalChecks(request(), selectedFragment = fragment) { error("No classifier") }
+        assertEquals(true, result.flags["visited"])
+        assertEquals(emptyList(), result.emittedSignals)
+        assertTrue(result.diagnostics.any { it.kind == "flag_set" && it.fields["flag"] == "visited" })
+        val blocked = runSignalChecks(request().copy(flags = mapOf("visited" to true)), selectedFragment = fragment) { error("No classifier") }
+        assertTrue(blocked.diagnostics.none { it.kind == "flag_set" })
+        val unselected = runSignalChecks(request().copy(runtimeFragments = listOf(fragment))) { error("No classifier") }
+        assertEquals(false, unselected.flags["visited"])
+    }
+
+    @Test fun `direct fragment assignments do not unlock rules signals or model checks in the same turn`() = runBlocking {
+        val fragments = kotlinx.serialization.json.Json.decodeFromString<List<RuntimeFragmentDefinition>>(
+            """[{"matchText":"","fragment":"","direct":true,"conditions":[{"flag":"visited","value":false}],"setFlags":[{"flag":"visited","value":true}]},
+                {"matchText":"","fragment":"Locked","direct":true,"conditions":[{"flag":"visited","value":true}],"emittedSignals":["reward"],"setFlags":[{"flag":"reward","value":true}]}]""")
+        val result = runSignalChecks(request().copy(runtimeFragments = fragments,
+            signalChecks = listOf(SignalCheckDefinition("reward", "Reward", listOf(FlagCondition("visited", true)))))) { error("No cascade") }
+        assertEquals(mapOf("visited" to true, "reward" to false), result.flags)
+        assertEquals(emptyList(), result.emittedSignals)
+        assertEquals(emptyList(), result.emittedTexts)
+    }
+
     @Test fun `signals without event check never synthesize name or fragment predicates`() = runBlocking {
         val request = request().copy(runtimeFragments = listOf(
             RuntimeFragmentDefinition("tower", "Guidance", emittedSignals = listOf("enter"))))

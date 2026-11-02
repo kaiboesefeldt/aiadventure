@@ -39,6 +39,24 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
+    @Test fun `selected fragment assignments without signals persist for following turn on retained slot`() = runBlocking {
+        val fake = ControllableGateway(classify = { "Y" }, warmup = { CacheMetrics(8, 2) })
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        try {
+            val selected = kotlinx.serialization.json.Json.decodeFromString<RuntimeFragmentDefinition>(
+                """{"matchText":"tower","fragment":"Remember","conditions":[{"flag":"visited","value":false}],"setFlags":[{"flag":"visited","value":true}]}""")
+            val request = warmup().copy(flags = mapOf("visited" to false), runtimeFragments = listOf(selected))
+            val reservation = coordinator.reserveRerank(request, "origin")!!
+            coordinator.completeReservedRerank(reservation, selected)
+            val outcome = coordinator.awaitSignalChecks(reservation)
+            assertEquals(mapOf("visited" to true), outcome.flags)
+            coordinator.beginTurn(turn("look").copy(flags = outcome.flags, runtimeFragments = request.runtimeFragments)).toList()
+            assertEquals(mapOf("visited" to true), fake.turnRequests.single().flags)
+            assertEquals(ChatEntry("runtime-fragment", "Remember"), fake.turnRequests.single().history.last())
+            assertEquals(listOf(LlamaCppSlot(1)), fake.slotLifecycle.map { it.slot }.distinct())
+        } finally { coordinator.close() }
+    }
+
     @Test fun `selected fragment text survives its signal changing a required flag`() = runBlocking {
         val fake = ControllableGateway(classify = { "Y" }, warmup = { CacheMetrics(8, 2) })
         val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))

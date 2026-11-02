@@ -412,6 +412,29 @@ class ApplicationTest {
     }
 
     @Test
+    fun `selected assignment-only fragment reports updated flags in done event`() = testApplication {
+        val registry = FakeRegistry()
+        val selected = RuntimeFragmentDefinition("tower", "", setFlags = listOf(FlagAssignment("visited", true)))
+        registry.coordinator.signalCheckOutcome = de.aidadventure.server.runtimefragments.SignalCheckOutcome(mapOf("visited" to true))
+        val resolver = object : RuntimeFragmentResolver {
+            override suspend fun prepare(definitions: List<RuntimeFragmentDefinition>) = Unit
+            override suspend fun resolve(history: List<ChatEntry>, definitions: List<RuntimeFragmentDefinition>) = definitions.single()
+        }
+        application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolver) }
+        configureJsonClient()
+
+        val response = client.post("/api/turn") {
+            contentType(ContentType.Application.Json)
+            setBody(turnRequest(worldState = WorldState(location = "Harbour")).copy(
+                flags = mapOf("visited" to false), runtimeFragments = listOf(selected),
+            ))
+        }
+        val done = response.bodyAsText().split("\n\n").single { it.startsWith("event: done\n") }
+        assertContains(done, "\"flags\":{\"visited\":true}")
+        assertEquals(selected, registry.coordinator.rerankCandidates.single())
+    }
+
+    @Test
     fun `selected signal-only guidance leaves flags unchanged during next retrieval`() = testApplication {
         val registry = FakeRegistry()
         registry.coordinator.turnEvents = flowOf(
@@ -1050,6 +1073,10 @@ class ApplicationTest {
             rerankCompleted.complete(Unit)
             return true
         }
+
+        var signalCheckOutcome: de.aidadventure.server.runtimefragments.SignalCheckOutcome? = null
+
+        override suspend fun awaitSignalChecks(reservation: de.aidadventure.server.prefill.RerankReservation) = signalCheckOutcome
 
         override suspend fun awaitBackgroundDiagnostic(operationId: String): StreamDiagnostic? =
             backgroundOutcomes[operationId]

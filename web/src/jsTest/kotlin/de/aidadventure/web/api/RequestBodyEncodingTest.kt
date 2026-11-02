@@ -11,6 +11,19 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 class RequestBodyEncodingTest {
+    @Test fun `all request mappers preserve runtime fragment assignments`() {
+        val scenario = Scenario("scenario", "Tower", "---\nflags: {visited: false}\nruntime-fragments:\n  tower:\n    set-flag: {visited: true}\n---\n# Tower", 1)
+        val session = GameSession("session", scenario.id, "Tower", messages = emptyList(), createdAt = 1, updatedAt = 1)
+        val bodies = listOf(
+            encodeTurnRequest(TurnRequestMapper.map(session, scenario, "enter", "session")),
+            encodePrefillRequest(PrefillRequestMapper.map(session, scenario, "session", 1, "enter")),
+            encodeWarmupRequest(WarmupRequestMapper.map(session, scenario)))
+        bodies.forEach { encoded ->
+            val fragment = Json.parseToJsonElement(encoded).jsonObject["runtimeFragments"]!!.jsonArray.single().jsonObject
+            assertEquals(Json.parseToJsonElement("""[{"flag":"visited","value":true}]"""), fragment["setFlags"])
+        }
+    }
+
     @Test fun `all request mappers preserve location only predicates and location exclusions`() {
         val scenario = Scenario("scenario", "Harbor", """---
 flags: {}

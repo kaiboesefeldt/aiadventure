@@ -22,6 +22,7 @@ data class RuntimeFragmentDefinition(
     val emittedSignals: List<String> = emptyList(),
     val direct: Boolean = false,
     val excludedConditions: List<List<FlagCondition>> = emptyList(),
+    val setFlags: List<FlagAssignment> = emptyList(),
 )
 
 data class LocationTriggerAction(
@@ -206,13 +207,14 @@ object ScenarioFrontmatter {
             conditions: List<FlagCondition>,
             emittedSignals: List<String>,
             emittedText: List<String>,
+            assignments: List<FlagAssignment>,
             excludedConditions: List<List<FlagCondition>>,
             path: String,
         ) {
             if (value is String) {
                 val textValue = value as String
                 if (keyPath.isEmpty() || textValue.isBlank()) invalidFrontmatter(path, "fragment text cannot be blank")
-                definitions += RuntimeFragmentDefinition(keyPath.joinToString("\n"), joinEmittedText(emittedText + textValue), conditions, emittedSignals, excludedConditions = excludedConditions)
+                definitions += RuntimeFragmentDefinition(keyPath.joinToString("\n"), joinEmittedText(emittedText + textValue), conditions, emittedSignals, excludedConditions = excludedConditions, setFlags = assignments)
                 return
             }
             val entries = mappingEntries(value) ?: invalidFrontmatter(path, "expected a mapping or text")
@@ -232,24 +234,36 @@ object ScenarioFrontmatter {
                 if (name !in declaredSignals) invalidFrontmatter("$path.signal", "signal '$name' is not declared")
                 name
             }
+            val ownAssignments = entries.firstOrNull { metadata && it[0] == "set-flag" }?.let { entry ->
+                val assigned = mappingEntries(entry[1]) ?: invalidFrontmatter("$path.set-flag", "expected flag assignments")
+                if (assigned.isEmpty()) invalidFrontmatter("$path.set-flag", "must assign at least one flag")
+                assigned.map { assignment ->
+                    val flag = assignment[0] as? String ?: invalidFrontmatter("$path.set-flag", "flag name must be a string")
+                    if (flag !in declaredFlags) invalidFrontmatter("$path.set-flag.$flag", "flag is not declared")
+                    val assignedValue = assignment[1] as? Boolean ?: invalidFrontmatter("$path.set-flag.$flag", "expected true or false")
+                    FlagAssignment(flag, assignedValue)
+                }
+            }.orEmpty()
+            val nextAssignments = assignments + ownAssignments
             val ownCondition = entries.firstOrNull { metadata && it[0] == "condition" }
             val nextConditions = conditions + if (ownCondition != null && !isArray(ownCondition[1])) {
                 readConditions(ownCondition[1], "$path.condition", declaredFlags, declaredLocations)
             } else emptyList()
             val nextText = emittedText + listOfNotNull(ownText)
             val nextSignals = (emittedSignals + listOfNotNull(ownSignal)).distinct()
-            val children = entries.filter { !metadata || it[0] !in setOf("emit-text", "signal", "condition") }
+            val children = entries.filter { !metadata || it[0] !in setOf("emit-text", "signal", "condition", "set-flag") }
             val conditionalBranches = ownCondition != null && isArray(ownCondition[1])
             // Root effects are immediate independent rules. Named descendants only inherit predicates.
-            if (keyPath.isEmpty() && (ownText != null || ownSignal != null)) {
-                definitions += RuntimeFragmentDefinition("", joinEmittedText(nextText), nextConditions, nextSignals, direct = true, excludedConditions = excludedConditions)
+            if (keyPath.isEmpty() && (ownText != null || ownSignal != null || ownAssignments.isNotEmpty())) {
+                definitions += RuntimeFragmentDefinition("", joinEmittedText(nextText), nextConditions, nextSignals, direct = true, excludedConditions = excludedConditions, setFlags = nextAssignments)
             }
+            val childAssignments = if (keyPath.isEmpty()) emptyList() else nextAssignments
             val childText = if (keyPath.isEmpty()) emptyList() else nextText
             val childSignals = if (keyPath.isEmpty()) emptyList() else nextSignals
             children.forEach { child ->
                 val key = child[0] as? String ?: invalidFrontmatter(path, "fragment names must be strings")
                 if (key.isBlank()) invalidFrontmatter(path, "fragment names cannot be blank")
-                visit(child[1], keyPath + key, nextConditions, childSignals, childText, excludedConditions, "$path.$key")
+                visit(child[1], keyPath + key, nextConditions, childSignals, childText, childAssignments, excludedConditions, "$path.$key")
             }
             if (conditionalBranches) {
                 val branches = ownCondition[1].unsafeCast<Array<dynamic>>()
@@ -266,7 +280,7 @@ object ScenarioFrontmatter {
                         val elseEntries = mappingEntries(elseField[1])
                             ?: invalidFrontmatter("$branchPath.else", "expected fragment mapping")
                         if (elseEntries.isEmpty()) invalidFrontmatter("$branchPath.else", "expected at least one effect or fragment")
-                        visit(elseField[1], keyPath, nextConditions, childSignals, childText, excludedConditions + preceding, "$branchPath.else")
+                        visit(elseField[1], keyPath, nextConditions, childSignals, childText, childAssignments, excludedConditions + preceding, "$branchPath.else")
                     } else {
                         val then = fields.firstOrNull { it[0] == "then" }
                             ?: invalidFrontmatter(branchPath, "expected conditions and then")
@@ -278,21 +292,21 @@ object ScenarioFrontmatter {
                         }
                         val thenEntries = mappingEntries(then[1]) ?: invalidFrontmatter("$branchPath.then", "expected fragment mapping")
                         if (thenEntries.isEmpty()) invalidFrontmatter("$branchPath.then", "expected at least one effect or fragment")
-                        visit(then[1], keyPath, nextConditions + branchConditions, childSignals, childText, excludedConditions, "$branchPath.then")
+                        visit(then[1], keyPath, nextConditions + branchConditions, childSignals, childText, childAssignments, excludedConditions, "$branchPath.then")
                         preceding += branchConditions
                     }
                 }
             }
             if (keyPath.isNotEmpty() && children.isEmpty() && !conditionalBranches) {
-                if (ownText == null && ownSignal == null) invalidFrontmatter(path, "fragment has no text, signal, or children")
-                definitions += RuntimeFragmentDefinition(keyPath.joinToString("\n"), joinEmittedText(nextText), nextConditions, nextSignals, excludedConditions = excludedConditions)
+                if (ownText == null && ownSignal == null && ownAssignments.isEmpty()) invalidFrontmatter(path, "fragment has no text, signal, assignments, or children")
+                definitions += RuntimeFragmentDefinition(keyPath.joinToString("\n"), joinEmittedText(nextText), nextConditions, nextSignals, excludedConditions = excludedConditions, setFlags = nextAssignments)
             }
-            if (keyPath.isEmpty() && children.isEmpty() && !conditionalBranches && ownText == null && ownSignal == null) {
-                invalidFrontmatter(path, "rule has no text, signal, or children")
+            if (keyPath.isEmpty() && children.isEmpty() && !conditionalBranches && ownText == null && ownSignal == null && ownAssignments.isEmpty()) {
+                invalidFrontmatter(path, "rule has no text, signal, assignments, or children")
             }
         }
 
-        visit(fragmentsEntry[1], emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), "runtime-fragments")
+        visit(fragmentsEntry[1], emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), "runtime-fragments")
         val duplicatePath = definitions.filter { !it.direct }.groupBy { it.matchText }.entries.firstOrNull { it.value.size > 1 }
         if (duplicatePath != null) {
             invalidFrontmatter("runtime-fragments.${duplicatePath.key.replace('\n', '.')}", "conditional branches create the same retrieval path")

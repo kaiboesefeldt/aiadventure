@@ -11,6 +11,19 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class ApiModelsTest {
+    @Test fun `assignment only runtime fragments validate declared flags and bounded assignments`() {
+        val json = Json
+        val fragment = json.decodeFromString<RuntimeFragmentDefinition>("""{"matchText":"tower","fragment":"","setFlags":[{"flag":"visited","value":true}]}""")
+        val request = WarmupRequest("flags", modelId = "model", scenarioMarkdown = "# Game", history = emptyList(),
+            flags = mapOf("visited" to false), runtimeFragments = listOf(fragment))
+        assertNull(RequestValidator.validate(request))
+        assertNotNull(RequestValidator.validate(request.copy(flags = emptyMap())))
+        val oversized = fragment.copy(setFlags = List(201) { FlagAssignment("visited", true) })
+        assertNotNull(RequestValidator.validate(request.copy(runtimeFragments = listOf(oversized))))
+        val direct = json.decodeFromString<RuntimeFragmentDefinition>("""{"matchText":"","fragment":"","direct":true,"setFlags":[{"flag":"visited","value":true}]}""")
+        assertNull(RequestValidator.validate(request.copy(runtimeFragments = listOf(direct))))
+    }
+
     @Test fun `location trigger payloads validate declared locations flags and signals`() {
         val request = WarmupRequest(
             "location-triggers", modelId = "model", scenarioMarkdown = "# Game", history = emptyList(),

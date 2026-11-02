@@ -95,10 +95,22 @@ internal suspend fun runSignalChecks(
         }
     }
 
+    fun applyFragmentAssignments(fragment: RuntimeFragmentDefinition, sourceType: String, sourceName: String) {
+        fragment.setFlags.forEach { assignment ->
+            val previous = workingFlags[assignment.flag]?.toString() ?: "unset"
+            workingFlags[assignment.flag] = assignment.value
+            diagnostics += StreamDiagnostic("flag_set", "applied", transcriptRole = "game-master",
+                fields = mapOf("flag" to assignment.flag, "previousValue" to previous, "value" to assignment.value.toString(),
+                    "sourceType" to sourceType, "sourceName" to sourceName))
+        }
+    }
+
     directRules.forEachIndexed { index, rule ->
+        applyFragmentAssignments(rule, "flag_rule", directRuleName(rule, index))
         if (rule.fragment.isNotBlank()) diagnostics += StreamDiagnostic("text_emitted", "emitted", transcriptRole = "game-master",
             fields = mapOf("text" to rule.fragment, "sourceType" to "flag_rule", "sourceName" to directRuleName(rule, index))).also { texts += rule.fragment }
     }
+    acceptedFragment?.let { applyFragmentAssignments(it, "runtime_fragment", it.matchText) }
     orderedEmitted.forEach { name ->
         if (name !in appliedLocationSignals) applySignal(name, if (name in directSignals) "direct" else "model")
     }
