@@ -2,6 +2,7 @@ package de.aidadventure.web
 
 import de.aidadventure.web.api.AdventureApi
 import de.aidadventure.web.api.AdventureApiClient
+import de.aidadventure.web.api.TurnRequestMapper
 import de.aidadventure.web.model.DebugEvent
 import de.aidadventure.web.model.GameMessage
 import de.aidadventure.web.model.GameSession
@@ -179,6 +180,13 @@ private val DetailView = FC<DetailViewProps> { props ->
 }
 
 private external interface PlayViewProps : Props { var scenario: Scenario; var session: GameSession; var api: AdventureApi; var sessions: SessionRepository; var debugEvents: DebugEventRepository; var onBack: () -> Unit; var onSessionChanged: (GameSession) -> Unit }
+private class SuggestionUiState {
+    var sequence = 0
+    var started = false
+    var restore = false
+    var text = ""
+    var tabTimer: Int? = null
+}
 private val PlayView = FC<PlayViewProps> { props ->
     var action by useState(""); var pending by useState(props.session.introductionPending); var leaving by useState(false); var inputReady by useState(false); val (turnInput) = useState(TurnInputState(props.session)); var error by useState<String?>(null); var streamed by useState<GameSession?>(null)
     var debugOpen by useState(false)
@@ -187,6 +195,8 @@ private val PlayView = FC<PlayViewProps> { props ->
     var selectedDebugEventId by useState<String?>(null)
     val liveId = props.session.id
     val (prefill) = useState(PrefillSubmission(props.api))
+    val (suggestion) = useState(SuggestionUiState())
+    var suggestionStatus by useState<String?>(null)
     val displayed = sessionForDisplay(props.session, streamed)
     val transcript = useRef<HTMLElement>(null)
     val followTranscript = useRef(true)
@@ -214,6 +224,54 @@ private val PlayView = FC<PlayViewProps> { props ->
         window.setTimeout({ document.querySelector("button[aria-label='Open debug panel']")?.asDynamic()?.focus() }, 0)
     }
     fun setTurnPhase(phase: TurnPhase) { turnInput.phase = phase }
+    fun stopSuggestion() {
+        if (suggestionStatus == null) return
+        suggestion.sequence++
+        props.api.stopSuggestion()
+        suggestion.started = false
+        suggestion.restore = true
+        suggestionStatus = null
+    }
+    useEffectWithCleanup(dependencies = arrayOf(liveId)) {
+        onCleanup {
+            suggestion.sequence++
+            suggestion.tabTimer?.let(window::clearTimeout)
+            props.api.stopSuggestion()
+        }
+    }
+    useEffect(dependencies = arrayOf(suggestionStatus, pending, props.session)) {
+        if (!pending && suggestion.restore) {
+            suggestion.restore = false
+            prefill.restore(props.session, props.scenario, liveId, suggestion.text)
+        }
+        if (suggestionStatus == "waiting" && !pending && !suggestion.started) {
+            suggestion.started = true
+            val sequence = suggestion.sequence
+            val base = props.session
+            val initial = suggestion.text
+            prefill.turnStarted()
+            scope.launch {
+                try {
+                    props.api.suggest(TurnRequestMapper.map(base, props.scenario, initial, liveId), { status ->
+                        if (suggestion.sequence == sequence) suggestionStatus = if (status == "generation_ready") "generating" else "waiting"
+                    }, { token ->
+                        if (suggestion.sequence == sequence) {
+                            suggestion.text += token
+                            flushStreamUpdate { action = suggestion.text }
+                        }
+                    })
+                } catch (failure: Throwable) {
+                    if (suggestion.sequence == sequence) error = clientMessage(failure)
+                } finally {
+                    if (suggestion.sequence == sequence) {
+                        suggestion.started = false
+                        suggestion.restore = true
+                        suggestionStatus = null
+                    }
+                }
+            }
+        }
+    }
     fun leavePlay() {
         if (leaving) return
         leaving = true
@@ -411,8 +469,39 @@ private val PlayView = FC<PlayViewProps> { props ->
             onClick = { introduce() }
             +"Retry introduction"
         }
-        ReactHTML.textarea { id = "player-action".unsafeCast<web.dom.ElementId>(); className = ClassName("action-input"); value = action; disabled = props.session.introductionPending; onChange = { action = it.target.unsafeCast<HTMLTextAreaElement>().value; if (turnInput.phase == TurnPhase.IDLE) prefill.changed(props.session, props.scenario, liveId, action) }; onKeyDown = { event -> if (shouldSubmitOnEnter(event.key, event.shiftKey, event.nativeEvent.asDynamic().isComposing.unsafeCast<Boolean>(), false, action)) { event.preventDefault(); submit() } } }
-        ReactHTML.button { className = ClassName("primary-button"); disabled = props.session.introductionPending || action.isBlank(); onClick = { submit() }; +(if (pending && props.session.introductionPending) "Introducing adventure…" else if (pending && inputReady) "Updating world…" else if (pending) "Sending…" else "Send") }
+        ReactHTML.p {
+            className = ClassName("suggestion-status")
+            asDynamic().role = "status"
+            if (suggestionStatus != null) +(if (suggestionStatus == "generating") "Generating suggestion… Press Esc to cancel." else "Waiting to generate suggestion… Press Esc to cancel.")
+        }
+        ReactHTML.textarea {
+            id = "player-action".unsafeCast<web.dom.ElementId>(); className = ClassName("action-input"); value = action
+            placeholder = "Type an action. Press Tab twice for a suggestion."
+            disabled = props.session.introductionPending
+            readOnly = suggestionStatus != null
+            onChange = { val value = it.target.unsafeCast<HTMLTextAreaElement>().value; action = value; suggestion.text = value; if (turnInput.phase == TurnPhase.IDLE && suggestionStatus == null) prefill.changed(props.session, props.scenario, liveId, value) }
+            onKeyDown = { event ->
+                val native = event.nativeEvent.asDynamic()
+                if (event.key == "Escape" && suggestionStatus != null) { event.preventDefault(); stopSuggestion() }
+                else if (event.key == "Tab" && !event.shiftKey && native.ctrlKey != true && native.altKey != true && native.metaKey != true && native.isComposing != true && native.repeat != true && suggestionStatus == null) {
+                    event.preventDefault()
+                    if (suggestion.tabTimer != null) {
+                        window.clearTimeout(suggestion.tabTimer!!); suggestion.tabTimer = null
+                        suggestion.sequence++; suggestion.text = action; suggestion.started = false; suggestion.restore = false
+                        suggestionStatus = "waiting"
+                    } else {
+                        suggestion.tabTimer = window.setTimeout({
+                            suggestion.tabTimer = null
+                            if (document.activeElement?.asDynamic()?.id == "player-action") document.querySelector(".action-form button.primary-button:not(:disabled), .debug-open-button:not(:disabled)")?.asDynamic()?.focus()
+                        }, 500)
+                    }
+                } else {
+                    suggestion.tabTimer?.let(window::clearTimeout); suggestion.tabTimer = null
+                    if (suggestionStatus == null && shouldSubmitOnEnter(event.key, event.shiftKey, native.isComposing.unsafeCast<Boolean>(), false, action)) { event.preventDefault(); submit() }
+                }
+            }
+        }
+        ReactHTML.button { className = ClassName("primary-button"); disabled = props.session.introductionPending || action.isBlank() || suggestionStatus != null; onClick = { submit() }; +(if (pending && props.session.introductionPending) "Introducing adventure…" else if (pending && inputReady) "Updating world…" else if (pending) "Sending…" else "Send") }
         }
     }
     ReactHTML.button {

@@ -38,6 +38,138 @@ import web.html.HTMLElement
 
 class AdventureAppNavigationTest {
     @OptIn(DelicateCoroutinesApi::class)
+    @Test fun `escape before first token restores empty prefill`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        val scenario = Scenario("empty-suggestion", "Harbor", "# Harbor", 1)
+        val session = GameSession("empty-session", scenario.id, "Saved", messages = listOf(GameMessage("game-master", "Welcome", 1)), createdAt = 1, updatedAt = 1)
+        val started = CompletableDeferred<Unit>()
+        val finished = CompletableDeferred<Unit>()
+        val prefill = CompletableDeferred<PrefillRequest>()
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted { prefill.complete(request); return PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED) }
+            override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("unused")
+            override suspend fun suggest(request: TurnRequest, onStatus: (String) -> Unit, onToken: (String) -> Unit) { assertEquals("", request.playerAction); started.complete(Unit); finished.await() }
+            override fun stopSuggestion() { finished.complete(Unit) }
+        }
+        try {
+            flushSync { root.render(AdventureApp.create { scenarioRepository = scenarioRepository(scenario); sessionRepository = fixedSessions(session); this.api = api; initialScenarios = listOf(scenario) }) }
+            container.clickButtonNamed(scenario.name); nextBrowserTick(); container.clickButtonNamed(session.title); nextBrowserTick()
+            val input = container.querySelector("#player-action").asDynamic()
+            input.focus()
+            input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })"))
+            input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })"))
+            withTimeout(2000) { started.await() }; nextBrowserTick()
+            input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })")); nextBrowserTick()
+            assertEquals(false, input.readOnly)
+            assertEquals("", withTimeout(2000) { prefill.await() }.playerAction)
+        } finally {
+            finished.complete(Unit)
+            flushSync { root.unmount() }; container.remove()
+        }
+    }
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test fun `suggestion waits for finished turn and escape cancels queued request`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        val scenario = Scenario("wait-suggestion", "Harbor", "# Harbor", 1)
+        val session = GameSession("wait-session", scenario.id, "Saved", messages = listOf(GameMessage("game-master", "Welcome", 1)), createdAt = 1, updatedAt = 1)
+        val ready = CompletableDeferred<Unit>()
+        val finishTurn = CompletableDeferred<Unit>()
+        val request = CompletableDeferred<TurnRequest>()
+        var suggestions = 0
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+            override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion {
+                onToken("The door opens."); onInputReady(); ready.complete(Unit); finishTurn.await()
+                return TurnCompletion(TurnMetrics(null, null, null), WorldState())
+            }
+            override suspend fun suggest(input: TurnRequest, onStatus: (String) -> Unit, onToken: (String) -> Unit) { suggestions++; request.complete(input) }
+        }
+        try {
+            flushSync { root.render(AdventureApp.create { scenarioRepository = scenarioRepository(scenario); sessionRepository = fixedSessions(session); this.api = api; initialScenarios = listOf(scenario) }) }
+            container.clickButtonNamed(scenario.name); nextBrowserTick(); container.clickButtonNamed(session.title); nextBrowserTick()
+            val input = container.querySelector("#player-action").asDynamic()
+            val value = "Open the door"
+            js("Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, value)")
+            input.dispatchEvent(js("new Event('input', { bubbles: true })")); nextBrowserTick()
+            container.click(".action-form button.primary-button"); withTimeout(2000) { ready.await() }; nextBrowserTick()
+            input.focus()
+            input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })"))
+            input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })")); nextBrowserTick()
+            assertEquals(true, input.readOnly)
+            assertEquals(0, suggestions)
+            input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })")); nextBrowserTick()
+            assertEquals(false, input.readOnly)
+            input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })"))
+            input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })")); nextBrowserTick()
+            assertEquals(0, suggestions)
+            finishTurn.complete(Unit)
+            val suggestionRequest = withTimeout(2000) { request.await() }
+            assertEquals(1, suggestions)
+            assertEquals("The door opens.", suggestionRequest.history.last().content)
+        } finally {
+            finishTurn.complete(Unit)
+            nextBrowserTick(); flushSync { root.unmount() }; container.remove()
+        }
+    }
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test fun `double tab streams a suggestion and escape restores editing and latest prefill`() = GlobalScope.promise<Unit> {
+        val container = document.createElement("div")
+        document.body.appendChild(container)
+        val root = createRoot(container)
+        val scenario = Scenario("suggestion", "Harbor", "# Harbor", 1)
+        val session = GameSession("session-suggestion", scenario.id, "Saved", messages = listOf(GameMessage("game-master", "Welcome", 1)), createdAt = 1, updatedAt = 1)
+        val started = CompletableDeferred<Unit>()
+        val finished = CompletableDeferred<Unit>()
+        val prefills = mutableListOf<PrefillRequest>()
+        var token: (String) -> Unit = {}
+        var status: (String) -> Unit = {}
+        var stopped = 0
+        val api = object : AdventureApi {
+            override suspend fun prefill(request: PrefillRequest): PrefillAccepted { prefills += request; return PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED) }
+            override suspend fun warmup(request: WarmupRequest) = PrefillAccepted(de.aidadventure.web.api.PrefillDisposition.STARTED)
+            override suspend fun play(request: TurnRequest, onInputReady: () -> Unit, onFragment: (String) -> Unit, onToken: (String) -> Unit): TurnCompletion = error("unused")
+            override suspend fun suggest(request: TurnRequest, onStatus: (String) -> Unit, onToken: (String) -> Unit) {
+                assertEquals("Look", request.playerAction)
+                status = onStatus; token = onToken; started.complete(Unit); finished.await()
+            }
+            override fun stopSuggestion() { stopped++; finished.complete(Unit) }
+        }
+        try {
+            flushSync { root.render(AdventureApp.create { scenarioRepository = scenarioRepository(scenario); sessionRepository = fixedSessions(session); this.api = api; initialScenarios = listOf(scenario) }) }
+            container.clickButtonNamed(scenario.name); nextBrowserTick(); container.clickButtonNamed(session.title); nextBrowserTick()
+            val input = container.querySelector("#player-action").asDynamic()
+            input.focus()
+            val value = "Look"
+            js("Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, value)")
+            input.dispatchEvent(js("new Event('input', { bubbles: true })")); nextBrowserTick()
+            input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })"))
+            input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })"))
+            withTimeout(2000) { started.await() }; nextBrowserTick()
+            assertEquals(true, input.readOnly, "read only while waiting: ${container.asDynamic().innerHTML}")
+            assertEquals(true, container.textContent!!.contains("Waiting to generate suggestion"), "waiting indicator")
+            status("generation_ready"); token(" around"); nextBrowserTick()
+            assertEquals("Look around", input.value, "streamed textarea")
+            assertEquals(true, container.textContent!!.contains("Generating suggestion"), "generating indicator")
+            input.dispatchEvent(js("new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })")); nextBrowserTick()
+            assertEquals(false, input.readOnly)
+            assertEquals(1, stopped)
+            token(" ignored"); nextBrowserTick()
+            assertEquals("Look around", input.value, "textarea after escape")
+            Promise<Unit> { resolve, _ -> window.setTimeout({ resolve(Unit) }, 250) }.await()
+            assertEquals("Look around", prefills.last().playerAction, "restored prefill")
+            assertEquals("Welcome", prefills.last().history.last().content)
+        } finally {
+            finished.complete(Unit)
+            flushSync { root.unmount() }; container.remove()
+        }
+    }
+    @OptIn(DelicateCoroutinesApi::class)
     @Test fun `action queued after input readiness waits for final flags without aborting checks`() = GlobalScope.promise<Unit> {
         val container = document.createElement("div")
         document.body.appendChild(container)

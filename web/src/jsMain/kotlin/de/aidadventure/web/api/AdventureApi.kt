@@ -24,6 +24,8 @@ interface AdventureApi {
         play(request, onGenerationReady, onInputReady, onFragment, onToken)
     suspend fun awaitBackgroundDiagnostic(sessionId: String, operationId: String): StreamDiagnostic? = null
     fun stopActiveTurn() = Unit
+    suspend fun suggest(request: TurnRequest, onStatus: (String) -> Unit, onToken: (String) -> Unit) { throw AdventureApiException("Suggestions are unavailable.") }
+    fun stopSuggestion() = Unit
 }
 
 class AdventureApiClient(
@@ -32,6 +34,43 @@ class AdventureApiClient(
     private var activeTurnController: dynamic = null
     private var activeTurnReader: dynamic = null
     private var activeTurnStopped = false
+    private var suggestionController: dynamic = null
+    private var suggestionReader: dynamic = null
+
+    override fun stopSuggestion() {
+        runCatching { suggestionController?.abort() }
+        runCatching { suggestionReader?.cancel() }
+        suggestionController = null
+        suggestionReader = null
+    }
+
+    override suspend fun suggest(request: TurnRequest, onStatus: (String) -> Unit, onToken: (String) -> Unit) {
+        val controller = js("new AbortController()")
+        suggestionController = controller
+        try {
+            val options = js("({})")
+            options.method = "POST"
+            options.headers = js("({ 'Content-Type': 'application/json' })")
+            options.body = encodeTurnRequest(request)
+            options.signal = controller.signal
+            val response = requireBrowserSuccess(window.fetch("$normalizedBaseUrl/api/suggestion", options).await().asDynamic())
+            val reader = response.body?.getReader() ?: throw AdventureApiException("The suggestion ended unexpectedly.")
+            if (suggestionController !== controller) { reader.cancel(); return }
+            suggestionReader = reader
+            val textDecoder = js("new TextDecoder()")
+            val decoder = SseFrameDecoder()
+            while (true) {
+                val result = reader.read().unsafeCast<Promise<dynamic>>().await()
+                if (suggestionController !== controller) return
+                if (result.done.unsafeCast<Boolean>()) break
+                if (processSuggestionStreamChunk(decoder, decodeText(textDecoder, result.value, true), onStatus, onToken)) return
+            }
+            if (processSuggestionStreamChunk(decoder, decodeText(textDecoder, null, false), onStatus, onToken)) return
+            throw AdventureApiException("The suggestion ended unexpectedly.")
+        } finally {
+            if (suggestionController === controller) { suggestionController = null; suggestionReader = null }
+        }
+    }
 
     override fun stopActiveTurn() {
         if (activeTurnController == null && activeTurnReader == null) return
@@ -155,6 +194,16 @@ class AdventureApiClient(
 }
 
 class TurnStreamStoppedException : Exception("Turn stream stopped by player input.")
+
+internal fun processSuggestionStreamChunk(decoder: SseFrameDecoder, chunk: String, onStatus: (String) -> Unit, onToken: (String) -> Unit): Boolean {
+    for (frame in decoder.push(chunk)) when (frame.event) {
+        "waiting", "generation_ready" -> onStatus(frame.event)
+        "token" -> onToken(streamJson.decodeFromString<StreamToken>(frame.data).text)
+        "done" -> return true
+        "error" -> throw AdventureApiException(streamJson.decodeFromString<StreamError>(frame.data).message)
+    }
+    return false
+}
 
 internal fun encodeTurnRequest(request: TurnRequest): String =
     streamJson.encodeToString(TurnRequest.serializer(), request)

@@ -30,6 +30,18 @@ import web.html.HTMLElement
 class PrefillSubmissionTest {
     @OptIn(DelicateCoroutinesApi::class)
     @Test
+    fun `restoring an empty suggestion schedules canonical warmup prefill`() = GlobalScope.promise<Unit> {
+        val scheduler = ManualPrefillScheduler()
+        val api = RecordingAdventureApi()
+        val prefill = PrefillSubmission(api, scheduler)
+        prefill.turnStarted()
+        prefill.restore(session(), scenario(), "live-1", "")
+        scheduler.runAll()
+        nextTick()
+        assertEquals(listOf(""), api.prefilledActions)
+    }
+    @OptIn(DelicateCoroutinesApi::class)
+    @Test
     fun `resuming a session renders PlayView and submits one complete warmup`() = GlobalScope.promise<Unit> {
         val api = RecordingAdventureApi()
         val scenario = Scenario("scenario-7", "harbor.md", "# Harbor\nStorm signals", 1)
