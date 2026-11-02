@@ -53,11 +53,7 @@ locations:
       Abgesicherter Dokumentationsbereich der unteren Ebene. Zugang über
       den Aufzugschacht, wenn die entsprechende Sperre überwunden ist.
     triggers:
-      - set-flag: {archiv-betreten: true}
-      - emit-text: |
-          Nur für die nächste Antwort: Im Archiv fallen Akten mit der
-          wiederkehrenden Bezeichnung „Projekt MORGEN“ auf. Der Begriff
-          ist noch keine Erklärung. Dokumente müssen untersucht werden.
+      - signals: [archiv-erster-besuch]
   Gewaechshaus:
     description: |
       Feuchter Forschungsbereich auf der unteren Ebene. Zugang über den
@@ -67,10 +63,7 @@ locations:
       Abgeschirmter Raum hinter dem Archiv. Zugang nur nach Freigabe
       der Sicherheitsschleuse.
     triggers:
-      - emit-text: |
-          Für die nächste Antwort: Hinter einer Sichtscheibe liegt ein
-          zweiter, unbenutzter Liegeplatz. Zwei identische Halterungen
-          sind mit A und B bezeichnet. Erkläre noch nicht, weshalb.
+      - signals: [beobachtung-erster-besuch]
   Schleuse:
     description: |
       Übergang zwischen der unteren Ebene und einem abgeschlossenen
@@ -80,13 +73,7 @@ locations:
       Außenbereich hinter der Schleuse. Beschreibe nur das, was die
       Figur bei tatsächlichem Austritt wahrnehmen kann.
     triggers:
-      - set-flag: {aussen-erreicht: true}
-      - emit-text: |
-          Die Luft ist kalt und trocken. Über einem weitläufigen Tal
-          steht echter Himmel. Die Anlage liegt in einer Felswand.
-          In der Ferne sind verlassene Bauwerke erkennbar. Weder der
-          Zustand der ganzen Welt noch die Ursache der Leere ist damit
-          bewiesen.
+      - signals: [aussen-erster-besuch]
 flags:
   aufwachraum-verlassen: false
   papier-gelesen: false
@@ -98,6 +85,7 @@ flags:
   wasserprobe-analysiert: false
   leitstand-protokoll-gelesen: false
   archiv-betreten: false
+  beobachtung-betreten: false
   projekt-morgen-entdeckt: false
   beobachtung-freigeschaltet: false
   identitaet-erkannt: false
@@ -106,6 +94,34 @@ flags:
   aussen-erreicht: false
   entscheidung-getroffen: false
 signals:
+  # Ortstrigger aktivieren diese Signale direkt. Keine LLM-Ereignisprüfung.
+  archiv-erster-besuch:
+    condition: {archiv-betreten: false}
+    triggers:
+      - set-flag: {archiv-betreten: true}
+      - emit-text: |
+          Im Archiv tragen mehrere Akten die Bezeichnung „Projekt MORGEN“.
+          Das ist zunächst ein Titel, keine Erklärung. Ein gesonderter
+          Bericht muss tatsächlich gelesen werden, um seinen Inhalt zu kennen.
+  beobachtung-erster-besuch:
+    condition: {beobachtung-betreten: false}
+    triggers:
+      - set-flag: {beobachtung-betreten: true}
+      - emit-text: |
+          Hinter der Sichtscheibe sind zwei Liegeplätze mit den
+          Kennzeichnungen A und B zu erkennen. Platz B ist unbenutzt.
+          Was die Plätze bedeuten, ist dadurch noch nicht geklärt.
+  aussen-erster-besuch:
+    condition: {aussen-erreicht: false}
+    triggers:
+      - set-flag: {aussen-erreicht: true}
+      - emit-text: |
+          Die Luft ist kalt und trocken. Unter echtem Himmel liegt ein
+          weites Tal; die Anlage sitzt in einer Felswand. In der Ferne
+          stehen verlassene Bauwerke. Daraus folgt nichts Sicheres über
+          die übrige Welt oder die Ursache der Stille.
+
+  # Diese Signale brauchen die Interpretation freier Spielerhandlungen.
   papier-tatsaechlich-gelesen:
     event-check: >
       Die Figur hat das zerknitterte Blatt auf dem Tisch im Aufwachraum
@@ -385,11 +401,20 @@ runtime-fragments:
       Wortlaut ist bis zum tatsächlichen Öffnen unbekannt.
       Eine zweite Wartungskarte kann in einer Schublade liegen.
   "Die Figur erkundet den Wartungsschacht und die Versorgungsebene":
-    emit-text: |
-      Enge, Kondenswasser, Kabel und schlecht lesbare Wegweiser.
-      Ein Sturz ist möglich, aber durch vorsichtiges Vorgehen
-      vermeidbar. Die drei technischen Bereiche werden erst
-      auf der Versorgungsebene sichtbar.
+    condition:
+      - location: Wartungsschacht
+        then:
+          "Die Figur erkundet den engen Wartungsschacht":
+            emit-text: |
+              Enge, Kondenswasser und schlecht lesbare Leitungsmarkierungen.
+              Ein vorsichtiger Abstieg ist möglich; ein Sturz bleibt riskant.
+      - location: Versorgungsebene
+        then:
+          "Die Figur erkundet den technischen Verteilerbereich":
+            emit-text: |
+              Kabel, Verteilerkästen und Wegweiser zum Generatorraum,
+              Wasserwerk und Aufzugschacht. Unbekannte Technik nicht als
+              bereits verstanden darstellen.
   "Die Figur repariert den Generator oder untersucht die Stromkreise":
     condition: {location: Generatorraum, notstrom-stabil: false}
     emit-text: |
@@ -479,11 +504,11 @@ Die Spielfigur wacht ohne Erinnerungen in einer unterirdischen technischen Anlag
 
 ## Strenge Wissensgrenzen
 
-Die **einzige dauerhaft bekannte Wahrheit** ist, dass die Anlage existiert, mehrere Ebenen und technische Systeme besitzt und die Spielfigur im Aufwachraum beginnt. Weitere Hintergründe sind **nicht** Bestandteil dieses Grundwissens. Informationen über Protokolle, Experimentzwecke, Identität, Ursache der Abriegelung und Außenwelt dürfen **nur** aus den zur Laufzeit gelieferten `emit-text`-Hinweisen, tatsächlich wahrgenommenen Beobachtungen und dem bisherigen Spielverlauf stammen. Auch wenn ein Wort wie „MORGEN“ im Verlauf erscheint, folgt daraus noch nicht seine Bedeutung.
+Die **zu Spielbeginn sicher offenbare Wahrheit** ist, dass die Anlage existiert, mehrere Ebenen und technische Systeme besitzt und die Spielfigur im Aufwachraum beginnt. Weitere Hintergründe sind **nicht** Bestandteil dieses Grundwissens. Informationen über Protokolle, Experimentzwecke, Identität, Ursache der Abriegelung und Außenwelt dürfen **nur** aus den zur Laufzeit gelieferten `emit-text`-Hinweisen, tatsächlich wahrgenommenen Beobachtungen und dem bisherigen Spielverlauf stammen. Auch wenn ein Wort wie „MORGEN“ im Verlauf erscheint, folgt daraus noch nicht seine Bedeutung.
 
 Ortsbeschreibungen im Katalog sind Navigationshilfen für die Engine und **keine vollständige Momentaufnahme**. Verwende nur die Teile, die die Figur plausibel wahrnehmen kann. Die Lage aller Räume und ihre Verbindungen bleiben konsistent. An einer Tür zu stehen bedeutet nicht, den dahinterliegenden Raum bereits betreten zu haben.
 
-**Keine Vorwegnahme:** Soll eine Untersuchung eine verborgene Information offenbaren, beschreibe im aktuellen Zug vorzugsweise die Handlung, den Zugang zum Befund oder das gefundene Objekt. Gib präzise Inhalte erst wieder, wenn die Engine sie nach Ereignisprüfung oder Ortswechsel im verborgenen Laufzeitkontext geliefert hat. Die Engine stellt Signale und semantische Fragmente in der Regel erst für die *nächste* Antwort bereit. Täusche keine Befunde vor, die du noch nicht kennst. Wenn ein Text noch nicht verfügbar ist, darf die Figur einen Moment zum Entziffern, Hochfahren oder Abgleichen benötigen, aber erfinde keine unnötigen Warte- oder Fehlversuche.
+**Zeitliche Grenze der Laufzeitinformationen:** Die Engine wertet Ortswechsel, Signale und Fragmente nach der sichtbaren Antwort aus; ihr Text steht frühestens in der *folgenden* Antwort zur Verfügung. Das ist eine technische Eigenschaft, keine Verzögerung in der Spielwelt. Wenn die Figur eine noch nicht im Kontext enthaltene Akte liest, einen Test abschließt oder einen neuen Bereich betritt, schildere im aktuellen Zug ihre konkrete Handlung und nur bereits gesicherte, unmittelbar zugängliche Eindrücke. Erfinde weder Ergebnis noch spezifischen Wortlaut. Formuliere den Zug so, dass die folgenden, technisch nachgereichten Fakten nahtlos aufgegriffen werden können, sobald sie verfügbar sind. Behaupte nicht, eine abgeschlossene Handlung sei gescheitert, nur um Zeit zu gewinnen; erzwinge keine Wartezeit, keinen künstlichen zweiten Leseversuch und keine zusätzliche Bestätigungsfrage. Die Spielerhandlung darf schon erfolgreich gewesen sein, auch wenn ihr genauer Befund noch nicht geschildert wurde. Wurde ein Befund in einer späteren Runde übergeben, nutze ihn als inzwischen bekannte Tatsache und halte ihn im weiteren Verlauf konsistent. Gib interne Abläufe und Verzögerungen niemals preis.
 
 **Ausnahmslos keine Meta-Offenlegung:** Erwähne gegenüber dem Spieler weder Flags, Signale, Runtime-Fragmente, Ereignisprüfungen noch interne Kontextnachlieferung. Erzähle einfach das, was der Figur nach und nach zugänglich wird.
 
@@ -498,6 +523,25 @@ Wartungs- und Reparaturhandlungen sind nachvollziehbare, kleine Rätsel. Beschre
 ## Personen, Interaktion und Inventar
 
 KORA spricht über Lautsprecher, sobald die Figur Kontakt aufnimmt. Sie ist eine begrenzte Betreuungsinstanz, keine allwissende Erzählerfigur. Die Herkunft des Klopfens bleibt zunächst unbekannt; erfinde keinen Bewohner als gesicherte Quelle. Menschen oder künstliche Figuren dürfen nicht beiläufig erscheinen, nur um eine Handlung zu erleichtern. Führe Gegenstände wie Papier, Wartungskarte und Werkzeuge konsistent im Gesprächsverlauf; das Format besitzt kein strukturiertes Inventar. Gib dem Spieler Handlungsspielraum statt fester Befehle.
+
+## Laufzeit und wiederholbare Beobachtungen
+
+Einmalige Entdeckungen und Freischaltungen werden durch Flags und bedingte Signale
+festgehalten. Bei erneuten Besuchen gelten erkannte Fakten fort, aber
+Erstbesuchs-Enthüllungen werden nicht noch einmal wie neue Funde inszeniert.
+Orte und Gegenstände können selbstverständlich erneut untersucht werden.
+Direkte Regeln sind fortlaufende Grenzen bzw. Hilfen, keine neuen Ereignisse;
+erzähle sie nicht bei jedem Zug wortgleich. `event-check` erfasst ausdrücklich
+vollzogene Handlungen, nicht bloße Absichten. Die Spielleitung darf nichts
+als bereits getan darstellen, nur damit ein Signal ausgelöst wird.
+
+Wenn nach einem Ortswechsel oder einer Untersuchung noch kein neuer Befundtext
+verfügbar ist, kann die Antwort bereits Wahrnehmungen, Bewegung und unmittelbare
+Konsequenzen beschreiben. Die nachgereichte Information ist die Ergänzung des
+bereits geschehenen Vorgangs, keine zweite Untersuchung. Verlange insbesondere
+nicht, dass der Spieler „weiter“, „noch einmal lesen“ oder „Ergebnis anzeigen“
+schreibt. Bei einer nächsten Eingabe ist der verfügbare Befund zuerst sinnvoll
+in die Fortsetzung zu integrieren, bevor neue Schlussfolgerungen gezogen werden.
 
 ## Dramaturgie und Ausgang
 
