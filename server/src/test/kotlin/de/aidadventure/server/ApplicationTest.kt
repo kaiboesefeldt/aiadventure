@@ -207,7 +207,7 @@ class ApplicationTest {
         registry.coordinator.turnEvents = flowOf(
             TurnStreamEvent.Fragment("A hidden route opens.", listOf("found-map")),
             TurnStreamEvent.Token("SECRET_GAME_MASTER_OUTPUT"),
-            TurnStreamEvent.Done(TurnMetrics(42, 24, 18)),
+            TurnStreamEvent.Done(TurnMetrics(42, 24, 18, evaluatedTokens = 6)),
         )
         registry.coordinator.acceptedWorldState = WorldState("Harbour", "Find the keeper")
         application { adventureModule(prefillRegistry = registry, runtimeFragmentResolver = resolving(null)) }
@@ -233,6 +233,11 @@ class ApplicationTest {
         )
         assertEquals("Quay", diagnostics.first().getValue("fields").jsonObject.getValue("location").jsonPrimitive.content)
         assertEquals("42", diagnostics[2].getValue("metrics").jsonObject.getValue("totalDurationMs").jsonPrimitive.content)
+        assertEquals("24", diagnostics[2].getValue("metrics").jsonObject.getValue("promptTokens").jsonPrimitive.content)
+        assertEquals("6", diagnostics[2].getValue("metrics").jsonObject.getValue("evaluatedTokens").jsonPrimitive.content)
+        val done = body.split("\n\n").single { it.startsWith("event: done\n") }.substringAfter("data: ")
+        val doneMetrics = Json.parseToJsonElement(done).jsonObject.getValue("metrics").jsonObject
+        assertEquals(setOf("totalDurationMs", "promptTokens", "cacheTokens"), doneMetrics.keys)
         assertEquals("Harbour", diagnostics[3].getValue("fields").jsonObject.getValue("location").jsonPrimitive.content)
         assertFalse(diagnostics.joinToString().contains("SECRET_PLAYER_ACTION"))
         assertFalse(diagnostics.joinToString().contains("SECRET_GAME_MASTER_OUTPUT"))

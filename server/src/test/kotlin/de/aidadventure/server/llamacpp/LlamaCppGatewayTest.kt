@@ -71,7 +71,7 @@ class LlamaCppGatewayTest {
             assertEquals(DiagnosticMetrics(promptTokens = 10, contextTokens = 8192, predictedTokens = 7,
                 cacheTokens = 8, evaluatedTokens = 3, promptDurationMs = 12.5, predictedDurationMs = 35.0,
                 promptTokensPerSecond = 240.0, predictedTokensPerSecond = 200.0), metrics)
-            assertEquals(TurnStreamEvent.Done(TurnMetrics(null, 3, 8)), events.filterIsInstance<TurnStreamEvent.Done>().single())
+            assertEquals(TurnStreamEvent.Done(TurnMetrics(null, 10, 8, evaluatedTokens = 3)), events.filterIsInstance<TurnStreamEvent.Done>().single())
             assertTrue(events.indexOfFirst { it is TurnStreamEvent.Diagnostic } < events.indexOfFirst { it is TurnStreamEvent.Done })
         }
         nativeServer(finalTimingFields = "").use { server ->
@@ -209,7 +209,7 @@ class LlamaCppGatewayTest {
                 val chatTrace = RecordingTraceLogger()
 
                 assertEquals(
-                    listOf(TurnStreamEvent.Done(TurnMetrics(null, 20, 17))),
+                    listOf(TurnStreamEvent.Done(TurnMetrics(null, 10, 17, evaluatedTokens = 20))),
                     LlamaCppGateway(traceLogger = nativeTrace).stream(request(native.port), LlamaCppSlot(2)).toList().withoutDiagnostics(),
                 )
                 assertEquals(
@@ -385,7 +385,7 @@ class LlamaCppGatewayTest {
         nativeServer().use { server ->
             val events = LlamaCppGateway().suggest(request(server.port), LlamaCppSlot(2)).toList().withoutDiagnostics()
             assertEquals(TurnStreamEvent.Token("Hello"), events.first())
-            assertEquals(TurnStreamEvent.Done(TurnMetrics(null, 20, 17)), events.last())
+            assertEquals(TurnStreamEvent.Done(TurnMetrics(null, 10, 17, evaluatedTokens = 20)), events.last())
             assertEquals(2, server.completionBodies.single().jsonObject.getValue("id_slot").jsonPrimitive.int)
             assertTrue(server.templateBodies.single().contains("PLAYER ACTION SO FAR"))
             assertTrue(server.completionBodies.single().jsonObject.getValue("cache_prompt").jsonPrimitive.boolean)
@@ -410,7 +410,7 @@ class LlamaCppGatewayTest {
             assertEquals(
                 listOf(
                     TurnStreamEvent.Token("Hello"),
-                    TurnStreamEvent.Done(TurnMetrics(null, 20, 17)),
+                    TurnStreamEvent.Done(TurnMetrics(null, 10, 17, evaluatedTokens = 20)),
                 ),
                 gateway.stream(request(server.port), LlamaCppSlot(2)).toList().withoutDiagnostics(),
             )

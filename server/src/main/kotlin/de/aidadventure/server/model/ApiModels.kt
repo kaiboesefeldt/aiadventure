@@ -124,6 +124,7 @@ data class TurnMetrics(
     val totalDurationMs: Long?,
     val promptTokens: Int?,
     val cacheTokens: Int?,
+    @Transient val evaluatedTokens: Int? = null,
 )
 
 sealed interface TurnStreamEvent {

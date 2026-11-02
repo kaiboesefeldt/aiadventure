@@ -415,7 +415,7 @@ class LlamaCppGateway private constructor(
                                 predictedTokensPerSecond = chunk.timings?.predictedTokensPerSecond,
                             ),
                         )))
-                        send(TurnStreamEvent.Done(TurnMetrics(null, metrics.evaluatedTokens, metrics.cachedTokens)))
+                        send(TurnStreamEvent.Done(TurnMetrics(null, budget.promptTokens, metrics.cachedTokens, metrics.evaluatedTokens)))
                         completed = true
                         close()
                         break

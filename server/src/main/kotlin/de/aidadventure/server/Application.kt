@@ -385,7 +385,7 @@ fun Application.adventureModule(
                         val requestId = call.callId ?: "unknown"
                         diagnostic(StreamDiagnostic("turn_metrics", "completed", transcriptRole = "game-master",
                             metrics = DiagnosticMetrics(totalDurationMs = metrics.totalDurationMs,
-                                evaluatedTokens = metrics.promptTokens, cacheTokens = metrics.cacheTokens)))
+                                promptTokens = metrics.promptTokens, evaluatedTokens = metrics.evaluatedTokens, cacheTokens = metrics.cacheTokens)))
                         var completedFlags = request.flags
                         var nextRuntimeContext = ""
                         val completedHistory = (appliedFragment?.takeIf { it.isNotBlank() }?.let { request.history + ChatEntry("runtime-fragment", it) } ?: request.history) +
