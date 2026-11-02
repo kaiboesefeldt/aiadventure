@@ -39,6 +39,34 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PrefillCoordinatorTest {
+    @Test fun `selected fragment text survives its signal changing a required flag`() = runBlocking {
+        val fake = ControllableGateway(classify = { "Y" }, warmup = { CacheMetrics(8, 2) })
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        try {
+            val selected = candidate().copy(
+                conditions = listOf(de.aidadventure.server.model.FlagCondition("known", false)),
+                emittedSignals = listOf("introduction"),
+            )
+            val request = warmup().copy(
+                flags = mapOf("known" to false),
+                signals = mapOf("introduction" to listOf(de.aidadventure.server.model.FlagAssignment("known", true))),
+                signalChecks = listOf(de.aidadventure.server.model.SignalCheckDefinition("introduction", null, emittedTexts = listOf("Friedhelm watches warily."))),
+                runtimeFragments = listOf(selected),
+            )
+            val reservation = coordinator.reserveRerank(request, "origin")!!
+            coordinator.completeReservedRerank(reservation, selected)
+
+            val outcome = coordinator.awaitSignalChecks(reservation)
+
+            assertEquals(mapOf("known" to true), outcome.flags)
+            assertEquals("Friedhelm watches warily.\n\nfragment text", outcome.nextRuntimeContext)
+            assertEquals(listOf("Friedhelm watches warily.", "fragment text"),
+                outcome.diagnostics.filter { it.kind == "text_emitted" }.map { it.fields["text"] })
+            assertEquals(listOf("signal", "runtime_fragment"),
+                outcome.diagnostics.filter { it.kind == "text_emitted" }.map { it.fields["sourceType"] })
+        } finally { coordinator.close() }
+    }
+
     @Test fun `accepted fragment triggers its signal using original flags and current location without model check`() = runBlocking {
         for (accepted in listOf(false, true)) for (fragmentEnabled in listOf(false, true)) for (signalEnabled in listOf(false, true)) {
             val fake = ControllableGateway(classify = { if (accepted) "Y" else "N" },
@@ -90,7 +118,7 @@ class PrefillCoordinatorTest {
             } finally { coordinator.close() }
         }
     }
-    @Test fun `named text diagnostics require classifier acceptance and final flag guard while direct text remains`() = runBlocking {
+    @Test fun `named text diagnostics require classifier acceptance and survive later flag changes`() = runBlocking {
         for (accepted in listOf(false, true)) for (visited in listOf(false, true)) {
             val fake = ControllableGateway(classify = { if (accepted) "Y" else "N" }, warmup = { CacheMetrics(8, 2) })
             val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
@@ -98,12 +126,15 @@ class PrefillCoordinatorTest {
                 val request = warmup().copy(flags = mapOf("visited" to false),
                     signals = mapOf("enter" to listOf(de.aidadventure.server.model.FlagAssignment("visited", visited))),
                     signalChecks = listOf(de.aidadventure.server.model.SignalCheckDefinition("enter", null)),
-                    runtimeFragments = listOf(RuntimeFragmentDefinition("", "Direct", emittedSignals = listOf("enter"), direct = true)))
+                    runtimeFragments = listOf(
+                        RuntimeFragmentDefinition("", "Direct", emittedSignals = listOf("enter"), direct = true),
+                        candidate().copy(conditions = listOf(de.aidadventure.server.model.FlagCondition("visited", false))),
+                    ))
                 val reservation = coordinator.reserveRerank(request, "origin")!!
                 coordinator.completeReservedRerank(reservation, candidate().copy(conditions = listOf(de.aidadventure.server.model.FlagCondition("visited", false))))
                 val outcome = coordinator.awaitSignalChecks(reservation)
                 val texts = coordinator.awaitBackgroundDiagnostic(reservation.operationId)!!.effects.filter { it.kind == "text_emitted" }
-                val expected = if (accepted && !visited) listOf("Direct", "fragment text") else listOf("Direct")
+                val expected = if (accepted) listOf("Direct", "fragment text") else listOf("Direct")
                 assertEquals(expected, texts.map { it.fields["text"] })
                 assertEquals(expected.joinToString("\n\n"), outcome.nextRuntimeContext)
                 assertEquals(outcome.nextRuntimeContext, fake.warmupRequests.single().history.last().content)
