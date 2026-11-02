@@ -856,7 +856,7 @@ internal class SessionPrefillCoordinator(
                     val accepted = candidate != null && decision == true
                     operation.resolvedFragment = candidate?.takeIf { accepted }
                     rerankDiagnosticSink(RerankDiagnostic(response, decision, accepted))
-                    if (request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct } ||
+                    if (request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct || it.setFlags.isNotEmpty() } ||
                         request.enteredLocations.any { request.locationTriggers[it].orEmpty().isNotEmpty() }) {
                         operation.signalOutcome = runSignalChecks(prepared, directRules, operation.resolvedFragment) { definition ->
                             gateway.checkSignal(prepared, definition, lease.slot, callDiagnostics::add)
@@ -1118,9 +1118,8 @@ internal class SessionPrefillCoordinator(
         request = request.copy(history = this.request.history),
     )
 
-    private fun TurnRequest.withNextFragment(): ResolvedTurn = nextFragment?.takeIf { candidate ->
-        matchesRuntimeConditions(candidate.conditions, candidate.excludedConditions, flags, worldState.location)
-    }?.let { candidate ->
+    // Selection was accepted against the prior turn's snapshot; its own effects may change eligibility.
+    private fun TurnRequest.withNextFragment(): ResolvedTurn = nextFragment?.let { candidate ->
         ResolvedTurn(
             if (candidate.fragment.isBlank() || history.lastOrNull() == ChatEntry("runtime-fragment", candidate.fragment)) this
             else copy(history = history + ChatEntry("runtime-fragment", candidate.fragment)),
@@ -1236,7 +1235,7 @@ internal class SessionPrefillCoordinator(
 
         fun handoff(lease: Lease, resolvedTurn: ResolvedTurn, diagnostics: List<StreamDiagnostic>) {
             this.request = resolvedTurn.request
-            if (postTurnGate == null && (request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct })) postTurnGate = PostTurnGate(requestId, request.flags)
+            if (postTurnGate == null && (request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct || it.setFlags.isNotEmpty() })) postTurnGate = PostTurnGate(requestId, request.flags)
             selectedFragment = resolvedTurn.fragment
             emittedSignals = resolvedTurn.emittedSignals
             priorDiagnostics = diagnostics

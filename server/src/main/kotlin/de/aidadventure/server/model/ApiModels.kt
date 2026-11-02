@@ -20,6 +20,7 @@ data class RuntimeFragmentDefinition(
     val emittedSignals: List<String> = emptyList(),
     val direct: Boolean = false,
     val excludedConditions: List<List<FlagCondition>> = emptyList(),
+    val setFlags: List<FlagAssignment> = emptyList(),
 )
 
 /** One flag/value predicate or one exact current-location predicate. */

@@ -81,9 +81,10 @@ Gib Hinweise schrittweise und akzeptiere plausible Lösungswege.
 | `runtime-fragments` | Mapping mit benannten Fragmenten und optionalen direkten Regeln | Ja; keine Zusatzhinweise |
 | Fragmentfeld `emit-text` | Nichtleerer Zusatztext, an Nachfahren vererbt | Ja |
 | Fragmentfeld `signal` | Name eines deklarierten Signals, an Nachfahren vererbt | Ja |
+| Fragmentfeld `set-flag` | Nichtleeres Mapping deklarierter Flags auf boolesche Zielwerte, an benannte Nachfahren vererbt | Ja |
 | Fragmentfeld `condition` | Bedingungs-Mapping (Flags und/oder `location`, UND) oder Liste unabhängiger `then`-Zweige mit optionalem abschließendem `else` | Ja |
 
-Die letzten drei Fragmentfelder haben eine besondere Kompatibilitätsregel:
+Die letzten vier Fragmentfelder haben eine besondere Kompatibilitätsregel:
 Sie sind nur bei vorhandenem obersten `flags`- oder `signals`-Feld Metadaten,
 auch direkt unter `runtime-fragments`. Ohne beide Felder sind sie normale
 Fragmentnamen. Siehe Abschnitt 7.
@@ -528,7 +529,7 @@ runtime-fragments:
 `condition` als Liste benötigt mindestens einen bedingten Zweig. Jeder solche
 Zweig enthält mindestens eine Flag- oder Ortsbedingung
 (UND) und genau ein `then`. `then` ist ein nichtleeres Mapping und darf direkt
-`emit-text`, `signal`, eine weitere `condition` sowie benannte Kinder enthalten.
+`emit-text`, `signal`, `set-flag`, eine weitere `condition` sowie benannte Kinder enthalten.
 Verschachtelung ist auch ohne zusätzlichen Situationsnamen möglich.
 Ein einzelner Text oder eine Liste als `then` ist ungültig.
 
@@ -602,10 +603,29 @@ World-State-Ort erfüllt sein. Ein abgelehntes oder gesperrtes Fragment löst ni
 Ein eigenes `event-check` erlaubt außerdem eine unabhängige automatische Prüfung,
 wenn das Signal nicht bereits durch Fragment, direkte Regel oder Ort ausgelöst wurde.
 
+Ein ausgewähltes Fragment kann Flags auch ohne separates Signal setzen:
+
+```yaml
+flags: {friedhelm-bekannt: false}
+runtime-fragments:
+  "Die Figur begegnet Friedhelm erstmals":
+    condition: {friedhelm-bekannt: false}
+    emit-text: Stelle Friedhelm vor.
+    set-flag: {friedhelm-bekannt: true}
+```
+
+`set-flag` ist ein nichtleeres Mapping bereits deklarierter Flags auf `true`
+oder `false`. Das Fragment darf auch ausschließlich Flags setzen. Die Zuweisungen
+werden erst bei bestätigter Auswahl des berechtigten Fragments ausgeführt;
+ein bloßer Suchkandidat setzt keine Flags. Benannte Nachfahren erben die
+Zuweisungen ihrer Gruppen; bei mehrfacher Zuweisung gilt der letzte Wert.
+Ein Fragment bleibt für diesen Durchlauf ausgewählt, auch wenn seine eigenen
+Zuweisungen seine Bedingung für spätere Durchläufe aufheben.
+
 ### G. Direkte Regeln ohne semantische Suche
 
 Direkt unter `runtime-fragments` darf ebenfalls `condition` stehen. Ein `then`
-kann sofort Text ausgeben oder ein deklariertes Signal auslösen, ohne einen
+kann sofort Text ausgeben, Flags setzen oder ein deklariertes Signal auslösen, ohne einen
 Situationsnamen, Suchtext oder eine Modellprüfung zu benötigen:
 
 ```yaml
@@ -651,6 +671,11 @@ Auslösung wird keine Ereignisfrage an das Modell gestellt. Eine eigene
 `condition` der Signaldefinition muss ebenfalls im Ausgangszustand erfüllt sein.
 Verwende die Flag- und Ortsbedingungen der Regel und des Signals, um die Voraussetzungen
 eindeutig festzulegen. Ein Signal ohne `event-check` wird nicht zusätzlich unabhängig als Ereignis geprüft.
+Auch ein `then: {set-flag: {spur-erklaert: true}}` ohne Text oder Signal
+ist eine gültige direkte Regel. Root-Zuweisungen werden nicht nochmals an
+benannte Kinder vererbt. Nach Orts-Eintrittsaktionen folgen die Zuweisungen
+direkter Regeln, dann die des ausgewählten Fragments und schließlich die
+übrigen Signalaktionen. Bei Konflikten gewinnt die zuletzt ausgeführte Zuweisung.
 Es gibt keine Kettenreaktion zwischen Regeln desselben Durchlaufs: Ein dabei
 neu gesetztes Flag macht einen vorher unpassenden Zweig erst bei einer
 späteren Auswertung passend.
@@ -662,14 +687,14 @@ solchen Schutz und bleibt wiederholbar. Alle Hinweise gelten für folgende
 Antworten; sie ändern keine bereits sichtbare Erzählung. Im verborgenen Kontext
 stehen zuerst direkte Regeltexte in Deklarations-/Durchlaufreihenfolge, dann
 Texte ausgelöster Signale in Signal- und Triggerreihenfolge und zuletzt das
-semantisch ausgewählte Fragment. Dieses Fragment wird nur übernommen, wenn
-es auch nach den Flag-Zuweisungen noch berechtigt ist.
+semantisch ausgewählte Fragment. Die Berechtigung dieses Fragments wird anhand des gemeinsamen
+Ausgangszustands geprüft; spätere Zuweisungen ändern diese Auswahl nicht.
 
 Auch `then` mit benannten Kindern ist erlaubt. Diese Kinder bleiben
 retrievalbasierte Fragmente und erben die Flag- und Ortsbedingungen der Regel. Direkte
-`emit-text`- und `signal`-Aktionen ohne benannten Pfad werden dagegen dort
+`emit-text`-, `signal`- und `set-flag`-Aktionen ohne benannten Pfad werden dagegen dort
 verarbeitet und nicht nochmals an die benannten Kinder vererbt. Innerhalb
-benannter Fragmentgruppen gilt weiterhin die Text- und Signalvererbung aus
+benannter Fragmentgruppen gilt weiterhin die Text-, Signal- und Flag-Zuweisungsvererbung aus
 Abschnitt C und F. Ein direktes `emit-text` ohne benannten Pfad ist eine
 Regelaktion; ein `emit-text` unter einem benannten Fragment ist dessen
 Auswahlkontext.
@@ -687,7 +712,7 @@ runtime-fragments:
 Ohne oberstes `flags` oder `signals` sind das drei gewöhnliche Textblätter
 mit den Pfaden `Leuchtturm / condition`, `Leuchtturm / emit-text` und
 `Leuchtturm / signal`. Sobald eines dieser obersten Felder existiert,
-werden diese Namen als Metadaten interpretiert, auch direkt auf der obersten
+werden diese Namen sowie `set-flag` als Metadaten interpretiert, auch direkt auf der obersten
 Ebene unter `runtime-fragments`. Andere Schlüssel bleiben Fragmentnamen.
 Verwende für neue Spiele aussagekräftige Situationsnamen und deklariere
 `flags: {}`, wenn du Metadaten ohne tatsächliche Flags nutzen möchtest.

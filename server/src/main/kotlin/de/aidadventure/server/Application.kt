@@ -433,7 +433,7 @@ fun Application.adventureModule(
                         }
                         val enteredLocations = enteredLocationsForTurn(request.history, request.worldState.location, acceptedWorldState.location)
                         val acceptedWarmupRequest = warmupRequest.copy(worldState = acceptedWorldState, enteredLocations = enteredLocations)
-                        val hasPostTurnEffects = request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct } ||
+                        val hasPostTurnEffects = request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct || it.setFlags.isNotEmpty() } ||
                             enteredLocations.any { request.locationTriggers[it].orEmpty().isNotEmpty() }
                         var reservation: de.aidadventure.server.prefill.RerankReservation? = null
                         try {
@@ -820,6 +820,7 @@ object RequestValidator {
         } -> invalid()
         runtimeFragments.any { fragment ->
             fragment.conditions.any { !validCondition(it, flags, locations) } || fragment.emittedSignals.any { it !in signals } ||
+                fragment.setFlags.any { it.flag !in flags } ||
                 !validExclusions(fragment.excludedConditions, flags, locations)
         } -> invalid()
         else -> null
@@ -830,9 +831,10 @@ object RequestValidator {
             content.length.toLong() <= if (role == "runtime-fragment") MAX_HISTORY_CHARS else MAX_TEXT_LENGTH.toLong()
 
     private fun de.aidadventure.server.model.RuntimeFragmentDefinition.isValidRuntimeFragmentDefinition(): Boolean =
-        (direct || matchText.isNotBlank()) && (fragment.isNotBlank() || emittedSignals.isNotEmpty()) &&
+        (direct || matchText.isNotBlank()) && (fragment.isNotBlank() || emittedSignals.isNotEmpty() || setFlags.isNotEmpty()) &&
             matchText.length <= MAX_TEXT_LENGTH && fragment.length <= MAX_TEXT_LENGTH &&
-            conditions.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS && emittedSignals.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS
+            conditions.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS && emittedSignals.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS &&
+            setFlags.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS
 
     private fun validExclusions(groups: List<List<de.aidadventure.server.model.FlagCondition>>, flags: Map<String, Boolean>, locations: Map<String, String>): Boolean =
         groups.size <= MAX_RUNTIME_FRAGMENT_DEFINITIONS && groups.all { group ->

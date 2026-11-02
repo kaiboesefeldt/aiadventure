@@ -7,6 +7,39 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertContains
 
 class ScenarioFrontmatterTest {
+    @Test fun `runtime fragment flag assignments support inherited named effects and assignment only direct branches`() {
+        val parsed = ScenarioFrontmatter.parse("""---
+flags: {visited: false, reward: false}
+runtime-fragments:
+  condition:
+    - visited: false
+      then:
+        set-flag: {visited: true}
+  tower:
+    set-flag: {reward: true}
+    room:
+      set-flag: {reward: false}
+---
+# Tower
+""")
+        assertEquals(2, parsed.runtimeFragments.size)
+        val direct = parsed.runtimeFragments.single { it.direct }
+        val named = parsed.runtimeFragments.single { !it.direct }
+        assertEquals("", direct.matchText)
+        assertEquals("tower\nroom", named.matchText)
+        assertEquals(listOf(FlagAssignment("visited", true)), direct.setFlags)
+        assertEquals(listOf(FlagAssignment("reward", true), FlagAssignment("reward", false)), named.setFlags)
+    }
+
+    @Test fun `runtime fragment assignments reject empty unknown and nonboolean flag values`() {
+        for (assignment in listOf("{}", "{unknown: true}", "{visited: yes}")) {
+            val error = assertFailsWith<IllegalArgumentException> {
+                ScenarioFrontmatter.parse("---\nflags: {visited: false}\nruntime-fragments:\n  tower:\n    set-flag: $assignment\n---\n# Tower")
+            }
+            assertContains(error.message.orEmpty(), "runtime-fragments.tower.set-flag")
+        }
+    }
+
     @Test fun `declared boolean flag named location remains distinct from current location predicates`() {
         val parsed = ScenarioFrontmatter.parse("""---
 flags: {location: false}

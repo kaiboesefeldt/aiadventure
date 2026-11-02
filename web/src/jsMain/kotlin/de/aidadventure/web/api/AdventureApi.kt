@@ -361,6 +361,7 @@ private fun de.aidadventure.web.persistence.RuntimeFragmentDefinition.toApi() = 
     emittedSignals = emittedSignals,
     direct = direct,
     excludedConditions = excludedConditions.map { group -> group.map { FlagCondition(it.flag, it.value, it.location) } },
+    setFlags = setFlags.map { FlagAssignment(it.flag, it.value) },
 )
 
 private fun de.aidadventure.web.persistence.SignalCheckDefinition.toApi() = SignalCheckDefinition(
@@ -388,6 +389,7 @@ data class RuntimeFragmentDefinition(
     val emittedSignals: List<String> = emptyList(),
     val direct: Boolean = false,
     val excludedConditions: List<List<FlagCondition>> = emptyList(),
+    val setFlags: List<FlagAssignment> = emptyList(),
 )
 
 /** One flag/value predicate or one exact current-location predicate. */
