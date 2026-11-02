@@ -866,9 +866,6 @@ internal class SessionPrefillCoordinator(
                         }
                     }
                     val finalFlags = operation.signalOutcome?.flags ?: prepared.flags
-                    operation.resolvedFragment = operation.resolvedFragment?.takeIf { fragment ->
-                        matchesRuntimeConditions(fragment.conditions, fragment.excludedConditions, finalFlags, prepared.worldState.location)
-                    }
                     val effectKinds = setOf("text_emitted", "flag_set", "signal_detected")
                     val effects = operation.signalOutcome?.diagnostics.orEmpty().filter { it.kind in effectKinds }.toMutableList()
                     operation.resolvedFragment?.takeIf { it.fragment.isNotBlank() }?.let { selected ->
