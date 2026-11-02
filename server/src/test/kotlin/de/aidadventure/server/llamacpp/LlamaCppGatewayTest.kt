@@ -369,6 +369,28 @@ class LlamaCppGatewayTest {
     }
 
     @Test
+    fun `suggestion streams on retained slot with temporary instruction`() = runBlocking {
+        nativeServer().use { server ->
+            val events = LlamaCppGateway().suggest(request(server.port), LlamaCppSlot(2)).toList().withoutDiagnostics()
+            assertEquals(TurnStreamEvent.Token("Hello"), events.first())
+            assertEquals(TurnStreamEvent.Done(TurnMetrics(null, 20, 17)), events.last())
+            assertEquals(2, server.completionBodies.single().jsonObject.getValue("id_slot").jsonPrimitive.int)
+            assertTrue(server.templateBodies.single().contains("PLAYER ACTION SO FAR"))
+            assertTrue(server.completionBodies.single().jsonObject.getValue("cache_prompt").jsonPrimitive.boolean)
+        }
+    }
+
+    @Test
+    fun `empty action prefill restores canonical history without an empty player message`() = runBlocking {
+        nativeServer().use { server ->
+            LlamaCppGateway().prefill(request(server.port).copy(playerAction = ""), LlamaCppSlot(2))
+            val messages = server.templateBodies.single().jsonObject.getValue("messages").jsonArray
+            assertEquals(3, messages.size)
+            assertEquals("Misty trees surround you.", messages.last().jsonObject.getValue("content").jsonPrimitive.content)
+        }
+    }
+
+    @Test
     fun `turn uses the same slot and maps cache metrics`() = runBlocking {
         nativeServer().use { server ->
             val gateway = LlamaCppGateway(promptFactory = PromptFactory())

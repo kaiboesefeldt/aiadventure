@@ -35,6 +35,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
@@ -111,6 +112,8 @@ private fun warmupFailure(requestId: String, operation: String, failure: Throwab
     WarmupFailure(requestId, operation, failure.javaClass.simpleName).also { it.exception = failure }
 
 interface PrefillCoordinator {
+    fun beginSuggestion(request: TurnRequest): Flow<TurnStreamEvent> = flow { error("Suggestions unsupported") }
+    suspend fun holdPostTurn(requestId: String, flags: Map<String, Boolean>) {}
     suspend fun diagnosticSnapshot(): CoordinatorStateDiagnostic? = null
     suspend fun awaitPostTurn(request: TurnRequest): TurnRequest = request
     suspend fun finishPostTurn(requestId: String, flags: Map<String, Boolean>) {}
@@ -200,6 +203,7 @@ internal interface PrefillGateway {
     ): WorldState? = resolveWorldState(primaryRequest, gameMasterResponse, request, slot)
     suspend fun checkSignal(request: WarmupRequest, definition: SignalCheckDefinition, slot: LlamaCppSlot, onCall: (StreamDiagnostic) -> Unit): String = error("Signal checks unsupported")
     fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent>
+    fun suggest(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> = stream(request, slot)
 }
 
 internal class LlamaCppPrefillGateway(
@@ -248,6 +252,7 @@ internal class LlamaCppPrefillGateway(
         onCall: (StreamDiagnostic) -> Unit): String = gateway.checkSignal(request, definition, slot, onCall)
 
     override fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> = gateway.stream(request, slot)
+    override fun suggest(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> = gateway.suggest(request, slot)
 }
 
 internal class SessionPrefillCoordinator(
@@ -298,10 +303,81 @@ internal class SessionPrefillCoordinator(
     private val backgroundReservations = mutableMapOf<String, RerankReservation>()
     private var state: State = State.Idle
     private var postTurnGate: PostTurnGate? = null
+    private var suggestion: SuggestionExecution? = null
+
+    private class SuggestionExecution(val job: Job, val lease: Lease) {
+        val finished = CompletableDeferred<Unit>()
+        var pending: PendingPrefill? = null
+    }
+
+    override fun beginSuggestion(request: TurnRequest): Flow<TurnStreamEvent> = flow {
+        var effective = request
+        var execution: SuggestionExecution? = null
+        while (execution == null) {
+            var waitGate: PostTurnGate? = null
+            var waitJob: Job? = null
+            var waitSuggestion: CompletableDeferred<Unit>? = null
+            mutex.withLock {
+                check(!closed) { "Prefill coordinator is closed." }
+                waitGate = postTurnGate
+                if (waitGate == null) {
+                    val active = suggestion
+                    if (active != null) waitSuggestion = active.finished
+                    else when (val current = state) {
+                        is State.Prefilling -> waitJob = current.operation.job
+                        is State.TurnWaiting -> waitJob = current.execution.job
+                        is State.Turning -> waitJob = current.execution.job
+                        else -> {
+                            val lease = when (current) {
+                                is State.Ready -> current.lease
+                                is State.ReleasePending -> { releaseLeaseLocked(current.lease); acquireLease(effective.llamaCppPort) }
+                                else -> acquireLease(effective.llamaCppPort)
+                            }
+                            state = State.Ready(lease, null)
+                            execution = SuggestionExecution(requireNotNull(currentCoroutineContext()[Job]), lease)
+                            suggestion = execution
+                        }
+                    }
+                }
+            }
+            if (waitGate != null) {
+                val gate = requireNotNull(waitGate)
+                val flags = gate.flags.await()
+                val context = gate.completedContext
+                effective = if (context != null && effective.history.size <= context.history.size &&
+                    context.history.take(effective.history.size) == effective.history) {
+                    effective.copy(history = context.history, worldState = context.worldState,
+                        contextCompression = context.contextCompression, flags = flags)
+                } else effective.copy(flags = flags)
+            }
+            else if (waitJob != null) requireNotNull(waitJob).join()
+            else waitSuggestion?.await()
+        }
+        val active = requireNotNull(execution)
+        try {
+            val prepared = prepareTurn(effective.withNextFragment().request, active.lease.slot)
+            emit(TurnStreamEvent.GenerationReady)
+            gateway.suggest(prepared, active.lease.slot).collect { emit(it) }
+        } finally {
+            withContext(NonCancellable) {
+                mutex.withLock {
+                    if (suggestion === active) {
+                        suggestion = null
+                        if (!closed) active.pending?.let { submitLocked(it.request, it.resolvedTurn) }
+                        active.finished.complete(Unit)
+                    }
+                }
+            }
+        }
+    }
 
     override suspend fun awaitPostTurn(request: TurnRequest): TurnRequest {
         val gate = mutex.withLock { postTurnGate } ?: return request
         return request.copy(flags = gate.flags.await())
+    }
+
+    override suspend fun holdPostTurn(requestId: String, flags: Map<String, Boolean>) = mutex.withLock {
+        if (postTurnGate == null) postTurnGate = PostTurnGate(requestId, flags)
     }
 
     override suspend fun finishPostTurn(requestId: String, flags: Map<String, Boolean>) {
@@ -313,6 +389,16 @@ internal class SessionPrefillCoordinator(
         mutex.withLock {
             if (postTurnGate === gate) {
                 postTurnGate = null
+                gate.pending?.let { pending ->
+                    val context = gate.completedContext
+                    val input = pending.request
+                    val reconciled = if (context != null && input.history.size <= context.history.size &&
+                        context.history.take(input.history.size) == input.history) {
+                        input.copy(history = context.history, worldState = context.worldState,
+                            contextCompression = context.contextCompression, flags = settledFlags)
+                    } else input.copy(flags = settledFlags)
+                    submitLocked(reconciled, reconciled.asTurnRequest().withNextFragment())
+                }
                 gate.flags.complete(settledFlags)
             }
         }
@@ -333,7 +419,18 @@ internal class SessionPrefillCoordinator(
 
     private fun submitLocked(request: PrefillRequest, resolvedTurn: ResolvedTurn): PrefillDisposition {
         if (request.contextCompression.epoch < latestContextCompression.epoch) return PrefillDisposition.STALE
-        if (closed || postTurnGate != null || state is State.Turning || state is State.TurnWaiting) {
+        if (closed) return PrefillDisposition.TURN_IN_PROGRESS
+        postTurnGate?.let { gate ->
+            if (request.revision <= maxOf(latestRevision, gate.pending?.request?.revision ?: Long.MIN_VALUE)) return PrefillDisposition.STALE
+            gate.pending = PendingPrefill(request, resolvedTurn)
+            return PrefillDisposition.QUEUED
+        }
+        suggestion?.let { active ->
+            if (request.revision <= maxOf(latestRevision, active.pending?.request?.revision ?: Long.MIN_VALUE)) return PrefillDisposition.STALE
+            active.pending = PendingPrefill(request, resolvedTurn)
+            return PrefillDisposition.QUEUED
+        }
+        if (closed || suggestion != null || postTurnGate != null || state is State.Turning || state is State.TurnWaiting) {
             return PrefillDisposition.TURN_IN_PROGRESS
         }
         if (request.revision <= latestRevision) return PrefillDisposition.STALE
@@ -373,7 +470,7 @@ internal class SessionPrefillCoordinator(
 
     override suspend fun warmup(request: WarmupRequest, requestId: String): PrefillDisposition = mutex.withLock {
         if (request.contextCompression.epoch < latestContextCompression.epoch) return@withLock PrefillDisposition.STALE
-        if (closed || postTurnGate != null || state is State.Turning || state is State.TurnWaiting) {
+        if (closed || suggestion != null || postTurnGate != null || state is State.Turning || state is State.TurnWaiting) {
             return@withLock PrefillDisposition.TURN_IN_PROGRESS
         }
 
@@ -446,6 +543,9 @@ internal class SessionPrefillCoordinator(
                     request.worldState
                 }
                 val canonicalWarmup = request.copy(worldState = accepted)
+                mutex.withLock {
+                    postTurnGate?.takeIf { it.requestId == requestId }?.completedContext = canonicalWarmup
+                }
                 worldStateOperation.acceptedState = accepted
                 try {
                     val metrics = gateway.warmup(canonicalWarmup, current.lease.slot, onDiagnostic)
@@ -472,7 +572,7 @@ internal class SessionPrefillCoordinator(
         candidate: RuntimeFragmentDefinition,
         requestId: String,
     ): PrefillDisposition = mutex.withLock {
-        if (closed || state is State.Turning || state is State.TurnWaiting) {
+        if (closed || suggestion != null || state is State.Turning || state is State.TurnWaiting) {
             return@withLock PrefillDisposition.TURN_IN_PROGRESS
         }
 
@@ -501,7 +601,7 @@ internal class SessionPrefillCoordinator(
     }
 
     override suspend fun reserveRerank(request: WarmupRequest, requestId: String): RerankReservation? = mutex.withLock {
-        if (closed || state is State.Turning || state is State.TurnWaiting || state is State.Prefilling) {
+        if (closed || suggestion != null || state is State.Turning || state is State.TurnWaiting || state is State.Prefilling) {
             return@withLock null
         }
 
@@ -560,12 +660,15 @@ internal class SessionPrefillCoordinator(
         var followingRequest = request
         while (true) {
             var gate: PostTurnGate? = null
+            var suggestionFinished: CompletableDeferred<Unit>? = null
             val admitted = mutex.withLock {
                 gate = postTurnGate
-                if (gate == null) beginReadyTurnLocked(followingRequest, requestId, onAdmitted) else null
+                suggestionFinished = suggestion?.finished
+                if (gate == null && suggestionFinished == null) beginReadyTurnLocked(followingRequest, requestId, onAdmitted) else null
             }
             if (admitted != null) return admitted
-            followingRequest = followingRequest.copy(flags = requireNotNull(gate).flags.await())
+            if (gate != null) followingRequest = followingRequest.copy(flags = requireNotNull(gate).flags.await())
+            else suggestionFinished?.await()
         }
     }
 
@@ -599,7 +702,7 @@ internal class SessionPrefillCoordinator(
         if (!mutex.tryLock()) return false
         return try {
             pruneBackgroundReservationsLocked()
-            if (closed || postTurnGate != null || !state.isIdleForTtl() || backgroundReservations.isNotEmpty()) {
+            if (closed || suggestion != null || postTurnGate != null || !state.isIdleForTtl() || backgroundReservations.isNotEmpty()) {
                 false
             } else {
                 closed = true
@@ -616,7 +719,7 @@ internal class SessionPrefillCoordinator(
         return try {
             pruneBackgroundReservationsLocked()
             val lease = state.activeLeaseOrNull()
-            if (closed || postTurnGate != null || lease == null || lease.released || !state.isIdleForTtl() || backgroundReservations.isNotEmpty()) {
+            if (closed || suggestion != null || postTurnGate != null || lease == null || lease.released || !state.isIdleForTtl() || backgroundReservations.isNotEmpty()) {
                 false
             } else {
                 closed = true
@@ -637,7 +740,7 @@ internal class SessionPrefillCoordinator(
             }
             postTurnGate?.let { it.flags.complete(it.initialFlags) }
             postTurnGate = null
-            Shutdown(state.activeLeaseOrNull(), state.activeJobs(), state.turnExecutionOrNull())
+            Shutdown(state.activeLeaseOrNull(), state.activeJobs() + listOfNotNull(suggestion?.job), state.turnExecutionOrNull())
         }
 
         shutdown.turnExecution?.cancel(CancellationException("Prefill coordinator closed."))
@@ -1136,7 +1239,7 @@ internal class SessionPrefillCoordinator(
 
         fun handoff(lease: Lease, resolvedTurn: ResolvedTurn, diagnostics: List<StreamDiagnostic>) {
             this.request = resolvedTurn.request
-            if (request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct }) postTurnGate = PostTurnGate(requestId, request.flags)
+            if (postTurnGate == null && (request.signals.isNotEmpty() || request.runtimeFragments.any { it.direct })) postTurnGate = PostTurnGate(requestId, request.flags)
             selectedFragment = resolvedTurn.fragment
             emittedSignals = resolvedTurn.emittedSignals
             priorDiagnostics = diagnostics
@@ -1224,6 +1327,8 @@ internal class SessionPrefillCoordinator(
     private class PostTurnGate(val requestId: String, val initialFlags: Map<String, Boolean>) {
         val flags = CompletableDeferred<Map<String, Boolean>>()
         var operation: Operation? = null
+        var completedContext: WarmupRequest? = null
+        var pending: PendingPrefill? = null
     }
 
     private class Lease(val port: Int, val slot: LlamaCppSlot) {

@@ -67,7 +67,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -264,6 +267,44 @@ fun Application.adventureModule(
                 call.respondLlamaUnavailable(logger, "warmup", failure, key, coordinator?.diagnosticSnapshot())
             }
         }
+        post("/api/suggestion") {
+            val request = call.receive<TurnRequest>().configuredFor(llamaCppPort)
+            RequestValidator.validateSuggestion(request)?.let { error ->
+                call.respond(HttpStatusCode.BadRequest, error)
+                return@post
+            }
+            val key = CoordinatorKey(request.sessionId, request.modelId, request.llamaCppPort)
+            call.respondTextWriter(contentType = ContentType.Text.EventStream) {
+                try {
+                    sse("waiting", "{}")
+                    prefillRegistry.removeIdle(clock())
+                    val coordinator = prefillRegistry.coordinatorFor(key)
+                    channelFlow<TurnStreamEvent?> {
+                        val heartbeat = launch { while (isActive) { delay(250); send(null) } }
+                        try {
+                            withIdleLeaseEvictionRetry(prefillRegistry, key, call.callId ?: "unknown", "suggestion", logger) {
+                                coordinator.beginSuggestion(request).collect { send(it) }
+                            }
+                        }
+                        finally { heartbeat.cancel() }
+                    }.collect { event ->
+                        when (event) {
+                            null -> sseComment("waiting")
+                            TurnStreamEvent.GenerationReady -> sse("generation_ready", "{}")
+                            is TurnStreamEvent.Token -> sse("token", eventJson.encodeToString(StreamToken(event.text)))
+                            is TurnStreamEvent.Done -> sse("done", "{}")
+                            else -> Unit
+                        }
+                    }
+                } catch (failure: CancellationException) {
+                    throw failure
+                } catch (failure: Exception) {
+                    logger.warn("requestId={} operation=suggestion result=failed", call.callId)
+                    try { sse("error", eventJson.encodeToString(StreamError("suggestion_failed", "The suggestion could not be generated."))) }
+                    catch (_: IOException) { }
+                }
+            }
+        }
         post("/api/turn") {
             var request = call.receive<TurnRequest>().configuredFor(llamaCppPort)
             RequestValidator.validate(request)?.let { error ->
@@ -302,6 +343,7 @@ fun Application.adventureModule(
                             ))
                         }
                     }
+                    activeCoordinator.holdPostTurn(call.callId ?: "unknown", request.flags)
                     val generated = StringBuilder()
                     var completedMetrics: TurnMetrics? = null
                     var completedCompression = request.contextCompression
@@ -643,6 +685,10 @@ internal fun enteredLocationsForTurn(history: List<ChatEntry>, previous: String,
 }
 
 object RequestValidator {
+    fun validateSuggestion(request: TurnRequest): ApiError? = when {
+        request.playerAction.length > MAX_TEXT_LENGTH -> invalid()
+        else -> validate(request.copy(playerAction = request.playerAction.ifBlank { "x" }))
+    }
     fun validate(request: TurnRequest): ApiError? = validate(
         sessionId = request.sessionId,
         modelId = request.modelId,
@@ -677,6 +723,7 @@ object RequestValidator {
             signals = request.signals,
             signalChecks = request.signalChecks,
             locationTriggers = request.locationTriggers,
+            allowBlankAction = true,
         )
     }
 
@@ -712,9 +759,10 @@ object RequestValidator {
         signals: Map<String, List<de.aidadventure.server.model.FlagAssignment>>,
         signalChecks: List<de.aidadventure.server.model.SignalCheckDefinition>,
         locationTriggers: Map<String, List<de.aidadventure.server.model.LocationTriggerAction>>,
+        allowBlankAction: Boolean = false,
     ): ApiError? = when {
         validateContext(sessionId, modelId, port, scenarioMarkdown, history, runtimeFragments, worldState, contextCompression, locations, flags, signals, signalChecks, locationTriggers) != null -> invalid()
-        playerAction.isBlank() || playerAction.length > MAX_TEXT_LENGTH -> invalid()
+        (!allowBlankAction && playerAction.isBlank()) || playerAction.length > MAX_TEXT_LENGTH -> invalid()
         else -> null
     }
 

@@ -197,7 +197,8 @@ class LlamaCppGateway private constructor(
 
     suspend fun prefill(request: TurnRequest, slot: LlamaCppSlot): CacheMetrics = runInterruptible {
         val port = requirePort(request.llamaCppPort)
-        val prompt = applyTemplate(request.sessionId, "prefill", request.llamaCppPort, promptFactory.build(request))
+        val messages = if (request.playerAction.isEmpty()) promptFactory.buildWarmup(request.asWarmup()) else promptFactory.build(request)
+        val prompt = applyTemplate(request.sessionId, "prefill", request.llamaCppPort, messages)
         guard(port, slot, prompt, TURN_OUTPUT_TOKENS)
         logDiagnostic("prepared", port, slot, prompt)
         val response = postCompletion(
@@ -338,12 +339,18 @@ class LlamaCppGateway private constructor(
         }
     }
 
-    fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> = callbackFlow {
+    fun stream(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> = stream(request, slot, false)
+
+    fun suggest(request: TurnRequest, slot: LlamaCppSlot): Flow<TurnStreamEvent> = stream(request, slot, true)
+
+    private fun stream(request: TurnRequest, slot: LlamaCppSlot, suggestion: Boolean): Flow<TurnStreamEvent> = callbackFlow {
         val responseBody = ResponseBodyOwner()
         val reader = launch(Dispatchers.IO) {
             try {
                 val port = requirePort(request.llamaCppPort)
-                val prompt = applyTemplate(request.sessionId, "turn", request.llamaCppPort, promptFactory.build(request))
+                val operation = if (suggestion) "suggestion" else "turn"
+                val prompt = applyTemplate(request.sessionId, operation, request.llamaCppPort,
+                    if (suggestion) promptFactory.buildSuggestion(request) else promptFactory.build(request))
                 val budget = runInterruptible { guard(port, slot, prompt, TURN_OUTPUT_TOKENS) }
                 logDiagnostic("prepared", port, slot, prompt)
                 val response = runInterruptible {
@@ -391,11 +398,11 @@ class LlamaCppGateway private constructor(
                     if (chunk.stop) {
                         val metrics = CacheMetrics(chunk.tokensCached, chunk.tokensEvaluated)
                         logDiagnostic("completed", port, slot, prompt, metrics)
-                        traceCompletion("turn", request.sessionId, metrics)
-                        responseText?.toString()?.let { traceFinalResponse("turn", request.sessionId, it) }
+                        traceCompletion(operation, request.sessionId, metrics)
+                        responseText?.toString()?.let { traceFinalResponse(operation, request.sessionId, it) }
                         send(TurnStreamEvent.Diagnostic(StreamDiagnostic(
                             kind = "llama_completion", stage = "completed", transcriptRole = "game-master",
-                            fields = mapOf("operation" to "turn", "prompt" to prompt),
+                            fields = mapOf("operation" to operation, "prompt" to prompt),
                             metrics = DiagnosticMetrics(
                                 promptTokens = chunk.timings?.promptTokens ?: budget.promptTokens,
                                 contextTokens = budget.contextTokens,

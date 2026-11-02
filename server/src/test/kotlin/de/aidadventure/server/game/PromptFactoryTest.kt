@@ -17,6 +17,17 @@ import kotlin.test.assertTrue
 
 class PromptFactoryTest {
     @Test
+    fun `suggestion preserves history and player prefix without changing canonical turn`() {
+        val history = listOf(ChatEntry("player", "look"), ChatEntry("game-master", "A door."))
+        val request = TurnRequest("live-1", "test-model", 8081, "# Harbor", history, "I open")
+        val factory = PromptFactory()
+        val canonical = factory.build(request)
+        val suggestion = factory.buildSuggestion(request)
+        assertCachePrefix(canonical, suggestion)
+        assertTrue((suggestion.last() as UserMessage).singleText().contains("I open"))
+        assertEquals(canonical.map(::segment), factory.build(request).map(::segment))
+    }
+    @Test
     fun `build keeps immutable prefix before history and action`() {
         val prompt = PromptFactory().build(
             TurnRequest("live-1", "test-model", 8081, "# Harbor", listOf(ChatEntry("player", "look")), "open door"),

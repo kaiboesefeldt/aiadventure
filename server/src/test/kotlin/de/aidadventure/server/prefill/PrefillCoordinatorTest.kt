@@ -287,7 +287,7 @@ class PrefillCoordinatorTest {
         val request = turn("enter").copy(flags = mapOf("visited" to false),
             signals = mapOf("enter" to listOf(de.aidadventure.server.model.FlagAssignment("visited", true))))
         coordinator.beginTurn(request, "origin").toList()
-        assertEquals(PrefillDisposition.TURN_IN_PROGRESS, coordinator.submit(prefill(1, "look")))
+        assertEquals(PrefillDisposition.QUEUED, coordinator.submit(prefill(1, "look")))
         assertFalse(coordinator.tryBeginIdleCloseWithLease())
         val awaiting = async { coordinator.awaitPostTurn(request) }
         yield()
@@ -960,6 +960,118 @@ class PrefillCoordinatorTest {
         assertTrue(fake.releasedSlots.isEmpty())
         coordinator.close()
     }
+
+    @Test
+    fun `suggestion waits for warmup and uses the retained slot`() = runBlocking {
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        coordinator.warmup(warmup())
+        fake.awaitWarmup()
+        val suggestion = async { coordinator.beginSuggestion(turn("look")).toList() }
+        yield()
+        assertTrue(fake.turnSlots.isEmpty())
+        fake.completeWarmup()
+        fake.awaitWarmupCompletion()
+        suggestion.await()
+        assertEquals(fake.warmupSlots.single(), fake.turnSlots.single())
+        coordinator.close()
+    }
+
+    @Test
+    fun `cancelled waiting suggestion leaves warmup intact`() = runBlocking {
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        coordinator.warmup(warmup())
+        fake.awaitWarmup()
+        val suggestion = launch { coordinator.beginSuggestion(turn("look")).collect() }
+        yield()
+        suggestion.cancel()
+        suggestion.join()
+        fake.completeWarmup()
+        fake.awaitWarmupCompletion()
+        assertTrue(fake.turnSlots.isEmpty())
+        coordinator.close()
+    }
+
+    @Test
+    fun `suggestion waits after ordinary turn until post turn work settles`() = runBlocking { withTimeout(5_000) {
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        val turn = coordinator.beginTurn(turn("look"), "turn-1")
+        coordinator.holdPostTurn("turn-1", emptyMap())
+        turn.toList()
+        val suggestion = async { coordinator.beginSuggestion(turn("open")).toList() }
+        yield()
+        assertEquals(1, fake.turnSlots.size)
+        coordinator.finishPostTurn("turn-1", emptyMap())
+        suggestion.await()
+        assertEquals(2, fake.turnSlots.size)
+        coordinator.close()
+    } }
+
+    @Test
+    fun `latest prefill waits for post turn work instead of being dropped`() = runBlocking { withTimeout(5_000) {
+        val fake = ControllableGateway()
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        val turn = coordinator.beginTurn(turn("look"), "turn-1")
+        coordinator.holdPostTurn("turn-1", emptyMap())
+        turn.toList()
+        assertEquals(PrefillDisposition.QUEUED, coordinator.submit(prefill(1, "open")))
+        assertEquals(PrefillDisposition.QUEUED, coordinator.submit(prefill(2, "open the")))
+        assertTrue(fake.prefilledActions.isEmpty())
+        coordinator.finishPostTurn("turn-1", emptyMap())
+        fake.awaitPrefill(2)
+        assertEquals(listOf("open the"), fake.prefilledActions)
+        fake.completePrefill(2)
+        fake.awaitPrefillCompletion(2)
+        coordinator.close()
+    } }
+
+    @Test
+    fun `waiting suggestion uses completed history and world state`() = runBlocking { withTimeout(5_000) {
+        val fake = ControllableGateway(worldState = { WorldState("Tower", "Find bell") }, warmup = { CacheMetrics(8, 1) })
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        val original = turn("look")
+        val stream = coordinator.beginTurn(original, "turn-1")
+        coordinator.holdPostTurn("turn-1", emptyMap())
+        stream.toList()
+        val suggestion = async { coordinator.beginSuggestion(turn("open")).toList() }
+        yield()
+        val history = listOf(ChatEntry("player", "look"), ChatEntry("game-master", "A bell rings."))
+        coordinator.resolveWorldStateAndWarmup(original, "A bell rings.", warmup(history),
+            WorldStateResolutionRequest("session-1", "# Harbor", WorldState(), "look", "A bell rings."), "turn-1")
+        coordinator.finishPostTurn("turn-1", emptyMap())
+        suggestion.await()
+        assertEquals(history, fake.turnRequests.last().history)
+        assertEquals(WorldState("Tower", "Find bell"), fake.turnRequests.last().worldState)
+        coordinator.close()
+    } }
+
+    @Test
+    fun `turn waits until cancelled suggestion and queued prefill finish`() = runBlocking { withTimeout(5_000) {
+        val streaming = CompletableDeferred<Unit>()
+        val fake = ControllableGateway(stream = { flow { streaming.complete(Unit); awaitCancellation() } })
+        val coordinator = SessionPrefillCoordinator(fake, scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+        val suggestion = launch { coordinator.beginSuggestion(turn("look")).collect() }
+        streaming.await()
+        assertEquals(PrefillDisposition.QUEUED, coordinator.submit(prefill(1, "follow the bell")))
+        val turn = launch { coordinator.beginTurn(turn("follow the bell")).collect() }
+        yield()
+        assertEquals(1, fake.turnSlots.size)
+        suggestion.cancel()
+        suggestion.join()
+        fake.awaitPrefill(1)
+        fake.completePrefill(1)
+        fake.awaitPrefillCompletion(1)
+        yield()
+        assertEquals(2, fake.turnSlots.size)
+        assertEquals(fake.turnSlots.first(), fake.prefillSlots.single())
+        assertEquals(fake.prefillSlots.single(), fake.turnSlots.last())
+        assertEquals("follow the bell", fake.prefillRequests.single().playerAction)
+        turn.cancel()
+        turn.join()
+        coordinator.close()
+    } }
 
     @Test
     fun `new game warmup keeps one warm slot through its first turn`() = runBlocking {
