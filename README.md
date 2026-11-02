@@ -178,15 +178,19 @@ action. A location catalog, when present, is appended to the scenario text.
 
 ### Cache metrics
 
-The UI displays optional duration, prompt-token, and cache-token metrics. Only
-the backend values `tokens_cached` and `tokens_evaluated` prove cache reuse;
-do not infer a cache hit from timing or from a second turn alone. See
+The UI displays optional duration, prompt-token, and cache-token metrics. On
+llama.cpp versions that report them, `timings.cache_n` is the reused prompt-token
+count and `timings.prompt_n` is the newly evaluated prompt-token count. The
+top-level `tokens_cached` and `tokens_evaluated` fields may instead describe
+the final cache occupancy and total prompt length; their meaning is version
+dependent. If the timing counts are unavailable, cache reuse is unknown. Do not
+infer a cache hit from timing or from a second turn alone. See
 [`docs/llama-cpp-prefill-verification.md`](docs/llama-cpp-prefill-verification.md)
 for the privacy-safe live verification checklist. That checklist uses a
 disposable frontmatter template and covers the first turn (no fragment), a
 later hidden fragment, reload/resume, and a following cache-reusing turn. Its
 evidence record contains only request IDs, the retained slot identity, and
-`tokens_cached` / `tokens_evaluated`.
+the reported reuse/evaluation counts.
 
 ### Signal event checks
 

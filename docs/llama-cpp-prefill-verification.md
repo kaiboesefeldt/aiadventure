@@ -62,22 +62,25 @@ through reload/resume; do not create a replacement session.
    before and after the prefill/turn handoff. Confirm the same retained slot
    identity owns the session through the following turn. Do not include any
    other slot metadata in evidence.
-7. For each completed turn, collect backend `tokens_cached` and
-   `tokens_evaluated`. Cache reuse for the following turn is proved only when
-   those backend metrics show the retained-prefix reuse; timing, a warm model,
-   or matching session IDs alone are not proof.
+7. For each completed turn, collect backend `timings.cache_n` and
+   `timings.prompt_n`, when reported, as the reused and newly evaluated prompt
+   token counts. Confirm their semantics for the llama.cpp version under test.
+   Top-level `tokens_cached` and `tokens_evaluated` may represent final cache
+   occupancy and total prompt length instead, so do not treat those fields
+   alone as proof of reuse. If the timing counts are absent, reuse is unknown.
+   Duration, a warm model, or matching session IDs alone are not proof.
 
 Use a content-free evidence table:
 
-| Stage | Request ID | Slot identity | tokens_cached | tokens_evaluated |
+| Stage | Request ID | Slot identity | timings.cache_n | timings.prompt_n |
 | --- | --- | --- | --- | --- |
 | first turn, no fragment | | | | |
 | selected later fragment | | | | |
 | reload/resume following turn | | | | |
 
-Cache reuse is demonstrated only by backend `tokens_cached` and
-`tokens_evaluated` values. Timing, an apparent warm model, or a subsequent
-turn are not proof.
+Document the llama.cpp version and the meanings of the returned counters with
+the evidence. Duration, an apparent warm model, or a subsequent turn are not
+proof of reuse.
 
 ## Evidence boundary
 

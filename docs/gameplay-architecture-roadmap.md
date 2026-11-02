@@ -23,7 +23,7 @@ Ein erster CPU-Schnappschuss zeigt genügend Parallelität für einen Versuch mi
 - Das Primary-LLM hat in Phase 3 absolute Priorität, außer während einer seltenen, geplanten Primary-Kontextkompression. Beim Absenden wird keine neue Secondary-Arbeit gestartet. Bereits laufende Secondary-Arbeit darf kooperativ auslaufen, darf aber weder einen Dienst-Queue-Slot noch den Start des Primary-Turns blockieren.
 - Kein Ergebnis des Secondary-LLM liegt auf dem kritischen Turn-Pfad. Ist es beim Absenden nicht bereits kanonisch übernommen, verändert es weder den laufenden Turn noch dessen Primary-Prompt. Es darf als versionierter Analyse-Kandidat für einen späteren sicheren Commit erhalten bleiben.
 - Der kanonische Primary-Prompt bleibt deterministisch: Anweisung, Original-Szenario, kanonische Historie, neue Aktion. Jeder eingefügte Kontext muss vor dem passenden Warmup feststehen.
-- Prefill und Turn verwenden weiterhin dieselbe `sessionId` und denselben behaltenen Primary-Slot. Nur `tokens_cached` und `tokens_evaluated` aus llama.cpp belegen Cache-Reuse.
+- Prefill und Turn verwenden weiterhin dieselbe `sessionId` und denselben behaltenen Primary-Slot. Cache-Reuse wird anhand der für die verwendete llama.cpp-Version bestätigten Reuse- und Evaluierungszähler geprüft; bei aktuellen Versionen sind dies `timings.cache_n` und `timings.prompt_n`.
 - LLM-Ausgaben sind untrusted input. Das Secondary-LLM darf nur ein enges, schema-validiertes Ergebnis vorschlagen; deterministische Logik entscheidet über Übernahme, Begrenzung und Konflikte.
 - Szenario, Verlauf, Aktionen und LLM-Text gehören nicht in Betriebslogs. Messungen verwenden Request-ID, Dauer, Cache-Metriken und Klassifikationen.
 
@@ -292,7 +292,7 @@ Performance-Preis: sehr niedrig.** Diese Etappe verbessert das sichtbare Gamepla
 noch nicht, verhindert aber, dass eine spätere Verbesserung nur gefühlt
 schnell wirkt oder unbemerkt Phase 3 verschlechtert.
 
-- Primary-Metriken pro Turn erfassen: Absenden bis erstes Token, Prompt- und Generierungsrate, `tokens_cached`, `tokens_evaluated`.
+- Primary-Metriken pro Turn erfassen: Absenden bis erstes Token, Prompt- und Generierungsrate sowie die backendseitig gemeldeten Reuse- und Evaluierungszähler.
 - Secondary-Metriken getrennt erfassen: Aufgabe, Start-/Endstatus, Dauer, rechtzeitig/fallback und CPU-Zuordnung.
 - Einen expliziten Prioritätsvertrag einführen: Ab Phase 3 startet keine neue Secondary-Arbeit; bereits laufende Jobs können auslaufen, aber kein Background-Job darf die Turn-Queue blockieren.
 - Mit reproduzierbaren Szenarien mindestens Primary-allein, 4+2 und 4+4 Kerne vergleichen. Erfolg heißt: keine statistisch relevante Verschlechterung der Primary-Time-to-first-token und keine Verschlechterung der Cache-Metrik.
@@ -416,7 +416,7 @@ einmaliger Startaufwand ist ausdrücklich Teil der Abwägung.
 Jede Änderung muss drei Beweise liefern:
 
 1. **Latenz:** Eine Turn-Auswertung zeigt Time-to-first-token des Primary-Modells mit und ohne Secondary-Arbeit; Phase 3 darf außerhalb einer explizit markierten Primary-Kompressionswartung nicht schlechter sein. Diese seltene Wartung wird separat gemessen.
-2. **Cache:** Für neue, fortgesetzte und folgende Turns belegen `tokens_cached` und `tokens_evaluated` weiterhin Prefix-Reuse auf einem behaltenen Slot.
+2. **Cache:** Für neue, fortgesetzte und folgende Turns belegen die für die verwendete Backend-Version bestätigten Reuse- und Evaluierungszähler weiterhin Prefix-Reuse auf einem behaltenen Slot.
 3. **Gameplay:** Testfälle beweisen mindestens einen gültigen Zustandsübergang, einen verworfenen Widerspruch und — ab Etappe 3 — eine später erneut passende Erinnerung.
 
 ## Bewusste Nicht-Ziele
