@@ -24,7 +24,10 @@ class PromptFactoryTest {
         val canonical = factory.build(request)
         val suggestion = factory.buildSuggestion(request)
         assertCachePrefix(canonical, suggestion)
-        assertTrue((suggestion.last() as UserMessage).singleText().contains("I open"))
+        val suggestionInstruction = (suggestion.last() as UserMessage).singleText()
+        assertTrue(suggestionInstruction.contains("only as the player"))
+        assertTrue(suggestionInstruction.contains("Do not write as the game master or narrator"))
+        assertTrue(suggestionInstruction.contains("I open"))
         assertEquals(canonical.map(::segment), factory.build(request).map(::segment))
     }
     @Test
