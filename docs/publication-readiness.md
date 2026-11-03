@@ -7,9 +7,10 @@ history contains no confidential information or licensing issues.
   identify their upstream release and include its MIT license in `.agents/skills/`.
   Dependency and model licenses still need to be checked for the versions and
   distribution choices used in a release.
-- The tracked files include the Gradle wrapper JAR, `docs/timing.odt` and an
-  exported GIF. The ODT contains authoring metadata and a relative template
-  reference. Review these artifacts and their provenance before publication.
+- The tracked files include the Gradle wrapper JAR. Repository history also
+  contains a former `docs/timing.odt` and its exported GIF; the ODT contains
+  authoring metadata and a relative template reference. Review these artifacts
+  and their provenance before publication.
 - A filename review of all reachable history found no `.env`, GGUF model,
   private-key or credential filename. A limited scan of added historical lines
   for common private-key headers and selected token formats found no matches.
