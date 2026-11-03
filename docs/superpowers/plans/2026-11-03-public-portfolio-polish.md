@@ -12,8 +12,8 @@
 
 **Execution record:** The portfolio entry point, English documentation and
 examples, cache/health corrections, Woodpecker configuration and local
-publication review have been prepared. See `docs/publication-readiness.md` for
-items that require a real model, hosted CI or the owner's publication review.
+publication review have been prepared. Items that require a real model, hosted
+CI or the owner's publication review remain documented in the task handoff.
 The checkboxes below preserve the original acceptance checklist; final test and
 integration results are recorded in the task handoff.
 
