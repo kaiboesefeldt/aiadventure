@@ -153,7 +153,7 @@ characters, independently of the much smaller effective model prompt.
 
 ## Load an example
 
-The [scenario authoring guide](docs/Spiel-Erstellen.md) describes supported
+The [scenario authoring guide](docs/authoring-scenarios.md) describes supported
 fields and variants, including locations, flags, signals and runtime fragments.
 Import an example in the browser:
 
@@ -334,5 +334,5 @@ texts first, triggered signal texts next, and the selected fragment last. The
 selected fragment remains effective even if its own actions change flags. Declare `flags`
 or `signals` to enable metadata names, including at the runtime-fragments root;
 without either declaration these keys keep their legacy meaning as fragment names.
-See [the authoring guide](docs/Spiel-Erstellen.md)
+See [the authoring guide](docs/authoring-scenarios.md)
 for nesting, validation, signal behavior, and a complete scenario.

@@ -34,7 +34,7 @@
 | `web/.../api/AdventureApi.kt` | browser prefill API client. |
 | `web/.../PrefillSubmission.kt` | debounce/revision/turn-suppression helper. |
 | `web/.../Main.kt` | llama-only detail and input wiring. |
-| `README.md`, `AGENTS.md`, `docs/UI-UX-Guide.md` | operation and verification contract. |
+| `README.md`, `AGENTS.md`, `docs/ui-ux-guide.md` | operation and verification contract. |
 
 ## Task 1: Add a backward-compatible prefill boundary
 
@@ -416,7 +416,7 @@ Run: `git add web && git commit -m "feat(web): prefill llama prompts while typin
 
 - Modify: `README.md`
 - Modify: `AGENTS.md`
-- Modify: `docs/UI-UX-Guide.md`
+- Modify: `docs/ui-ux-guide.md`
 - Create: `docs/llama-cpp-prefill-verification.md`
 
 - [x] **Step 1: Update the operating contract**
@@ -449,7 +449,7 @@ Then execute the checklist. Stop all agent-started processes, run `./gradlew --s
 
 - [x] **Step 5: Commit**
 
-Run: `git add README.md AGENTS.md docs/UI-UX-Guide.md docs/llama-cpp-prefill-verification.md && git commit -m "docs: explain llama.cpp prefill cache workflow"`
+Run: `git add README.md AGENTS.md docs/ui-ux-guide.md docs/llama-cpp-prefill-verification.md && git commit -m "docs: explain llama.cpp prefill cache workflow"`
 
 ## Plan self-review
 

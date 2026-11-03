@@ -2,7 +2,7 @@
 
 ## Goal
 
-Apply the persistent UI/UX guide in `docs/UI-UX-Guide.md` to the Kotlin/JS
+Apply the persistent UI/UX guide in `docs/ui-ux-guide.md` to the Kotlin/JS
 React browser client and let players submit an action with Enter while retaining
 Shift+Enter for a newline.
 
