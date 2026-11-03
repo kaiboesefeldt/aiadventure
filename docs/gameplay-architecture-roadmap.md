@@ -18,7 +18,7 @@ A turn has three periods relevant to the design:
 
 After the visible stream, a runtime fragment is already retrieved and evaluated and the canonical prompt prefix for the next turn is warmed. While the user types, a debounced prefill adds the action text. This cache chain remains the central performance invariant.
 
-An initial CPU snapshot indicates enough parallelism to try both models: primary model on four cores achieved 35.7 prompt and 10.2 generation tokens/s alone; alongside secondary model on two cores it achieved 38.4 and 7.9 tokens/s. With four cores per model, the primary model achieved 34.6 and 8.9 tokens/s. These values are not guarantees, but justify pursuing a two-model architecture backed by measurement.
+An initial CPU snapshot indicates enough parallelism to explore a two-model architecture. Performance depends on the selected models and hardware and must be measured for each deployment.
 
 ## Non-negotiable latency and safety rules
 
