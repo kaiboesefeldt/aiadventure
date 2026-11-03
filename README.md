@@ -44,7 +44,8 @@ and configuration; this repository does not claim a universal benchmark.
 
 ## AI-assisted development
 
-**This project was developed in large part with coding AI.**
+AI coding tools contributed substantially to the application code and
+documentation.
 
 ## Getting started
 
