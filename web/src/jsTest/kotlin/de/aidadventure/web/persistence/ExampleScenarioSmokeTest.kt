@@ -32,12 +32,21 @@ class ExampleScenarioSmokeTest {
     }
 
     @Test fun `real complex example retains conditional guidance and declared signals`() = MainScope().promise {
-        val parsed = loadScenario("/examples/nebelhafen-lighthouse.md")
+        val parsed = loadScenario("/examples/mist-harbor-lighthouse.md")
         assertTrue(parsed.initialSituationSetting.isNotBlank())
         assertTrue(parsed.locations.isNotEmpty())
         assertTrue(parsed.runtimeFragments.any { it.conditions.isNotEmpty() })
         assertTrue(parsed.runtimeFragments.any { it.emittedSignals.isNotEmpty() })
         assertTrue(parsed.signalChecks.isNotEmpty())
+        parsed.signals.values.flatten().forEach { assertTrue(it.flag in parsed.initialFlags) }
+    }
+
+    @Test fun `facility example retains English locations and connected signals`() = MainScope().promise {
+        val parsed = loadScenario("/examples/the-facility.md")
+        assertTrue("Waking Room" in parsed.locations)
+        assertTrue("Observation Chamber" in parsed.locations)
+        assertTrue("project-tomorrow-discovered" in parsed.initialFlags)
+        assertTrue(parsed.signalChecks.any { it.name == "project-tomorrow-report-read" })
         parsed.signals.values.flatten().forEach { assertTrue(it.flag in parsed.initialFlags) }
     }
 

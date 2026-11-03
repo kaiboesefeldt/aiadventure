@@ -31,7 +31,8 @@ config.plugins.push(
 
 const appStylesheetPath = path.resolve(__dirname, '../../../../web/src/jsMain/resources/app.css');
 const lighthouseExamplePaths = {
-  '/examples/nebelhafen-lighthouse.md': path.resolve(__dirname, '../../../../examples/nebelhafen-lighthouse.md'),
+  '/examples/mist-harbor-lighthouse.md': path.resolve(__dirname, '../../../../examples/mist-harbor-lighthouse.md'),
+  '/examples/the-facility.md': path.resolve(__dirname, '../../../../examples/the-facility.md'),
   '/fixtures/signal-test-game.md': path.resolve(__dirname, '../../../../web/src/jsTest/resources/signal-test-game.md'),
 };
 function createLighthouseExampleMiddleware() {
