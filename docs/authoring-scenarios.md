@@ -881,7 +881,6 @@ More examples:
   signal references without explicit event descriptions.
 - [The Facility](../examples/the-facility.md), an exploration adventure with
   locations, flags, signals and runtime fragments.
-- [Signal test game](../examples/signal-test-game.md) with independent signals.
 
 ## 11. Basis of this reference
 

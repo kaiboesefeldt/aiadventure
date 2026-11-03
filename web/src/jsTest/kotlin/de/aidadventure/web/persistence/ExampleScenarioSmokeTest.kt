@@ -9,8 +9,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class ExampleScenarioSmokeTest {
-    @Test fun `real simple example declares independent guarded event checks`() = MainScope().promise {
-        val parsed = loadExample("signal-test-game.md")
+    @Test fun `signal fixture declares independent guarded event checks`() = MainScope().promise {
+        val parsed = loadScenario("/fixtures/signal-test-game.md")
         assertEquals(mapOf("war-im-leuchtturm" to false, "hat-hinweis" to false,
             "hafenmeisterin-misstrauisch" to false), parsed.initialFlags)
         val expected = mapOf(
@@ -32,7 +32,7 @@ class ExampleScenarioSmokeTest {
     }
 
     @Test fun `real complex example retains conditional guidance and declared signals`() = MainScope().promise {
-        val parsed = loadExample("test-game.md")
+        val parsed = loadScenario("/examples/test-game.md")
         assertTrue(parsed.initialSituationSetting.isNotBlank())
         assertTrue(parsed.locations.isNotEmpty())
         assertTrue(parsed.runtimeFragments.any { it.conditions.isNotEmpty() })
@@ -41,9 +41,9 @@ class ExampleScenarioSmokeTest {
         parsed.signals.values.flatten().forEach { assertTrue(it.flag in parsed.initialFlags) }
     }
 
-    private suspend fun loadExample(name: String): ParsedScenario {
-        val response = window.fetch("/examples/$name").await()
-        assertEquals(200, response.status.toInt(), "Real example must be served: $name")
+    private suspend fun loadScenario(path: String): ParsedScenario {
+        val response = window.fetch(path).await()
+        assertEquals(200, response.status.toInt(), "Scenario must be served: $path")
         return ScenarioFrontmatter.parse(response.text().await())
     }
 }

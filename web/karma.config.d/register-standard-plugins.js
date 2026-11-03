@@ -32,7 +32,7 @@ config.plugins.push(
 const appStylesheetPath = path.resolve(__dirname, '../../../../web/src/jsMain/resources/app.css');
 const lighthouseExamplePaths = {
   '/examples/test-game.md': path.resolve(__dirname, '../../../../examples/test-game.md'),
-  '/examples/signal-test-game.md': path.resolve(__dirname, '../../../../examples/signal-test-game.md'),
+  '/fixtures/signal-test-game.md': path.resolve(__dirname, '../../../../web/src/jsTest/resources/signal-test-game.md'),
 };
 function createLighthouseExampleMiddleware() {
   return (request, response, next) => {
