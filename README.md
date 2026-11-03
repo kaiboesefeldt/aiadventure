@@ -61,7 +61,7 @@ The [scenario authoring guide](docs/authoring-scenarios.md) describes supported
 fields and variants, including locations, flags, signals and runtime fragments.
 Import an example in the browser:
 
-- [`examples/test-game.md`](examples/test-game.md): a lighthouse adventure with
+- [`examples/nebelhafen-leuchtturm.md`](examples/nebelhafen-leuchtturm.md): a lighthouse adventure with
   conditional runtime fragments and signal references.
 - [`examples/the-facility.md`](examples/the-facility.md): a facility exploration
   adventure with locations, flags, signals and runtime fragments.

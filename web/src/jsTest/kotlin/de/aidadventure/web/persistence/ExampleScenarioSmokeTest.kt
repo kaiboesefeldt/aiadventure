@@ -32,7 +32,7 @@ class ExampleScenarioSmokeTest {
     }
 
     @Test fun `real complex example retains conditional guidance and declared signals`() = MainScope().promise {
-        val parsed = loadScenario("/examples/test-game.md")
+        val parsed = loadScenario("/examples/nebelhafen-leuchtturm.md")
         assertTrue(parsed.initialSituationSetting.isNotBlank())
         assertTrue(parsed.locations.isNotEmpty())
         assertTrue(parsed.runtimeFragments.any { it.conditions.isNotEmpty() })
