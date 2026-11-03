@@ -877,7 +877,7 @@ game easier to test.
 
 More examples:
 
-- [Complex lighthouse game](../examples/nebelhafen-lighthouse.md) with nested fragments and
+- [Complex lighthouse game](../examples/mist-harbor-lighthouse.md) with nested fragments and
   signal references without explicit event descriptions.
 - [The Facility](../examples/the-facility.md), an exploration adventure with
   locations, flags, signals and runtime fragments.

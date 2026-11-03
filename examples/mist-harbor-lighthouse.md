@@ -1,58 +1,58 @@
 ---
 initial-situation:
   world-state:
-    location: Kai
+    location: Quay
   setting: |
-    You are an adventurer newly arrived at Nebelhafen harbor. The old lighthouse
+    You are an adventurer newly arrived at Mist Harbor harbor. The old lighthouse
     at the end of the breakwater has been dark for three nights, and the harbor
     master claims that something unsettling was seen up there.
 
     - It is late evening, and fog is rolling in from the water.
     - A narrow quay leads to the lighthouse.
     - Rumors of a secret signal light circulate in the harbor tavern.
-    - You are on the quay at Nebelhafen.
+    - You are on the quay at Mist Harbor.
     - The harbor master tells you that the old lighthouse has been dark for three
       nights. She promises you a small reward if you find out what is wrong.
 
 locations:
-  Kai: "Working quay at Nebelhafen, with bollards, ropes and a view of the breakwater."
-  Leuchtturm: "Old stone tower at the end of the breakwater; its signal light has been dark for three nights; cordoned off with ropes."
-  Hafenkneipe: "Name: \"The Crooked Mast\". A rough waterfront tavern where sailors exchange rumors."
-  Schuppen der Hafenmeisterin: "A secluded storage shed near the quay, managed by the harbor master."
-  Steg: "A narrow, wet and slippery wooden jetty above the dark harbor water."
+  Quay: "Working quay at Mist Harbor, with bollards, ropes and a view of the breakwater."
+  Lighthouse: "Old stone tower at the end of the breakwater; its signal light has been dark for three nights; cordoned off with ropes."
+  Harbor Tavern: "Name: \"The Crooked Mast\". A rough waterfront tavern where sailors exchange rumors."
+  Harbor Master’s Shed: "A secluded storage shed near the quay, managed by the harbor master."
+  Jetty: "A narrow, wet and slippery wooden jetty above the dark harbor water."
 flags:
-  war-im-leuchtturm: false
-  hat-gezeitenskizze: false
-  kennt-gezeitenfenster: false
-  kennt-lichtkennung: false
-  hafenmeisterin-misstrauisch: false
+  visited-lighthouse: false
+  has-tide-sketch: false
+  knows-tide-window: false
+  knows-light-code: false
+  harbor-master-suspicious: false
 signals:
-  betritt-leuchtturm:
+  enters-lighthouse:
     event-check: The character actually entered the interior of the lighthouse.
     triggers:
       - set-flag:
-          war-im-leuchtturm: true
-  findet-gezeitenskizze:
+          visited-lighthouse: true
+  finds-tide-sketch:
     event-check: The character has taken the half-burned sheet with the tide sketch and read its tide table.
     triggers:
       - set-flag:
-          hat-gezeitenskizze: true
-          kennt-gezeitenfenster: true
-  entziffert-lichtkennung:
+          has-tide-sketch: true
+          knows-tide-window: true
+  deciphers-light-code:
     event-check: The character deciphered the light code as two slow flashes and one fast flash.
     triggers:
       - set-flag:
-          kennt-lichtkennung: true
-  beunruhigt-hafenmeisterin:
+          knows-light-code: true
+  alarms-harbor-master:
     event-check: The harbor master became suspicious because of the character’s behavior or statements.
     triggers:
       - set-flag:
-          hafenmeisterin-misstrauisch: true
-  belegt-den-irrtum:
+          harbor-master-suspicious: true
+  resolves-misunderstanding:
     event-check: The character resolved the misunderstanding with evidence and dispelled the harbor master’s suspicion.
     triggers:
       - set-flag:
-          hafenmeisterin-misstrauisch: false
+          harbor-master-suspicious: false
 runtime-fragments:
   "The character is at the lighthouse":
     "The character examines the dark lighthouse from outside and looks for a way in": >
@@ -67,13 +67,13 @@ runtime-fragments:
       Introduce a discrepancy between official responsibility and actual opportunity.
   "The character enters the lighthouse":
     "The character releases the chain and carefully steps through the door":
-      signal: betritt-leuchtturm
+      signal: enters-lighthouse
       emit-text: >
         Once the character actually enters, they see the locked lantern room
         and damp stone floor clearly.
   "The character is inside the lighthouse":
     condition:
-      war-im-leuchtturm: true
+      visited-lighthouse: true
     emit-text: >
       The character is in the cordoned-off tower; keep the danger of the wet,
       weather-beaten masonry present.
@@ -91,19 +91,19 @@ runtime-fragments:
       Make it a clue to an agreed recognition signal and draw attention to possible accomplices in the harbor.
     "The character examines the circles scratched next to the lantern":
       condition:
-        - hat-gezeitenskizze: false
+        - has-tide-sketch: false
           then:
             "The character finds a half-burned sheet in a crack in the wall":
-              signal: findet-gezeitenskizze
+              signal: finds-tide-sketch
               emit-text: >
                 The sheet shows the same circles as the wall and a tide table
                 with a handwritten code.
-        - hat-gezeitenskizze: true
+        - has-tide-sketch: true
           then:
             "The character compares the tide sketch with the circles":
               condition:
-                kennt-lichtkennung: false
-              signal: entziffert-lichtkennung
+                knows-light-code: false
+              signal: deciphers-light-code
               emit-text: >
                 The markings form a code for a short light signal:
                 two slow flashes followed by a fast one.
@@ -130,7 +130,7 @@ runtime-fragments:
       Give a time-sensitive clue that moves the story forward and announces an approaching opportunity.
     "The character waits for the tide window marked on the sketch":
       condition:
-        kennt-gezeitenfenster: true
+        knows-tide-window: true
       emit-text: >
         During a brief slack tide, an unlit boat glides past the breakwater.
         The character can follow it, observe unnoticed or fetch the harbor guard.
@@ -161,14 +161,14 @@ runtime-fragments:
     "The character reconstructs the first alarm or probes details of the story": >
       Let a detail of the account shift and lead to a verifiable contradiction.
   "The character presents the lighthouse discovery to the harbor master":
-    signal: beunruhigt-hafenmeisterin
+    signal: alarms-harbor-master
     emit-text: >
       The harbor master initially reacts suspiciously to the accusation and
       tries to steer the conversation toward the harbor guard.
     "The character shows her the deciphered light code":
       condition:
-        kennt-lichtkennung: true
-      signal: belegt-den-irrtum
+        knows-light-code: true
+      signal: resolves-misunderstanding
       emit-text: >
         Recognizing the code, she becomes less suspicious. She admits that the
         signal was previously used for safe entry into the harbor.
@@ -191,7 +191,7 @@ runtime-fragments:
     "The character asks about its disappearance": >
       Connect an old accusation to the current case and show where an overlooked estate or witness might be found.
 ---
-# Text Adventure: The Nebelhafen Lighthouse
+# Text Adventure: The Mist Harbor Lighthouse
 
 ## Your Role
 
