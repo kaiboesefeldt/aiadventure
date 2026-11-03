@@ -6,17 +6,17 @@ This conceptual sketch explores how work can overlap with the player's reading a
 
 Time progresses down the table. The typing phase is a potential window for background work, but its duration is unknown. Work remaining after submission directly affects TTFT.
 
-| Phase | User | Primary LLM | Secondary LLM | Other | Comment |
-| --- | --- | --- | --- | --- | --- |
-| … | | | | | |
-| LLM text generation | Read streamed LLM output | Generate answer to previous user response | | | Generation must be at least as fast as the user's reading speed. |
-| User typing text | Typing | | | Get hint from vector store | This is the “green area” for work without perceived performance impact, although its duration is unknown. |
-| User typing text | Typing | Check whether hint is applicable | | | |
-| User typing text | Typing | Cache hint text, if applicable | | | |
-| User typing text | Typing | Incrementally cache partial user text | | | |
-| User sending text | | Cache remaining user text | | | Everything in this phase is critical for TTFT. |
-| LLM text generation | Read streamed LLM output | Generate answer to previous user response | | | Generation must be at least as fast as the user's reading speed. |
-| … | | | | | |
+| Phase | User | LLM | Other | Comment |
+| --- | --- | --- | --- | --- |
+| … | | | | |
+| LLM text generation | Read streamed LLM output | Generate answer to previous user response | | Generation must be at least as fast as the user's reading speed. |
+| User typing text | Typing | | Get hint from vector store | This is the “green area” for work without perceived performance impact, although its duration is unknown. |
+| User typing text | Typing | Check whether hint is applicable | | |
+| User typing text | Typing | Cache hint text, if applicable | | |
+| User typing text | Typing | Incrementally cache partial user text | | |
+| User sending text | | Cache remaining user text | | Everything in this phase is critical for TTFT. |
+| LLM text generation | Read streamed LLM output | Generate answer to previous user response | | Generation must be at least as fast as the user's reading speed. |
+| … | | | | |
 
 ## Sequence diagram
 
@@ -30,18 +30,18 @@ autonumber
 
 actor User as u
 participant Controller as c
-participant "Primary LLM" as pLLM
+participant "LLM" as llm
 participant "Vector Store" as v
 
 == Initialization ==
 
-c -> pLLM: System Prompt (Global)
-activate pLLM
+c -> llm: System Prompt (Global)
+activate llm
 activate c
-c -> pLLM: System Prompt (Game Instructions)
-c -> pLLM: Initial Game Prompt
-pLLM --> c: Initial Scene Description
-deactivate pLLM
+c -> llm: System Prompt (Game Instructions)
+c -> llm: Initial Game Prompt
+llm --> c: Initial Scene Description
+deactivate llm
 
 == Game ==
 
@@ -49,19 +49,19 @@ group First User Input (Game Loop 0)
 loop User is typing and has not yet sent the message
 u -> c: typing
 activate u
-c -> pLLM: caching(user input text so far)
+c -> llm: caching(user input text so far)
 end
 
 u -> c: finish turn: //tp_0// = full initial turn prompt text
 deactivate u
 
-c -> pLLM: //tp_0//
-activate pLLM
+c -> llm: //tp_0//
+activate llm
 loop Receive reply tokens
-pLLM --> c: turn reply token
+llm --> c: turn reply token
 end
-pLLM --> c: //tr_0// = full turn reply text
-deactivate pLLM
+llm --> c: //tr_0// = full turn reply text
+deactivate llm
 
 end
 
@@ -80,10 +80,10 @@ end
 u -> c: typing
 
 group Hint Re-Ranking
-c -> pLLM: rerank(//h_n.key//)
-activate pLLM
-pLLM --> c: //hint_score_n//
-deactivate pLLM
+c -> llm: rerank(//h_n.key//)
+activate llm
+llm --> c: //hint_score_n//
+deactivate llm
 end
 u -> c: typing
 
@@ -93,20 +93,20 @@ end
 
 loop User continues to type
 u -> c: typing
-c -> pLLM: caching(//h_n.fraction// + user input text so far)
+c -> llm: caching(//h_n.fraction// + user input text so far)
 end
 end
 
 u -> c: finish turn: //tp_n// = full turn prompt text
 deactivate u
 
-c -> pLLM: //h_n.fraction + tp_n//
-activate pLLM
+c -> llm: //h_n.fraction + tp_n//
+activate llm
 loop Receive reply tokens
-pLLM --> c: turn reply token
+llm --> c: turn reply token
 end
-pLLM --> c: //tr_n// = full turn reply text
-deactivate pLLM
+llm --> c: //tr_n// = full turn reply text
+deactivate llm
 
 end
 
