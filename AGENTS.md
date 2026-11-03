@@ -20,6 +20,7 @@
 - Make code changes in a dedicated branch and Git worktree, separate from the primary checkout.
 - Implement code changes with subagents.
 - At the end of a code-change task, merge the task branch into `main`, then delete the task branch and remove its worktree.
+- Commit Superpowers specs under `docs/superpowers/specs/` with their implementation. Do not commit Superpowers plans or task work files under `docs/superpowers/plans/`; remove them when the task is complete.
 
 ## Invariants
 
