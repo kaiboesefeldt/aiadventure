@@ -879,8 +879,9 @@ More examples:
 
 - [Complex lighthouse game](../examples/test-game.md) with nested fragments and
   signal references without explicit event descriptions.
+- [The Facility](../examples/the-facility.md), an exploration adventure with
+  locations, flags, signals and runtime fragments.
 - [Signal test game](../examples/signal-test-game.md) with independent signals.
-- [Manual signal test guide](../examples/signal-test-game-testing.md).
 
 ## 11. Basis of this reference
 

@@ -159,9 +159,10 @@ Import an example in the browser:
 
 - [`examples/test-game.md`](examples/test-game.md): a lighthouse adventure with
   conditional runtime fragments and signal references.
+- [`examples/the-facility.md`](examples/the-facility.md): a facility exploration
+  adventure with locations, flags, signals and runtime fragments.
 - [`examples/signal-test-game.md`](examples/signal-test-game.md): a signal test
-  with three flags and four independent event checks. The [manual test guide](examples/signal-test-game-testing.md)
-  describes checks, counterchecks, state changes and debug metrics.
+  with three flags and four independent event checks.
 
 ## Verify
 

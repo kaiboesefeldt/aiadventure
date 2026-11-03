@@ -66,7 +66,7 @@ integration results are recorded in the task handoff.
 
 ## Task 4: Resolve documented inconsistencies
 
-**Files:** `README.md`, `AGENTS.md`, `examples/signal-test-game-testing.md`, and related current guides.
+**Files:** `README.md`, `AGENTS.md`, and related current guides.
 
 - [ ] Trace health endpoint behavior and startup instructions to implementation and correct any unsupported claims.
 - [ ] Compare cache metric descriptions against the installed/tested llama.cpp behavior and gateway code. Align current instructions with version-specific evidence; when counters cannot establish reuse, say it is unknown. Preserve cache contract tests and distinguish their proof from live measurement.
