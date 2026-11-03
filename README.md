@@ -73,8 +73,6 @@ Import an example in the browser:
 
 - [Running and configuration](docs/running.md)
 - [Verification and troubleshooting](docs/verification.md)
-- [Scenario authoring](docs/authoring-scenarios.md) and [scenario rules](docs/scenario-rules.md)
-- [Prompt cache verification](docs/llama-cpp-prefill-verification.md)
-- [Gameplay architecture roadmap](docs/gameplay-architecture-roadmap.md)
+- [Scenario authoring](docs/authoring-scenarios.md)
 
 Run `./gradlew check` to compile and test both modules. See the verification guide for browser test requirements.

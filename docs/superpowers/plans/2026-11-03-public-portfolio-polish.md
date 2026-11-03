@@ -57,7 +57,7 @@ integration results are recorded in the task handoff.
 
 ## Task 3: Translate documentation and examples
 
-**Files:** `docs/authoring-scenarios.md`, `docs/gameplay-architecture-roadmap.md`, `docs/llama-cpp-structured-output.md`, `examples/`, historical `docs/superpowers/` material, and other repository-owned text identified in Task 1.
+**Files:** `docs/authoring-scenarios.md`, `docs/llama-cpp-structured-output.md`, `examples/`, historical `docs/superpowers/` material, and other repository-owned text identified in Task 1.
 
 - [ ] Translate public-facing scenario authoring guidance to English, preserving all syntax variants, examples, caveats and links. If renaming the guide, update every inbound path and heading anchor across tracked files.
 - [ ] Translate German narrative and explanatory text in examples, including manual testing instructions. Preserve YAML keys and identifiers and every cross-reference; check tests for literal expectations before changing example strings. Update assertions only when their intended behavior remains the same.

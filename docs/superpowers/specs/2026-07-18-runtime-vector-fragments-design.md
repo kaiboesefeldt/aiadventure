@@ -145,14 +145,12 @@ Automated tests must cover:
 
 ## Live acceptance evidence
 
-The live procedure is documented in
-[`docs/llama-cpp-prefill-verification.md`](../../llama-cpp-prefill-verification.md).
-It imports a disposable frontmatter template, proves that the first turn has no
-fragment, then proves that a selected later fragment is persisted but never
-rendered. It reloads and resumes the same browser-local session before a
-following prefill/turn handoff. The proof records only request IDs, retained
-slot identity, `tokens_cached`, and `tokens_evaluated`; it never records game
-content, prompts, history, or model output. A matching session ID or warm
+The live check used a disposable frontmatter template, verified that the first
+turn had no fragment, and then verified that a selected later fragment was
+persisted but never rendered. It reloaded and resumed the same browser-local
+session before a following prefill/turn handoff. The evidence was limited to
+request IDs, retained slot identity, and cache metrics; it excluded game
+content, prompts, history, and model output. A matching session ID or warm
 timing is insufficient: the same retained slot and llama.cpp metrics are both
 required to establish cache reuse.
 

@@ -1,6 +1,6 @@
 # Automatic context compression
 
-The implementation follows the accepted context-epoch design in `docs/gameplay-architecture-roadmap.md`.
+The implementation follows the accepted context-epoch design.
 
 ## Behavior
 

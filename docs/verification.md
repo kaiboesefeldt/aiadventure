@@ -76,10 +76,4 @@ count and `timings.prompt_n` is the newly evaluated prompt-token count. The
 top-level `tokens_cached` and `tokens_evaluated` fields may instead describe
 the final cache occupancy and total prompt length; their meaning is version
 dependent. If the timing counts are unavailable, cache reuse is unknown. Do not
-infer a cache hit from timing or from a second turn alone. See
-[`docs/llama-cpp-prefill-verification.md`](llama-cpp-prefill-verification.md)
-for the privacy-safe live verification checklist. That checklist uses a
-disposable frontmatter template and covers the first turn (no fragment), a
-later hidden fragment, reload/resume, and a following cache-reusing turn. Its
-evidence record contains only request IDs, the retained slot identity, and
-the reported reuse/evaluation counts.
+infer a cache hit from timing or from a second turn alone.
