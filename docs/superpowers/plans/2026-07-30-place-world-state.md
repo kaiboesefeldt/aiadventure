@@ -20,7 +20,7 @@
 
 **Files:** server `worldstate/WorldState.kt`; web `model/Models.kt`; their tests and scenario-frontmatter tests.
 
-- [ ] Write failing serialization and frontmatter tests for `WorldState(location = "Küche")` and missing state as `WorldState()`.
+- [ ] Write failing serialization and frontmatter tests for `WorldState(location = "Kitchen")` and missing state as `WorldState()`.
 - [ ] Replace revision, entities, facts, proposals, and reducer with `@Serializable data class WorldState(val location: String = "")` and a snapshot containing only a nonblank current location.
 - [ ] Change frontmatter to accept only `world-state.location` as a nonblank string.
 - [ ] Run focused server and web tests; commit.

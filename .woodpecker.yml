@@ -1,0 +1,13 @@
+steps:
+  verify:
+    image: debian:trixie-slim
+    environment:
+      DEBIAN_FRONTEND: noninteractive
+      CHROME_BIN: /tmp/chromium-ci
+    commands:
+      - apt-get update
+      - apt-get install -y --no-install-recommends openjdk-21-jdk-headless chromium python3 bash ca-certificates curl git
+      - printf '#!/bin/sh\nexec /usr/bin/chromium --no-sandbox "$@"\n' > /tmp/chromium-ci
+      - chmod +x /tmp/chromium-ci
+      - ./gradlew check
+      - bash scripts/test-server-launcher.sh

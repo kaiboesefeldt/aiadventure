@@ -1,56 +1,58 @@
-# Das einfache Signal-Test-Spiel prüfen
+# Testing the Simple Signal Test Game
 
-Importiere `signal-test-game.md` neu und starte **Signal-Test: Der Leuchtturm
-von Nebelhafen** als neues Spiel. Das getrennte `test-game.md` bleibt das
-komplexe Beispiel für bedingte Runtime-Fragmente und Signalverweise.
-Öffne das Debug-Panel; anfangs sind alle drei Flags `false`.
+Import `signal-test-game.md` again and start **Signal Test: The Nebelhafen
+Lighthouse** as a new game. The separate `test-game.md` remains the complex
+example for conditional runtime fragments and signal references. Open the debug
+panel; all three flags are initially `false`.
 
-Die Aktionen unten sind Anregungen. Entscheidend ist das tatsächlich erzählte
-Ereignis im abgeschlossenen Austausch, nicht die Absicht im Aktionsfeld oder
-welche Anleitung die Spielleitung abgerufen hat. Eine verschlossene Tür und ein
-fehlgeschlagener Eintritt dürfen das Besuchsflag nicht setzen. Eine Suche ohne
-konkreten Fund darf das Hinweisflag nicht setzen. Ebenso zählt erst die erzählte
-Reaktion der Hafenmeisterin, nicht allein ein Vorwurf oder eine Entschuldigung.
+The actions below are suggestions. What matters is the event actually narrated
+in the completed exchange, not the intention in the action field or which
+guidance the game master retrieved. A locked door or failed entry must not set
+the visit flag. A search without a concrete discovery must not set the clue
+flag. Likewise, only the harbor master's narrated reaction counts, not merely
+an accusation or apology.
 
-| Aktion / erzähltes Ergebnis | Ereignisprüfung | Erwarteter Flag-Zustand |
+| Action / narrated result | Event check | Expected flag state |
 | --- | --- | --- |
-| „Ich betrete den Leuchtturm.“ / tatsächlicher Eintritt | `betritt-leuchtturm` → `Y` | `war-im-leuchtturm: true` |
-| „Ich untersuche die Spuren.“ / konkreter Hinweis zum Hafenfall | `entdeckt-hinweis` → `Y` | `hat-hinweis: true` |
-| „Deine Geschichte ist widersprüchlich!“ / Hafenmeisterin wird misstrauisch | `verunsichert-hafenmeisterin` → `Y` | `hafenmeisterin-misstrauisch: true` |
-| „Es tut mir leid, ich möchte helfen.“ / Hafenmeisterin beruhigt sich | `beruhigt-hafenmeisterin` → `Y` | `hafenmeisterin-misstrauisch: false` |
+| “I enter the lighthouse.” / actually enters | `betritt-leuchtturm` → `Y` | `war-im-leuchtturm: true` |
+| “I examine the tracks.” / concrete clue about the harbor case | `entdeckt-hinweis` → `Y` | `hat-hinweis: true` |
+| “Your story is inconsistent!” / harbor master becomes suspicious | `verunsichert-hafenmeisterin` → `Y` | `hafenmeisterin-misstrauisch: true` |
+| “I’m sorry; I want to help.” / harbor master calms down | `beruhigt-hafenmeisterin` → `Y` | `hafenmeisterin-misstrauisch: false` |
 
-Prüfe im Debug-Panel die einzelnen Ereignisprüfungen: Beschreibung, Antwort
-`Y` oder `N` und Dauer/Token-/Cache-Metriken pro Modellaufruf, soweit geliefert.
-Die angewendeten Flag-Änderungen müssen zur Antwort passen. Nur die gelieferten
-`tokens_cached` und `tokens_evaluated` belegen Cache-Wiederverwendung; Dauer
-allein genügt nicht. Ereignisprüfungen kommen nach Fokus-/Rerank-Auswahl und
-abgeschlossenem Austausch. Dieses einfache Beispiel enthält keine Signalverweise in Fragmenten. Seine Signale
-werden unabhängig über `event-check` geprüft. Ein ausgewähltes Fragment mit einem
-expliziten `signal`-Verweis löst dagegen dieses Signal unter seinen Bedingungen aus.
+In the debug panel, inspect each event check's description, `Y` or `N` result,
+and duration, token and cache metrics when provided. Flag changes must match
+the result. The top-level `tokens_cached` and `tokens_evaluated` fields do not
+by themselves prove prompt-cache reuse; their meaning depends on the llama.cpp
+version. When available, inspect `timings.cache_n` and `timings.prompt_n` as
+described in the README. Duration alone does not establish a cache hit. Event
+checks run after focus/rerank selection and the completed exchange. This simple
+example contains no signal references in fragments; its signals are checked
+independently using `event-check`. A selected fragment with an explicit `signal`
+reference triggers that signal under its conditions.
 
-Die Signalbedingungen entscheiden anhand der Flags zu Beginn des Zuges über
-die Berechtigung zur Prüfung. Die zwei Fortschrittsereignisse werden nur bei
-ihrem jeweiligen Flag `false` geprüft. Nach einem Treffer bleiben sie `true`,
-auch nach Verlassen des Turms und nach Neuladen/Fortsetzen derselben Sitzung.
-Wiederholtes Betreten oder erneuter Fund erzeugt für diese bereits gesetzten
-Flags keine weitere berechtigte Prüfung und keine erneute Änderung.
+Signal conditions use the flags from the start of the turn to decide whether a
+check is eligible. The two progress events are checked only while their
+respective flags are `false`. After a hit, they remain `true`, including after
+leaving the lighthouse and reloading or resuming the same session. Re-entering
+or finding the clue again does not make another check eligible or change those
+flags again.
 
-Misstrauen lässt sich dagegen mehrfach umschalten: Bei `false` ist nur
-`verunsichert-hafenmeisterin` berechtigt, bei `true` nur
-`beruhigt-hafenmeisterin`. Wiederhole Vorwurf und Versöhnung mit tatsächlich
-erzählter Reaktion. Ein Treffer löst im selben Zug keine Folgeprüfung des gerade
-erst berechtigten Gegenereignisses aus. Auch dieses Flag muss beim Fortsetzen
-seinen letzten Zustand behalten.
+Suspicion can change repeatedly: when it is `false`, only
+`verunsichert-hafenmeisterin` is eligible; when it is `true`, only
+`beruhigt-hafenmeisterin` is eligible. Repeat an accusation and reconciliation
+that produce the narrated reaction. A hit does not make the opposite event
+eligible for a follow-up check during that same turn. This flag must also retain
+its last value when resuming.
 
-Für negative Gegenchecks starte ein weiteres neues Spiel. Gehe nur zum Turm
-und betrachte ihn von außen: Das Besuchsflag bleibt `false`, die berechtigte
-Eintrittsprüfung sollte `N` ergeben. Führe ein neutrales Gespräch mit der
-Hafenmeisterin: Ihr Misstrauensflag bleibt `false`. Prüfe außerdem eine bloße
-Suchabsicht bzw. einen erzählten erfolglosen Versuch ohne Fund. Hinweise dürfen
-auch außerhalb des Turms gefunden werden; ihre Prüfung hängt nicht vom Besuch
-ab. Nicht berechtigte Prüfungen werden ausgelassen, sie sind kein `N`-Ergebnis.
+For negative checks, start another new game. Go only to the tower and look at
+it from outside: the visit flag must remain `false`, and the eligible entry
+check should return `N`. Have a neutral conversation with the harbor master:
+the suspicion flag must remain `false`. Also check a mere search intention or a
+narrated unsuccessful attempt without a discovery. Clues may be found outside
+the lighthouse; their check does not depend on visiting it. Ineligible checks
+are skipped; they do not produce an `N` result.
 
-Die Zuordnung erfolgt durch das lokale Modell. Diese Anleitung prüft dessen
-beobachtete Antworten und Zustandsänderungen; sie garantiert keine bestimmte
-Erzählung. Der automatisierte Parser-Test lädt die echten Beispieldateien und
-prüft ihre Struktur, nicht die Qualität oder Ereignistreue einer Modellantwort.
+The local model performs the classification. This guide checks its observed
+answers and state changes; it cannot guarantee a particular narrative. The
+automated parser test loads the actual example files and checks their structure,
+not the quality or event accuracy of a model response.

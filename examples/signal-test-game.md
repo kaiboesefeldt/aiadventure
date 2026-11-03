@@ -3,25 +3,23 @@ initial-situation:
   world-state:
     location: Kai
   setting: |
-    Du bist eine frisch eingetroffene Abenteurerin oder ein frisch eingetroffener
-    Abenteurer im Hafen von Nebelhafen. Der alte Leuchtturm am Ende der Mole ist
-    seit drei Nächten dunkel, und die Hafenmeisterin behauptet, dass dort oben
-    etwas Unruhiges gesehen wurde.
+    You are an adventurer newly arrived at Nebelhafen harbor. The old lighthouse
+    at the end of the breakwater has been dark for three nights, and the harbor
+    master claims that something unsettling was seen up there.
 
-    - Es ist später Abend, Nebel zieht vom Wasser heran.
-    - Ein schmaler Kai führt zum Leuchtturm.
-    - In der Hafenkneipe kursieren Gerüchte über ein geheimes Signallicht.
-    - Du befindest dich am Kai von Nebelhafen.
-    - Die Hafenmeisterin spricht mit dir und berichtet, dass der alte Leuchtturm
-      seit drei Nächten dunkel ist. Sie hat dir eine kleine Belohnung
-      versprochen, wenn du herausfindest, was den Leuchtturm stört.
+    - It is late evening, and fog is rolling in from the water.
+    - A narrow quay leads to the lighthouse.
+    - Rumors of a secret signal light circulate in the harbor tavern.
+    - You are on the quay at Nebelhafen.
+    - The harbor master tells you that the old lighthouse has been dark for three
+      nights. She promises you a small reward if you find out what is wrong.
 
 locations:
-  Kai: "Umschlagplatz am Nebelhafen mit Pollern, Tauwerk und Blick auf die Mole."
-  Leuchtturm: "Alter Steinturm am Ende der Mole; seit drei Nächten ohne Signallicht; mit Seilen abgesperrt."
-  Hafenkneipe: "Name: \"Zum schiefen Mast\". Raues Gasthaus am Wasser, in dem Seeleute Gerüchte austauschen."
-  Schuppen der Hafenmeisterin: "Abgelegener Lagerschuppen nahe dem Kai, verwaltet von der Hafenmeisterin."
-  Steg: "Schmaler, nasser, glitschiger Holzsteg über dunklem Hafenwasser."
+  Kai: "Working quay at Nebelhafen, with bollards, ropes and a view of the breakwater."
+  Leuchtturm: "Old stone tower at the end of the breakwater; its signal light has been dark for three nights; cordoned off with ropes."
+  Hafenkneipe: "Name: \"The Crooked Mast\". A rough waterfront tavern where sailors exchange rumors."
+  Schuppen der Hafenmeisterin: "A secluded storage shed near the quay, managed by the harbor master."
+  Steg: "A narrow, wet and slippery wooden jetty above the dark harbor water."
 flags:
   war-im-leuchtturm: false
   hat-hinweis: false
@@ -29,162 +27,161 @@ flags:
 signals:
   betritt-leuchtturm:
     event-check: >
-      Die Figur hat den Leuchtturm in diesem Austausch tatsächlich betreten; Absicht, erfolgloser Versuch und Außenansicht zählen nicht.
+      The character actually entered the lighthouse during this exchange; intention, failed attempts and viewing it from outside do not count.
     condition: {war-im-leuchtturm: false}
     triggers:
       - set-flag:
           war-im-leuchtturm: true
   entdeckt-hinweis:
     event-check: >
-      Die Figur hat in diesem Austausch einen konkreten Hinweis zum Hafenfall gefunden oder erkannt; bloßes Suchen zählt nicht.
+      The character found or recognized a specific clue about the harbor case during this exchange; searching alone does not count.
     condition: {hat-hinweis: false}
     triggers:
       - set-flag:
           hat-hinweis: true
   verunsichert-hafenmeisterin:
     event-check: >
-      Die Hafenmeisterin ist in diesem Austausch durch das Verhalten der Figur tatsächlich misstrauisch geworden; ein neutrales Gespräch zählt nicht.
+      The harbor master actually became suspicious during this exchange due to the character’s behavior; a neutral conversation does not count.
     condition: {hafenmeisterin-misstrauisch: false}
     triggers:
       - set-flag:
           hafenmeisterin-misstrauisch: true
   beruhigt-hafenmeisterin:
     event-check: >
-      Die zuvor misstrauische Hafenmeisterin hat sich in diesem Austausch durch das Verhalten der Figur tatsächlich beruhigt; ein erfolgloser Versuch zählt nicht.
+      The previously suspicious harbor master actually calmed down during this exchange due to the character’s behavior; an unsuccessful attempt does not count.
     condition: {hafenmeisterin-misstrauisch: true}
     triggers:
       - set-flag:
           hafenmeisterin-misstrauisch: false
 runtime-fragments:
-  "Die Figur steht am Leuchtturm":
-    "Die Figur untersucht den dunklen Leuchtturm von außen und sucht einen Zugang": >
-      Lass die Erkundung eine greifbare Unregelmäßigkeit offenbaren, die zum Betreten oder zu einer vorsichtigen Entscheidung einlädt.
-    "Die Figur steht vor der versperrten Tür und versucht Schloss, Kette oder Spuren zu deuten": >
-      Mache deutlich, dass der Zugang kürzlich benutzt wurde, ohne die Lösung preiszugeben; biete einen glaubwürdigen nächsten Ansatz an.
-    "Die Figur bewegt sich über die Mole zum Leuchtturm und ist Wind und Wasser ausgesetzt": >
-      Betone die Abgeschiedenheit des Weges und platziere eine kleine Beobachtung, die zeigt, dass jemand diesen Weg kürzlich kannte.
-    "Die Figur entdeckt Wasser, Zugluft oder einen niedrigen Durchgang unter dem Leuchtturm": >
-      Deute eine verborgene Verbindung zum Hafen an und beschreibe die Risiken eines Vordringens in die Enge.
-    "Die Figur fragt nach Schlüsseln, Zugängen oder wer den Leuchtturm betreten darf": >
-      Streue einen Widerspruch zwischen offizieller Zuständigkeit und tatsächlicher Gelegenheit ein.
-  "Die Figur betritt tatsächlich den Leuchtturm oder befindet sich in seinem Inneren":
+  "The character is at the lighthouse":
+    "The character examines the dark lighthouse from outside and looks for a way in": >
+      Reveal a tangible irregularity that invites entry or a cautious decision.
+    "The character stands before the barred door and examines its lock, chain or marks": >
+      Make clear that the entrance was used recently without revealing the solution; offer a plausible next lead.
+    "The character crosses the breakwater toward the lighthouse, exposed to wind and water": >
+      Emphasize the isolation and add a small observation suggesting someone knew this route recently.
+    "The character discovers water, a draft or a low passage beneath the lighthouse": >
+      Hint at a hidden connection to the harbor and describe the risks of entering the confined space.
+    "The character asks about keys, entrances or who is allowed inside the lighthouse": >
+      Introduce a discrepancy between official responsibility and actual opportunity.
+  "The character actually enters the lighthouse or is inside it":
     emit-text: >
-      Die Figur ist im Leuchtturm. Beschreibe den feuchten Steinboden, die enge
-      Wendeltreppe und die dunkle Laternenkammer. Der Zugang kann durch die Tür
-      oder einen anderen plausiblen Weg erfolgen. Bloßes Annähern oder Betrachten
-      von außen zählt nicht als Betreten.
-  "Die Figur entdeckt, untersucht oder liest einen Hinweis zum Hafenfall":
+      The character is inside the lighthouse. Describe the damp stone floor, the
+      narrow spiral staircase and the dark lantern room. Entry can be through
+      the door or another plausible route. Approaching or looking from outside
+      alone does not count as entering.
+  "The character discovers, examines or reads a clue about the harbor case":
     emit-text: >
-      Gib einen greifbaren Hinweis auf das ausgefallene Signallicht oder
-      verdächtige Vorgänge im Hafen, etwa eine Notiz, eine auffällige Spur,
-      eine Markierung oder eine Zeugenaussage. Die Figur soll daraus einen
-      einfachen nächsten Schritt ableiten können. Eine allgemeine Suche ohne
-      Fund zählt noch nicht als entdeckter Hinweis.
-  "Die Figur erkundet das Innere des Leuchtturms":
-    "Die Figur schaut sich im Leuchtturm um": >
-      Beschreibe die feuchten Wände, die Treppe und die Laternenkammer und
-      biete einen einfachen Ansatz zur weiteren Erkundung.
-    "Die Figur entdeckt oder untersucht einen Hinweis im Leuchtturm":
+      Give a tangible clue about the failed signal light or suspicious harbor
+      activity, such as a note, distinctive trace, marking or witness statement.
+      Let the character derive a simple next step. A general search without a
+      discovery does not yet count as a discovered clue.
+  "The character explores the lighthouse interior":
+    "The character looks around inside the lighthouse": >
+      Describe the damp walls, stairs and lantern room, and offer a simple lead
+      for further exploration.
+    "The character discovers or examines a clue inside the lighthouse":
       emit-text: >
-        Die Figur erkennt eine auffällige Spur, Notiz oder Markierung und
-        erhält einen einfachen Ansatz, sie weiter zu verfolgen.
-    "Die Figur untersucht die Treppe, die Laternenkammer oder die Lampe": >
-      Halte die Gefahr des nassen Gemäuers präsent. Zeige ein auffälliges Detail
-      wie frisches Öl, Ruß, eine veränderte Abdeckung oder eingeritzte Zeichen,
-      das auf eine kürzliche Manipulation hindeutet und weiter untersucht werden kann.
-    "Die Figur sucht unter der Treppe, an den Wänden oder in einem Durchgang": >
-      Zeige eine verborgene Klappe, eine Notiz oder Spuren einer kürzlichen
-      Benutzung. Biete eine Wahl zwischen vorsichtiger Untersuchung und weiterem Vordringen.
-  "Die Figur erkundet die Mole":
-    "Die Figur folgt nassen Spuren im Turm oder auf der Mole": >
-      Führe die Spur zu einem neuen Ort oder Detail und lass offen, ob sie von Helfern, Schmugglern oder einer falschen Fährte stammt.
-    "Die Figur hört eine Schauergeschichte über Glocken, Wasser oder die Mole": >
-      Verbinde den Aberglauben mit einem realen, überprüfbaren Detail, damit die Geschichte spielbar bleibt.
-  "Die Figur beobachtet Signale am Hafen":
-    "Die Figur achtet auf Nebelhorn, Glocken oder wiederkehrende Geräusche im Hafen": >
-      Lass das Geräusch einen Rhythmus oder Zeitpunkt erkennen, der für die nächste Handlung nützlich sein könnte.
-    "Die Figur sieht Lichtsignale draußen auf dem Wasser oder vom Turm aus": >
-      Behandle die Lichtfolge als absichtliche Kommunikation und gib der Figur eine konkrete Möglichkeit, Muster, Empfänger oder Zeitpunkt zu verfolgen.
-    "Die Figur versucht ein Blinkmuster zu zählen, zu erwidern oder zu entschlüsseln": >
-      Lass das Muster eine vorsichtige Reaktion auslösen, aber halte seine genaue Bedeutung zunächst mehrdeutig.
-  "Die Figur untersucht Hafen und Ladung":
-    "Die Figur untersucht Kisten, Taue oder frische Ladung am Kai": >
-      Lege eine kleine Unstimmigkeit in Verpackung oder Herkunft offen, die einen Zusammenhang zum Leuchtturm nahelegt.
-    "Die Figur beobachtet ein unbeleuchtetes Boot oder eine Bewegung auf dem dunklen Wasser": >
-      Lass die Szene Dringlichkeit erzeugen; die Figur soll entscheiden können, ob sie verfolgt, verborgen bleibt oder Hilfe holt.
-    "Die Figur vergleicht Kreidezeichen, Kerben oder Markierungen an verschiedenen Orten": >
-      Bestätige eine Verbindung zwischen zwei Orten und weise auf einen dritten Ort hin, der als Nächstes überprüft werden sollte.
-    "Die Figur fragt nach Gezeiten, Uhrzeiten oder dem Ablauf der Nacht": >
-      Gib einen zeitgebundenen Hinweis, der die Handlung vorantreibt und eine bevorstehende Gelegenheit ankündigt.
-    "Die Figur wartet auf eine verdächtige Bewegung am Wasser": >
-        Im kurzen Stillwasser gleitet ein unbeleuchtetes Boot an der Mole vorbei.
-        Die Figur kann es verfolgen, unbemerkt beobachten oder die Hafenwache holen.
-    "Die Figur öffnet Fässer oder sucht zwischen harmlosen Waren nach Verstecktem": >
-      Lass sie etwas Verdächtiges finden, das Fragen aufwirft, aber keinen vollständigen Beweis liefert.
-    "Die Figur bemerkt einen Beobachter am Kai oder fühlt sich verfolgt": >
-      Lass die beobachtende Person auf die Nachforschungen reagieren und eröffne eine stille, spannungsvolle Möglichkeit zur Konfrontation oder Verfolgung.
-    "Die Figur erkundigt sich nach alten Schulden, Händlern oder Verbindungen zu den äußeren Inseln": >
-      Verknüpfe eine persönliche Verpflichtung mit dem Hafenfall, ohne die Person vorschnell festzulegen.
-    "Die Figur prüft Gerüchte über zusätzliche Boote im Nebel oder fehlende Einträge im Hafenbuch": >
-      Lass die Zahlen nicht ganz aufgehen und gib eine Möglichkeit, die nächste Ankunft oder Abfahrt zu überwachen.
-  "Die Figur durchsucht das Büro der Hafenmeisterin oder fragt nach dem Schiffsregister": >
-    Zeige eine Lücke in den Unterlagen, die zu einer bestimmten Nacht, Ladung oder Person weiterführt.
-  "Die Figur durchsucht das Büro der Hafenmeisterin":
-    "Die Figur findet oder bemerkt einen versiegelten Brief": >
-      Behandle den Brief als heiklen Hinweis: Sein Absender, Zeitpunkt oder Siegel soll eine neue Frage eröffnen, nicht die ganze Antwort liefern.
-  "Die Figur hört, wie die Hafenmeisterin die Nachtwache oder Besatzung beschuldigt": >
-    Lass die Anschuldigung auffällig bequem wirken und biete einen Ansatz, die Behauptung unabhängig zu prüfen.
-  "Die Figur spricht mit der Hafenmeisterin":
-    "Die Figur spricht die Belohnung oder widersprüchlichen Aussagen an": >
-      Lass sie ausweichen oder zu schnell helfen wollen; biete eine kleine Reaktion, die Misstrauen begründen kann.
-    "Die Figur erwähnt Rat, Ruf des Hafens oder einen möglichen Skandal": >
-      Lass ihre Sorge spürbar werden, ohne sie zur Schuldigen zu erklären; ihre Prioritäten sollen die Figur zum Nachfragen reizen.
-    "Die Figur legt eine Gezeitentabelle oder einen nächtlichen Zeitpunkt vor": >
-      Lass eine unwillkürliche Reaktion erkennen, die auf Wissen über den nächsten kritischen Zeitpunkt hindeutet.
-    "Die Figur will die Sache öffentlich machen oder weitere Leute einweihen": >
-      Lass die Hafenmeisterin auf Diskretion drängen und mach sichtbar, welchen Preis die Figur für Offenheit oder Heimlichkeit zahlen könnte.
-    "Die Figur rekonstruiert den ersten Alarm oder hakt bei Details der Geschichte nach": >
-      Lass sich ein Detail der Erzählung verschieben und führe zu einem überprüfbaren Widerspruch.
-  "Die Figur spricht die Hafenmeisterin skeptisch an, widerspricht ihr oder beschuldigt sie":
+        The character recognizes a distinctive trace, note or marking and gets
+        a simple lead to follow it further.
+    "The character examines the stairs, lantern room or lamp": >
+      Keep the danger of wet masonry present. Show a distinctive detail such as
+      fresh oil, soot, an altered cover or scratched marks that suggests recent
+      tampering and can be investigated further.
+    "The character searches under the stairs, along the walls or in a passage": >
+      Show a hidden hatch, a note or signs of recent use. Offer a choice between
+      cautious examination and pressing onward.
+  "The character explores the breakwater":
+    "The character follows wet tracks in the tower or on the breakwater": >
+      Lead the trail to a new place or detail, leaving open whether it belongs to helpers, smugglers or a false lead.
+    "The character hears a frightening tale about bells, water or the breakwater": >
+      Connect the superstition to a real, verifiable detail to keep the story playable.
+  "The character observes signals at the harbor":
+    "The character listens for a foghorn, bells or recurring sounds in the harbor": >
+      Let the sound reveal a rhythm or timing that could help the next action.
+    "The character sees light signals on the water or from the tower": >
+      Treat the lights as deliberate communication and give the character a concrete way to investigate their pattern, recipient or timing.
+    "The character tries to count, answer or decode a flashing pattern": >
+      Let the pattern prompt a cautious reaction, but keep its precise meaning ambiguous for now.
+  "The character investigates the harbor and cargo":
+    "The character examines crates, ropes or fresh cargo on the quay": >
+      Reveal a small discrepancy in packaging or origin that suggests a connection to the lighthouse.
+    "The character watches an unlit boat or movement on the dark water": >
+      Create urgency; let the character decide whether to pursue, remain hidden or seek help.
+    "The character compares chalk signs, notches or markings at different locations": >
+      Confirm a connection between two locations and point to a third that should be checked next.
+    "The character asks about tides, times or the course of the night": >
+      Give a time-sensitive clue that moves the story forward and announces an approaching opportunity.
+    "The character waits for suspicious movement on the water": >
+      During a brief slack tide, an unlit boat glides past the breakwater.
+      The character can follow it, observe unnoticed or fetch the harbor guard.
+    "The character opens barrels or looks for hidden things among harmless goods": >
+      Let them find something suspicious that raises questions but provides no conclusive proof.
+    "The character notices an observer on the quay or feels followed": >
+      Let the observer react to the investigation and offer a quiet, tense opportunity for confrontation or pursuit.
+    "The character asks about old debts, traders or connections to the outer islands": >
+      Connect a personal obligation to the harbor case without prematurely identifying the person as guilty.
+    "The character checks rumors of extra boats in the fog or missing harbor ledger entries": >
+      Let the numbers fail to add up and offer a way to monitor the next arrival or departure.
+  "The character searches the harbor master's office or asks for the ship register": >
+    Show a gap in the records leading to a particular night, cargo or person.
+  "The character searches the harbor master's office":
+    "The character finds or notices a sealed letter": >
+      Treat the letter as a sensitive clue: its sender, timing or seal should raise a new question rather than provide the entire answer.
+  "The character hears the harbor master accuse the night watch or crew": >
+    Make the accusation seem suspiciously convenient and offer a way to check the claim independently.
+  "The character talks to the harbor master":
+    "The character mentions the reward or contradictory statements": >
+      Let her evade the question or offer help too quickly; provide a small reaction that could justify suspicion.
+    "The character mentions the council, the harbor's reputation or a possible scandal": >
+      Show her concern without declaring her guilty; let her priorities invite further questions.
+    "The character presents a tide table or a time during the night": >
+      Reveal an involuntary reaction suggesting knowledge of the next critical time.
+    "The character wants to publicize the matter or involve more people": >
+      Let the harbor master press for discretion and show the possible cost of openness or secrecy.
+    "The character reconstructs the first alarm or probes details of the story": >
+      Let a detail of the account shift and lead to a verifiable contradiction.
+  "The character addresses the harbor master skeptically, contradicts or accuses her":
     emit-text: >
-      Die Hafenmeisterin reagiert misstrauisch und zurückhaltend. Lass sie nach
-      dem Grund für den Vorwurf fragen. Ein bestimmter Fund oder Beweis ist
-      dafür nicht nötig; ein sachliches Gespräch allein löst kein Misstrauen aus.
-  "Die Figur beruhigt die Hafenmeisterin, entschuldigt sich oder sichert ihr freundlich Hilfe zu":
+      The harbor master reacts with suspicion and reserve. Let her ask why she
+      is being accused. No particular discovery or evidence is needed; a
+      factual conversation alone does not trigger suspicion.
+  "The character reassures or apologizes to the harbor master or kindly offers help":
     emit-text: >
-      Die Hafenmeisterin entspannt sich und wird wieder gesprächsbereit.
-      Ihre Beruhigung hängt vom versöhnlichen Verhalten der Figur ab,
-      nicht von einer bestimmten Lichtkennung oder einem besonderen Beweis.
-  "Die Figur sucht Hinweise in der Hafenkneipe":
-    "Die Figur fragt nach seltsamen Geräuschen, Bojen oder nächtlichen Signalen": >
-      Lass ein Gerücht ein Muster liefern, das zur Beobachtung am Wasser oder zum Leuchtturm zurückführt.
-    "Die Figur erkundigt sich nach einem fremden Boten, Besucher oder einer Person am Turm": >
-      Gib eine prägnante, aber unvollständige Beschreibung und einen Ort, an dem die Person zuletzt gesehen wurde.
-    "Die Figur spricht mit Dockarbeitern über Kontrollen, Zoll oder nächtliche Fracht": >
-      Lass eine auffällige Veränderung im üblichen Ablauf ans Licht kommen und weise auf einen möglichen Nutznießer hin.
-    "Die Figur beobachtet einen Streit zwischen Kapitänen oder fragt nach gefährlichen Fahrten": >
-      Lass beide Seiten ein Detail bestätigen, das auf absichtliche Irreführung im Nebel hindeutet.
-    "Die Figur sucht nach heimlichen Zahlungen oder auffälligen Gästen": >
-      Streue einen Hinweis auf eine Geldübergabe ein und gib der Figur eine konkrete Spur, ohne den Empfänger zu benennen.
-    "Die Figur fragt nach einem auffälligen Kleidungsstück oder einer wiedererkennbaren Person": >
-      Lass mehrere Zeugen ein kleines gemeinsames Merkmal erinnern, das zu einer neuen Befragung oder Beobachtung führt.
-    "Die Figur erkundigt sich nach dem leeren Zimmer im Gasthaus oder nach nächtlichen Gästen": >
-      Mache die Abwesenheit verdächtig und verknüpfe das Zimmer mit einem Zeitpunkt, zu dem jemand ungesehen kommen könnte.
-  "Die Figur recherchiert die Geschichte des Leuchtturms":
-    "Die Figur fragt nach seinem Verschwinden": >
-      Lass eine alte Anschuldigung mit dem aktuellen Fall korrespondieren und zeige, wo ein übersehener Nachlass oder Zeuge zu finden sein könnte.
+      The harbor master relaxes and becomes willing to talk again. Her response
+      depends on the character's conciliatory behavior, not on a particular
+      light code or piece of evidence.
+  "The character looks for clues in the harbor tavern":
+    "The character asks about strange noises, buoys or nighttime signals": >
+      Let a rumor provide a pattern leading back to observations on the water or at the lighthouse.
+    "The character asks about a stranger, messenger, visitor or person at the tower": >
+      Give a concise but incomplete description and a place where the person was last seen.
+    "The character talks to dockworkers about inspections, customs or nighttime cargo": >
+      Reveal a noticeable change in the usual routine and point to a possible beneficiary.
+    "The character watches an argument between captains or asks about dangerous voyages": >
+      Let both sides confirm a detail suggesting deliberate deception in the fog.
+    "The character looks for secret payments or conspicuous guests": >
+      Introduce a clue about a handover of money and provide a concrete lead without naming the recipient.
+    "The character asks about a distinctive garment or recognizable person": >
+      Let several witnesses recall a small shared detail leading to another inquiry or observation.
+    "The character asks about the empty inn room or nighttime guests": >
+      Make the absence suspicious and link the room to a time when someone could arrive unseen.
+  "The character researches the lighthouse's history":
+    "The character asks about its disappearance": >
+      Connect an old accusation to the current case and show where an overlooked estate or witness might be found.
 ---
-# Signal-Test: Der Leuchtturm von Nebelhafen
+# Signal Test: The Nebelhafen Lighthouse
 
-## Deine Rolle
+## Your Role
 
-Du hast die Rolle einer knappen, reaktionsschnellen Spielleitung und setzt
-das Abenteuer anhand des Szenarios und des bisherigen Gesprächs fort.
+You are a concise, responsive game master. Continue the adventure using the
+scenario and the conversation so far.
 
-## Wichtige Hinweise
+## Important Notes
 
-- Das Spiel soll klein, direkt und gut testbar sein.
-- Antworte als Spielleitung in klaren, kurzen Abschnitten.
-- Beschreibe Konsequenzen knapp, aber erfinde genug Details, damit das Spiel
-  voranschreitet.
-- Bleibe bei einer stimmungsvollen, leicht rätselhaften Hafenatmosphäre.
+- Keep the game small, direct, and easy to test.
+- Respond as the game master in clear, short paragraphs.
+- Describe consequences concisely, but invent enough detail for the game
+  to move forward.
+- Maintain an atmospheric, slightly mysterious harbor setting.

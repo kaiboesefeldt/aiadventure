@@ -35,10 +35,10 @@
 - [ ] **Step 1: Write failing model, snapshot, JSON, and migration tests.**
 
 ```kotlin
-assertEquals("AUTHORITATIVE CURRENT LOCATION: Küche\nNARRATIVE FOCUS: Der verrostete Mechanismus", WorldStateSnapshot.render(WorldState("Küche", "Der verrostete Mechanismus")))
-assertEquals("{\"narrativeFocus\":\"Der verrostete Mechanismus\"}", worldStateJson(WorldState(narrativeFocus = "Der verrostete Mechanismus")))
-assertEquals(WorldState(narrativeFocus = "Der Leuchtturm"), decodePersistedGameSession("""{"id":"s","scenarioId":"x","title":"x","messages":[],"createdAt":1,"updatedAt":1,"worldState":{"unresolvedSituation":"Der Leuchtturm"}}""").worldState)
-assertEquals(WorldState(narrativeFocus = "Der Leuchtturm"), decodePersistedGameSession("""{"id":"s","scenarioId":"x","title":"x","messages":[],"createdAt":1,"updatedAt":1,"worldState":{"activeThread":"Der Leuchtturm"}}""").worldState)
+assertEquals("AUTHORITATIVE CURRENT LOCATION: Kitchen\nNARRATIVE FOCUS: The rusty mechanism", WorldStateSnapshot.render(WorldState("Kitchen", "The rusty mechanism")))
+assertEquals("{\"narrativeFocus\":\"The rusty mechanism\"}", worldStateJson(WorldState(narrativeFocus = "The rusty mechanism")))
+assertEquals(WorldState(narrativeFocus = "The lighthouse"), decodePersistedGameSession("""{"id":"s","scenarioId":"x","title":"x","messages":[],"createdAt":1,"updatedAt":1,"worldState":{"unresolvedSituation":"The lighthouse"}}""").worldState)
+assertEquals(WorldState(narrativeFocus = "The lighthouse"), decodePersistedGameSession("""{"id":"s","scenarioId":"x","title":"x","messages":[],"createdAt":1,"updatedAt":1,"worldState":{"activeThread":"The lighthouse"}}""").worldState)
 ```
 
 - [ ] **Step 2: Run focused tests and verify they fail.**
@@ -77,8 +77,8 @@ Commit: `git commit -m "feat(state): rename narrative focus"`
 - [ ] **Step 1: Write failing resolver-schema and prompt tests.**
 
 ```kotlin
-val reply = "{\"narrativeFocus\":\"Der verrostete Mechanismus im Leuchtturm\"}"
-assertEquals(WorldState("Market Square", "Der verrostete Mechanismus im Leuchtturm"), resolver.resolve(request(reply)))
+val reply = "{\"narrativeFocus\":\"The rusty mechanism in the lighthouse\"}"
+assertEquals(WorldState("Market Square", "The rusty mechanism in the lighthouse"), resolver.resolve(request(reply)))
 assertTrue(prompt.contains("Retrospectively update the prior focus from the action and response."))
 assertTrue(schema["required"]!!.toString().contains("narrativeFocus"))
 ```
@@ -117,7 +117,7 @@ Commit: `git commit -m "feat(state): resolve narrative focus"`
 - [ ] **Step 1: Write failing serialized SSE and validation expectations.**
 
 ```kotlin
-assertContains(donePayload, "\"narrativeFocus\":\"Der verrostete Mechanismus\"")
+assertContains(donePayload, "\"narrativeFocus\":\"The rusty mechanism\"")
 assertEquals(acceptedWorldState, registry.coordinator.rerankRequests.single().worldState)
 ```
 

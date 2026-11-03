@@ -35,12 +35,12 @@
 @Test fun `accepts a named entity and fact without an internal id`() {
     val result = WorldStateReducer.applyProposal(WorldState(), WorldStateProposal(
         baseRevision = 0,
-        entities = listOf(WorldStateEntityProposal("Leuchtturm", "location", "Seit drei Nächten dunkel.")),
-        facts = listOf(WorldStateFactProposal("Unruhe", "Leuchtturm", "true")),
+        entities = listOf(WorldStateEntityProposal("Lighthouse", "location", "Dark for three nights.")),
+        facts = listOf(WorldStateFactProposal("Unrest", "Lighthouse", "true")),
     ))
 
-    assertEquals(WorldEntity("location", "Leuchtturm", "Seit drei Nächten dunkel."), result?.entities?.get("leuchtturm"))
-    assertEquals("true", result?.facts?.get("Unruhe:leuchtturm"))
+    assertEquals(WorldEntity("location", "Lighthouse", "Dark for three nights."), result?.entities?.get("lighthouse"))
+    assertEquals("true", result?.facts?.get("Unrest:lighthouse"))
 }
 ```
 
@@ -91,7 +91,7 @@ git commit -m "feat(state): translate named world state proposals"
 
 - [ ] **Step 1: Write failing resolver and route tests**
 
-Change the resolver fixture response to a named proposal with `entities` and `facts`, then assert the decoded entity has name `Harbourmaster`. Add an application route test whose resolver returns a named `Leuchtturm` proposal and assert the SSE `done` payload contains `"leuchtturm"` and `"Unruhe:leuchtturm"`.
+Change the resolver fixture response to a named proposal with `entities` and `facts`, then assert the decoded entity has name `Harbourmaster`. Add an application route test whose resolver returns a named `Lighthouse` proposal and assert the SSE `done` payload contains `"lighthouse"` and `"Unrest:lighthouse"`.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -104,7 +104,7 @@ Expected: compilation or assertion failure because the resolver still returns `W
 Change the resolver prompt/schema from `operations` to these fields:
 
 ```json
-{"baseRevision":0,"entities":[{"name":"Leuchtturm","kind":"location","summary":"..."}],"facts":[{"name":"Unruhe","entityName":"Leuchtturm","value":"true"}]}
+{"baseRevision":0,"entities":[{"name":"Lighthouse","kind":"location","summary":"..."}],"facts":[{"name":"Unrest","entityName":"Lighthouse","value":"true"}]}
 ```
 
 State that names are ordinary display names, facts may refer to an entity in the same proposal, and the server derives all IDs. Decode `WorldStateProposal`. In the route, call `WorldStateReducer.applyProposal(request.worldState, candidate)` and retain the existing trace acceptance log and fallback to the previous state.

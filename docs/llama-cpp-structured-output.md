@@ -1,20 +1,20 @@
-# llama.cpp Structured Output
+# Structured Output with llama.cpp
 
-## Regel: Kein kleines `n_predict` neben einer endlichen JSON-Grammatik
+## Rule: Avoid a small `n_predict` limit with a finite JSON grammar
 
-Für kurze, schema-gebundene llama.cpp-Completion-Aufgaben wird kein eigenes
-kleines `n_predict` gesendet. Das JSON-Schema wird von llama.cpp in eine
-Grammatik übersetzt und begrenzt die Ausgabe bereits, beispielsweise durch
-`enum`, `const`, `minLength` und `maxLength`.
+For short, schema-bound llama.cpp completion tasks, do not send a separate
+small `n_predict` limit. llama.cpp translates the JSON schema into a grammar,
+which already constrains the output through features such as `enum`, `const`,
+`minLength`, and `maxLength`.
 
-Ein zusätzliches Token-Limit kann die Ausgabe vor der schließenden JSON-Klammer
-abschneiden. Der Server sieht dann ungültiges JSON und verwirft das Ergebnis,
-obwohl die Grammatik die fachliche Antwort eigentlich begrenzt hätte. Das ist
-bei kleinen Secondary-Modellen besonders wahrscheinlich, wenn sie viele Tokens
-bis zum Erreichen einer zulässigen Grammatikalternative erzeugen.
+An additional token limit can truncate the output before the closing JSON
+brace. The server then sees invalid JSON and discards the result, even though
+the grammar would have constrained the valid answer. This is especially likely
+with small secondary models when they need to generate many tokens before
+reaching a valid grammar alternative.
 
-Wenn eine Output-Grenze nötig ist, gehört sie ins Schema. Beispiel für einen
-optional zu leerenden Textwert:
+If an output bound is needed, put it in the schema. For example, to allow an
+optional text value to be empty:
 
 ```json
 {
@@ -25,7 +25,7 @@ optional zu leerenden Textwert:
 }
 ```
 
-Vor einer neuen Schema-Konstruktion muss ein direkter Smoke-Test gegen den
-lokalen llama-server bestätigen, dass er die JSON-Schema-Funktionen in die
-gewünschte Grammatik übersetzt. Serverseitige semantische Validierung bleibt
-trotz Schema erforderlich.
+Before introducing a schema construction, run a direct smoke test against the
+local llama-server to confirm that it translates the JSON Schema features into
+the intended grammar. Server-side semantic validation remains necessary even
+when a schema is used.

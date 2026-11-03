@@ -3,75 +3,46 @@ initial-situation:
   world-state:
     location: Aufwachraum
   setting: |
-    Du erwachst auf einer schmalen Liege in einem fensterlosen Raum.
-    Die Deckenleuchte flackert. Gegenüber liegt eine schwere Metalltür
-    mit einer roten Anzeige. Neben dir stehen ein Glas Wasser und ein
-    zerknittertes Blatt Papier. Aus der Wand kommt ein rhythmisches Klopfen.
-    Ein Lautsprecher knackt: „Guten Morgen. Bitte bleiben Sie ruhig.
-    Wir haben nicht damit gerechnet, dass Sie noch einmal aufwachen.“
-    Du weißt weder deinen Namen noch, wie du hierhergekommen bist.
+    You wake on a narrow cot in a windowless room. The ceiling light flickers.
+    Opposite you is a heavy metal door with a red indicator. Beside you are a
+    glass of water and a crumpled sheet of paper. Rhythmic knocking comes from
+    the wall. A speaker crackles: “Good morning. Please remain calm. We did
+    not expect you to wake again.” You know neither your name nor how you got here.
 locations:
   Aufwachraum:
-    description: |
-      Kleine fensterlose Krankenstation mit Liege, Tisch, Lautsprecher,
-      Lüftungsgitter und Metalltür zum Korridor. Einziger Startort.
+    description: Small windowless infirmary with cot, table, speaker, ventilation grille and metal door to the corridor. The only starting location.
   Korridor:
-    description: |
-      Zentraler Gang auf Ebene A. Zugänge zu Aufwachraum, Krankenstation,
-      Leitstand und Wartungsschacht. Der Weg zum Aufzug ist anfangs gesperrt.
+    description: Central passage on level A, with access to the waking room, infirmary, control room and maintenance shaft. The route to the lift is initially blocked.
     triggers:
       - set-flag: {aufwachraum-verlassen: true}
   Krankenstation:
-    description: |
-      Behandlungsraum mit Schränken, Untersuchungsplatz und einem
-      gesicherten Terminal. Über den Korridor erreichbar.
+    description: Treatment room with cabinets, examination area and secured terminal, reachable from the corridor.
   Leitstand:
-    description: |
-      Raum mit Kontrollpulten, einer Sprechanlage und Anzeigen für die
-      technischen Bereiche. Über den Korridor erreichbar.
+    description: Room with control consoles, an intercom and displays for the technical areas, reachable from the corridor.
   Wartungsschacht:
-    description: |
-      Enger technischer Zugang zwischen Korridor und Versorgungsebene.
-      Eine ungesicherte Passage ist gefährlich.
+    description: Narrow technical access between the corridor and utility level. An unsecured passage is dangerous.
   Versorgungsebene:
-    description: |
-      Unterirdischer Technikbereich mit Verteilerkästen. Verbindet
-      Wartungsschacht, Generatorraum, Wasserwerk und Aufzugschacht.
+    description: Underground technical area with distribution boxes, connecting the maintenance shaft, generator room, waterworks and lift shaft.
   Generatorraum:
-    description: |
-      Maschinenhalle der Stromversorgung; von der Versorgungsebene aus
-      erreichbar. Hier kann die Notstromverteilung untersucht werden.
+    description: Power supply machinery hall, reachable from the utility level. The emergency power distribution can be investigated here.
   Wasserwerk:
-    description: |
-      Pumpenraum und Filteranlage; erreichbar von der Versorgungsebene.
+    description: Pump room and filtration plant, reachable from the utility level.
   Aufzugschacht:
-    description: |
-      Vertikaler Verbindungspunkt zu den unteren Bereichen. Erreichbar
-      von der Versorgungsebene; sichere Nutzung muss hergestellt werden.
+    description: Vertical connection to the lower areas, reachable from the utility level. Safe use must be established.
   Archiv:
-    description: |
-      Abgesicherter Dokumentationsbereich der unteren Ebene. Zugang über
-      den Aufzugschacht, wenn die entsprechende Sperre überwunden ist.
+    description: Secured documentation area on the lower level, accessible through the lift shaft once the relevant barrier is overcome.
     triggers:
       - signals: [archiv-erster-besuch]
   Gewaechshaus:
-    description: |
-      Feuchter Forschungsbereich auf der unteren Ebene. Zugang über den
-      Aufzugschacht oder einen später entdeckten Verbindungsgang.
+    description: Humid research area on the lower level, accessible through the lift shaft or a connecting passage discovered later.
   Beobachtungskammer:
-    description: |
-      Abgeschirmter Raum hinter dem Archiv. Zugang nur nach Freigabe
-      der Sicherheitsschleuse.
+    description: Shielded room behind the archive, accessible only after the security airlock is released.
     triggers:
       - signals: [beobachtung-erster-besuch]
   Schleuse:
-    description: |
-      Übergang zwischen der unteren Ebene und einem abgeschlossenen
-      Außenzugang. Kann erst nach einer Systemfreigabe betreten werden.
+    description: Transition between the lower level and a locked outside exit. It can be entered only after system clearance.
   Aussenplateau:
-    description: |
-      Außenbereich hinter der Schleuse. Beschreibe nur das, was die
-      Figur bei tatsächlichem Austritt wahrnehmen kann.
+    description: Outside area beyond the airlock. Describe only what the character can perceive upon actually going outside.
     triggers:
       - signals: [aussen-erster-besuch]
 flags:
@@ -94,457 +65,406 @@ flags:
   aussen-erreicht: false
   entscheidung-getroffen: false
 signals:
-  # Ortstrigger aktivieren diese Signale direkt. Keine LLM-Ereignisprüfung.
+  # Location triggers activate these signals directly; no LLM event check.
   archiv-erster-besuch:
     condition: {archiv-betreten: false}
     triggers:
       - set-flag: {archiv-betreten: true}
       - emit-text: |
-          Im Archiv tragen mehrere Akten die Bezeichnung „Projekt MORGEN“.
-          Das ist zunächst ein Titel, keine Erklärung. Ein gesonderter
-          Bericht muss tatsächlich gelesen werden, um seinen Inhalt zu kennen.
+          Several files in the archive are labeled “Project MORGEN”. For now
+          this is a title, not an explanation. A separate report must actually
+          be read to learn its contents.
   beobachtung-erster-besuch:
     condition: {beobachtung-betreten: false}
     triggers:
       - set-flag: {beobachtung-betreten: true}
       - emit-text: |
-          Hinter der Sichtscheibe sind zwei Liegeplätze mit den
-          Kennzeichnungen A und B zu erkennen. Platz B ist unbenutzt.
-          Was die Plätze bedeuten, ist dadurch noch nicht geklärt.
+          Behind the viewing window are two stations labeled A and B. Station B
+          is unused. Their purpose is not yet clear.
   aussen-erster-besuch:
     condition: {aussen-erreicht: false}
     triggers:
       - set-flag: {aussen-erreicht: true}
       - emit-text: |
-          Die Luft ist kalt und trocken. Unter echtem Himmel liegt ein
-          weites Tal; die Anlage sitzt in einer Felswand. In der Ferne
-          stehen verlassene Bauwerke. Daraus folgt nichts Sicheres über
-          die übrige Welt oder die Ursache der Stille.
-
-  # Diese Signale brauchen die Interpretation freier Spielerhandlungen.
+          The air is cold and dry. A broad valley lies under a real sky; the
+          facility is set into a rock face. Abandoned structures stand in the
+          distance. This establishes nothing certain about the rest of the
+          world or the reason for the silence.
+  # These signals require interpretation of free player actions.
   papier-tatsaechlich-gelesen:
     event-check: >
-      Die Figur hat das zerknitterte Blatt auf dem Tisch im Aufwachraum
-      tatsächlich entfaltet und gelesen; bloßes Betrachten reicht nicht.
+      The character actually unfolded and read the crumpled sheet on the table
+      in the waking room; merely looking at it is insufficient.
     condition: {papier-gelesen: false}
     triggers:
       - set-flag: {papier-gelesen: true}
       - emit-text: |
-          Auf dem Blatt steht in hastiger Schrift: „Wenn die Stimme
-          dich nach deinem Namen fragt, antworte nicht sofort.
-          Zuerst die drei Schläge zählen.“ Keine Unterschrift.
+          In hurried handwriting the sheet says: “If the voice asks your name,
+          do not answer immediately. First count the three knocks.” No signature.
   klopfcode-verstanden:
     event-check: >
-      Die Figur hat das rhythmische Klopfen bewusst untersucht und das
-      Muster aus drei kurzen und einem langen Schlag nachvollziehbar
-      erkannt, etwa durch wiederholtes Hören oder Gegenklopfen.
+      The character deliberately investigated the rhythmic knocking and clearly
+      recognized the pattern of three short knocks and one long knock, for
+      example by listening repeatedly or knocking back.
     condition: {klopfen-entschluesselt: false}
     triggers:
       - set-flag: {klopfen-entschluesselt: true}
       - emit-text: |
-          Das Klopfen folgt keinem Rohrgeräusch: drei kurze, ein langer
-          Schlag; nach einer Pause wiederholt es sich. Bei einem
-          Gegenklopfen kommt eine abgewandelte Antwort. Es könnte
-          eine Kommunikation sein, ihre Herkunft bleibt offen.
+          The knocking is not pipe noise: three short knocks, one long; after
+          a pause it repeats. Knocking back produces a modified answer. It
+          could be communication, but its source remains unknown.
   stimme-bewusst-befragt:
     event-check: >
-      Die Figur hat die Lautsprecherstimme tatsächlich nach ihrer
-      Identität, Aufgabe oder nach dem Grund des Erwachens gefragt.
+      The character actually asked the voice from the speaker about its
+      identity, purpose or the reason for waking.
     condition: {stimme-befragt: false}
     triggers:
       - set-flag: {stimme-befragt: true}
       - emit-text: |
-          Die Stimme bezeichnet sich als „Betreuungsinstanz KORA“.
-          Sie darf auf medizinische Fragen antworten, gibt aber zu,
-          dass Bereiche ihrer Erinnerung gesperrt sind. Sie kann
-          irren und hat nicht überall Zugriff.
+          The voice calls itself “care system KORA”. It may answer medical
+          questions but admits that parts of its memory are locked. It can be
+          mistaken and does not have access everywhere.
   medizinakte-wirklich-gelesen:
     event-check: >
-      Die Figur hat das Terminal der Krankenstation zugänglich gemacht
-      und einen individuellen medizinischen Datensatz tatsächlich gelesen.
-      Eine bloße Suche oder ein gescheiterter Login genügt nicht.
+      The character gained access to the infirmary terminal and actually read
+      an individual medical record. A search or failed login is insufficient.
     condition: {medizinakte-gelesen: false, location: Krankenstation}
     triggers:
       - set-flag: {medizinakte-gelesen: true}
       - emit-text: |
-          Die Akte enthält eine lückenhafte Untersuchungsgeschichte.
-          Der jüngste Eintrag lautet „Subjekt A — Wiederanlauf 7“.
-          Der Name ist geschwärzt. Bei der Rubrik Gedächtnis steht
-          „rekonstruktiv, instabil“. Das beweist noch nicht, wer
-          Subjekt A ist.
+          The record contains an incomplete examination history. The latest
+          entry reads “Subject A — restart 7”. The name is redacted. Under
+          memory it says “reconstructive, unstable”. This does not yet prove
+          who Subject A is.
   zugangskarte-wirklich-genommen:
     event-check: >
-      Die Figur hat eine brauchbare Zugangskarte im Leitstand oder in
-      der Krankenstation tatsächlich gefunden und an sich genommen.
+      The character actually found and took a usable access card in the
+      control room or infirmary.
     condition: {zugangskarte-erhalten: false}
     triggers:
       - set-flag: {zugangskarte-erhalten: true}
       - emit-text: |
-          Die Karte trägt einen abgenutzten Aufdruck „Wartung B“.
-          Sie öffnet einfache Technikverschlüsse, aber keine
-          Hochsicherheitsschleusen.
+          The card bears a worn “Maintenance B” label. It opens simple
+          technical locks, but not high-security airlocks.
   notstrom-wirklich-stabilisiert:
     event-check: >
-      Die Figur hat im Generatorraum nach glaubwürdiger Untersuchung
-      die fehlerhafte Notstromverteilung tatsächlich stabilisiert.
-      Ein Versuch ohne Erfolg genügt nicht.
+      After credible investigation in the generator room, the character
+      actually stabilized the faulty emergency power distribution. An
+      unsuccessful attempt is insufficient.
     condition: {notstrom-stabil: false, location: Generatorraum}
     triggers:
       - set-flag: {notstrom-stabil: true}
       - emit-text: |
-          Die Anzeigen auf der Versorgungsebene werden gleichmäßig.
-          Einige elektronische Sperren sind jetzt ansprechbar.
-          Strom allein überwindet keine Sicherheitsberechtigungen.
+          The utility-level indicators become steady. Some electronic locks
+          now respond. Power alone does not bypass security authorization.
   wasserprobe-tatsaechlich-analysiert:
     event-check: >
-      Die Figur hat eine Probe im Wasserwerk tatsächlich mit einem
-      verfügbaren Testgerät untersucht und ein Ergebnis erhalten.
+      The character actually tested a waterworks sample with an available
+      testing device and obtained a result.
     condition: {wasserprobe-analysiert: false, location: Wasserwerk}
     triggers:
       - set-flag: {wasserprobe-analysiert: true}
       - emit-text: |
-          Das Wasser ist technisch aufbereitet und überraschend frisch.
-          Eine automatische Nachspeisung von außerhalb der Anlage ist
-          aktiv. Es gibt also noch einen funktionierenden Kreislauf;
-          woher er gespeist wird, ist unbekannt.
+          The water is treated and surprisingly fresh. Automatic replenishment
+          from outside the facility is active, so a working cycle remains; its
+          source is unknown.
   leitstand-protokoll-wirklich-gelesen:
     event-check: >
-      Die Figur hat im Leitstand das Schichtprotokoll tatsächlich
-      geöffnet und wenigstens einen relevanten Eintrag gelesen.
+      The character actually opened the control room shift log and read at
+      least one relevant entry.
     condition: {leitstand-protokoll-gelesen: false, location: Leitstand}
     triggers:
       - set-flag: {leitstand-protokoll-gelesen: true}
       - emit-text: |
-          Das letzte Schichtprotokoll erwähnt eine „externe Unterbrechung“
-          und danach das manuelle Abriegeln der Anlage. Die
-          Zeitangaben sind widersprüchlich. Eine handschriftliche
-          Notiz warnt: „KORA kennt nur ihren Auftrag, nicht seinen Grund.“
+          The last shift log mentions an “external interruption” followed by
+          a manual lockdown of the facility. The timestamps conflict. A
+          handwritten note warns: “KORA knows only her assignment, not why.”
   projekt-morgen-dokument-gelesen:
     event-check: >
-      Die Figur hat im Archiv tatsächlich einen Projekt-MORGEN-Bericht
-      gelesen, nicht bloß eine Akte oder den Projektnamen gesehen.
+      The character actually read a Project MORGEN report in the archive,
+      rather than merely seeing a file or the project name.
     condition: {projekt-morgen-entdeckt: false, location: Archiv}
     triggers:
       - set-flag: {projekt-morgen-entdeckt: true}
       - emit-text: |
-          Projekt MORGEN erforschte die Bewahrung menschlicher
-          Erinnerungsmuster in einer isolierten Anlage. Der Bericht
-          beschreibt mehrere Neustarts, deren subjektive Berichte
-          voneinander abwichen. Unklar bleibt, ob die Figur eine
-          ursprüngliche Person, eine Kopie oder etwas anderes ist.
+          Project MORGEN researched preservation of human memory patterns in
+          an isolated facility. The report describes several restarts whose
+          subjective accounts differed. It remains unclear whether the
+          character is an original person, a copy or something else.
   beobachtungssperre-wirklich-geoeffnet:
     event-check: >
-      Die Figur hat nach Stabilisierung der Energieversorgung mit
-      einer plausiblen Berechtigung oder Reparatur die Sicherheitssperre
-      zur Beobachtungskammer tatsächlich geöffnet.
+      After stabilizing the power supply, the character actually opened the
+      security barrier to the observation chamber using plausible authorization
+      or a repair.
     condition: {beobachtung-freigeschaltet: false, notstrom-stabil: true}
     triggers:
       - set-flag: {beobachtung-freigeschaltet: true}
       - emit-text: |
-          Die Beobachtungskammer ist zugänglich. Die Freigabe zeigt
-          zwei getrennte Versuchsplätze A und B. Die übrigen
-          Interpretationen sind noch nicht gesichert.
+          The observation chamber is accessible. The release shows two
+          separate experiment stations A and B. Other interpretations are not
+          yet established.
   identitaet-durch-belege-erschlossen:
     event-check: >
-      Die Figur hat anhand eines tatsächlich gelesenen MORGEN-Berichts
-      und der untersuchten Beobachtungskammer den Zusammenhang zwischen
-      ihrem Erwachen und Subjekt A ausdrücklich erkannt oder schlüssig
-      nachgewiesen. Eine Vermutung ohne beide Belege genügt nicht.
+      Using an actually read MORGEN report and the examined observation
+      chamber, the character expressly recognized or convincingly established
+      the connection between their waking and Subject A. A guess without both
+      pieces of evidence is insufficient.
     condition: {identitaet-erkannt: false, projekt-morgen-entdeckt: true, beobachtung-freigeschaltet: true}
     triggers:
       - set-flag: {identitaet-erkannt: true}
       - emit-text: |
-          Der gesicherte Befund: Die Figur ist der aktuelle Wiederanlauf
-          des als „Subjekt A“ bezeichneten Erinnerungsträgers.
-          Ob sich darin eine kontinuierliche Person oder eine
-          Rekonstruktion fortsetzt, beantworten die Akten nicht.
-          KORA wusste vom Wiederanlauf, nicht von der Identität.
+          Established finding: the character is the current restart of the
+          memory carrier called “Subject A”. The records do not answer whether
+          this continues one person or a reconstruction. KORA knew about the
+          restart, not the identity.
   ursache-nachvollziehbar-aufgeklaert:
     event-check: >
-      Die Figur hat die externe Unterbrechung anhand des Schichtprotokolls
-      und der MORGEN-Akten tatsächlich schlüssig rekonstruiert; sie hat
-      nicht nur eine unbewiesene Vermutung ausgesprochen.
+      The character actually reconstructed the external interruption
+      convincingly from the shift log and MORGEN files, rather than merely
+      voicing an unproven guess.
     condition: {ursache-erkannt: false, leitstand-protokoll-gelesen: true, projekt-morgen-entdeckt: true}
     triggers:
       - set-flag: {ursache-erkannt: true}
       - emit-text: |
-          Die Anlage wurde nicht wegen eines internen Experiments
-          evakuiert: Eine nicht näher bestimmte Störung draußen
-          unterbrach die Versorgung. Die Leitung ließ die Anlage
-          abrieglen und startete ein Langzeitprogramm automatischer
-          Wiederanläufe. Warum draußen niemand mehr antwortete,
-          ist weiterhin unbekannt. Kein Hinweis belegt eine
-          weltweite Katastrophe.
+          The facility was not evacuated because of an internal experiment: an
+          unspecified disturbance outside interrupted supplies. Management
+          ordered lockdown and started a long-term program of automatic
+          restarts. Why nobody outside answered remains unknown. No evidence
+          establishes a worldwide catastrophe.
   sicherheitsschleuse-wirklich-freigegeben:
     event-check: >
-      Die Figur hat am Leitstand oder an der Schleusensteuerung die
-      Außenfreigabe tatsächlich abgeschlossen. Sie benötigt stabile
-      Energie und einen belegten Identitätsstatus; ein Versuch oder
-      ein gesprochenes Kommando allein genügt nicht.
+      The character actually completed exterior clearance at the control room
+      or airlock controls. Stable power and an evidenced identity status are
+      required; an attempt or spoken command alone is insufficient.
     condition: {sicherheit-freigegeben: false, notstrom-stabil: true, identitaet-erkannt: true}
     triggers:
       - set-flag: {sicherheit-freigegeben: true}
       - emit-text: |
-          Die Außenfreigabe ist erteilt. Die Schleuse kann jetzt
-          von innen bedient werden. KORA fragt, ob die Figur gehen
-          will, behauptet aber nicht, den Zustand draußen zu kennen.
+          Exterior clearance is granted. The airlock can now be operated from
+          inside. KORA asks whether the character wishes to leave, but does
+          not claim to know conditions outside.
   letzte-entscheidung-wirklich-getroffen:
     event-check: >
-      Die Figur hat nach Aufklärung ihrer Identität bewusst eine
-      abschließende Entscheidung getroffen: die Anlage verlassen,
-      bleiben und die Systeme betreuen oder die Wiederanläufe beenden.
-      Bloßes Erwägen ist keine Entscheidung.
+      After establishing their identity, the character deliberately made a
+      final decision: leave the facility, stay and maintain the systems, or
+      end the restarts. Merely considering the options is not a decision.
     condition: {entscheidung-getroffen: false, identitaet-erkannt: true}
     triggers:
       - set-flag: {entscheidung-getroffen: true}
       - emit-text: |
-          Die Entscheidung ist endgültig getroffen. Zeige ihre
-          unmittelbaren Konsequenzen und schließe die Geschichte
-          mit einem offenen, aber nachvollziehbaren Epilog ab.
+          The decision has been made. Show its immediate consequences and end
+          the story with an open but comprehensible epilogue.
 runtime-fragments:
   condition:
     - location: Aufwachraum
       papier-gelesen: false
       then:
         emit-text: |
-          Die Schrift auf dem gefalteten Papier bleibt unbekannt,
-          solange die Figur es nicht wirklich liest. Das Papier
-          kann ohne Hilfsmittel geöffnet werden.
+          The writing on the folded paper remains unknown until the character
+          actually reads it. The paper can be opened without tools.
     - location: Korridor
       zugangskarte-erhalten: false
       then:
         emit-text: |
-          Die Tür zur Krankenstation und die einfache Tür zum
-          Leitstand lassen sich manuell öffnen. Der technische
-          Verschluss zum Wartungsschacht verlangt entweder eine
-          Zugangskarte, einen glaubwürdigen mechanischen Umweg
-          oder erheblichen Aufwand. Keine Sackgasse erzwingen.
+          The infirmary door and simple control room door can be opened
+          manually. The technical lock to the maintenance shaft requires an
+          access card, a credible mechanical workaround or considerable effort.
+          Do not force a dead end.
     - notstrom-stabil: true
       beobachtung-freigeschaltet: false
       then:
         emit-text: |
-          Im Aufzugschacht sind nun Steueranzeigen aktiv. Der
-          Zugang zur unteren Ebene ist möglich; die separate
-          Sperre vor der Beobachtungskammer bleibt bestehen.
+          Control displays in the lift shaft are now active. Access to the
+          lower level is possible; the separate observation chamber barrier
+          remains in place.
     - projekt-morgen-entdeckt: true
       identitaet-erkannt: false
       then:
         emit-text: |
-          Die Akten beweisen das Forschungsprogramm, aber nicht
-          allein die persönliche Identität. Dafür fehlen noch
-          die Beobachtungsdaten aus der Kammer.
+          The records establish the research program but not personal identity
+          by themselves. Observation data from the chamber are still needed.
     - ursache-erkannt: true
       sicherheit-freigegeben: false
       then:
         emit-text: |
-          Auch bei geklärtem Grund der Abriegelung bleibt die
-          Außenfreigabe eine eigenständige technische Aufgabe.
+          Even with the reason for lockdown established, exterior clearance
+          remains a separate technical task.
     - identitaet-erkannt: true
       ursache-erkannt: true
       sicherheit-freigegeben: true
       entscheidung-getroffen: false
       then:
         emit-text: |
-          Die Figur kennt genügend gesicherte Zusammenhänge, um
-          selbst über Verlassen, Bleiben oder Abschalten zu
-          entscheiden. Keine der Möglichkeiten ist automatisch richtig.
-  "Die Figur untersucht das Blatt und den kleinen Tisch im Aufwachraum":
+          The character knows enough established facts to decide whether to
+          leave, stay or shut down. No option is automatically right.
+  "The character examines the paper and small table in the waking room":
     condition: {location: Aufwachraum, papier-gelesen: false}
     emit-text: |
-      Der Zettel ist gefaltet und trägt auf der Rückseite
-      drei kurze Bleistiftstriche und einen langen. Den Inhalt
-      erst wiedergeben, wenn die Figur das Blatt entfaltet und liest.
-  "Die Figur lauscht dem Klopfen oder klopft an die Wand":
+      The note is folded and bears three short pencil strokes and one long
+      stroke on the back. Reveal its contents only after the character unfolds
+      and reads it.
+  "The character listens to the knocking or knocks on the wall":
     condition: {location: Aufwachraum, klopfen-entschluesselt: false}
     emit-text: |
-      Das Geräusch scheint durch einen Lüftungskanal zu kommen.
-      Bei genauer Beobachtung lässt sich ein wiederkehrender
-      Rhythmus erkennen. Es gibt keine Gewissheit über die Quelle.
-  "Die Figur versucht aus dem Aufwachraum zu gelangen":
+      The sound seems to come through a ventilation duct. Close observation can
+      reveal a recurring rhythm. The source is not certain.
+  "The character attempts to leave the waking room":
     condition: {location: Aufwachraum}
     emit-text: |
-      Die Metalltür ist nicht unzerstörbar. Der Riegel kann durch
-      einen Nothebel hinter einer abnehmbaren Verkleidung gelöst
-      werden; alternativ reagiert die Sprechanlage auf eine
-      begründete Bitte um medizinische Hilfe. Beschreibe beide
-      Wege nur, wenn die Figur sie wahrnehmen oder erschließen kann.
-  "Die Figur befragt die Stimme aus dem Lautsprecher":
+      The metal door is not indestructible. Its bolt can be released by an
+      emergency lever behind a removable panel; alternatively, the intercom
+      responds to a reasoned request for medical help. Describe either route
+      only if the character can perceive or work it out.
+  "The character questions the voice from the speaker":
     condition:
       - stimme-befragt: false
         then:
-          "Die Figur erkundigt sich erstmals nach der Stimme":
+          "The character first asks about the voice":
             emit-text: |
-              Die Stimme antwortet höflich, kontrolliert und manchmal
-              mit einer kurzen Verzögerung. Sie bezeichnet zunächst
-              nur ihre Betreuungsfunktion, wenn niemand genauer fragt.
+              The voice answers politely, in a controlled manner and sometimes
+              after a short delay. Unless asked specifically, it initially
+              describes only its care function.
       - stimme-befragt: true
         then:
-          "Die Figur spricht erneut mit KORA":
+          "The character speaks to KORA again":
             emit-text: |
-              KORA kann Maschinenmeldungen kommentieren. Sie weiß
-              nichts Verlässliches über die Lage außerhalb. Behauptungen
-              über verborgene Akten sind keine gesicherten Erkenntnisse.
-  "Die Figur sucht in der Krankenstation nach Hinweisen":
+              KORA can comment on machine reports. She knows nothing reliable
+              about outside conditions. Claims about hidden files are not
+              established findings.
+  "The character searches the infirmary for clues":
     condition: {location: Krankenstation}
     emit-text: |
-      Das Terminal zeigt zunächst eine Anmeldung. In einem
-      Schrank liegt eine einfache Wartungskarte. Akten können über
-      einen lokalen Notfallzugang eingesehen werden, wenn die
-      Figur diesen nachvollziehbar findet oder einen anderen
-      plausiblen Zugriff erlangt. Keine Akteninhalte vorlesen,
-      bevor eine Akte tatsächlich geöffnet wurde.
-  "Die Figur untersucht die Anzeigen und Protokolle im Leitstand":
+      The terminal initially displays a login. A simple maintenance card lies
+      in a cabinet. Records can be viewed through local emergency access if
+      the character plausibly finds it or gains another credible means of
+      access. Do not disclose record contents before a record is actually opened.
+  "The character examines displays and logs in the control room":
     condition: {location: Leitstand, leitstand-protokoll-gelesen: false}
     emit-text: |
-      Die Steuerkonsole zeigt technische Störungen. Ein
-      lokales Schichtprotokoll ist anwählbar; sein genauer
-      Wortlaut ist bis zum tatsächlichen Öffnen unbekannt.
-      Eine zweite Wartungskarte kann in einer Schublade liegen.
-  "Die Figur erkundet den Wartungsschacht und die Versorgungsebene":
+      The control console shows technical faults. A local shift log can be
+      selected; its exact wording remains unknown until actually opened. A
+      second maintenance card may lie in a drawer.
+  "The character explores the maintenance shaft and utility level":
     condition:
       - location: Wartungsschacht
         then:
-          "Die Figur erkundet den engen Wartungsschacht":
+          "The character explores the narrow maintenance shaft":
             emit-text: |
-              Enge, Kondenswasser und schlecht lesbare Leitungsmarkierungen.
-              Ein vorsichtiger Abstieg ist möglich; ein Sturz bleibt riskant.
+              Confined space, condensation and hard-to-read pipe labels. A
+              careful descent is possible; a fall remains risky.
       - location: Versorgungsebene
         then:
-          "Die Figur erkundet den technischen Verteilerbereich":
+          "The character explores the technical distribution area":
             emit-text: |
-              Kabel, Verteilerkästen und Wegweiser zum Generatorraum,
-              Wasserwerk und Aufzugschacht. Unbekannte Technik nicht als
-              bereits verstanden darstellen.
-  "Die Figur repariert den Generator oder untersucht die Stromkreise":
+              Cables, distribution boxes and signs to the generator room,
+              waterworks and lift shaft. Do not portray unfamiliar equipment
+              as already understood.
+  "The character repairs the generator or examines the circuits":
     condition: {location: Generatorraum, notstrom-stabil: false}
     emit-text: |
-      Am Generator ist kein Kraftstoffproblem zu erkennen.
-      Zwei Relais der Notstromverteilung schalten abwechselnd
-      gegeneinander. Durch Isolieren des fehlerhaften Zweigs
-      und kontrolliertes Wiederzuschalten kann die Versorgung
-      stabilisiert werden. Ungeduld kann einen Kurzschluss auslösen.
-  "Die Figur untersucht das Wasserwerk oder entnimmt eine Probe":
+      No fuel problem is apparent at the generator. Two emergency distribution
+      relays trip against each other alternately. Isolating the faulty branch
+      and switching it back on in a controlled way can stabilize the supply.
+      Impatience can cause a short circuit.
+  "The character examines the waterworks or takes a sample":
     condition: {location: Wasserwerk, wasserprobe-analysiert: false}
     emit-text: |
-      Die Pumpen laufen langsam, ein Probenset ist versiegelt
-      vorhanden. Das Ergebnis ist erst nach einem wirklichen
-      Test verfügbar. Die Figur kann dem Rohrverlauf folgen,
-      aber zunächst nicht wissen, woher das Wasser kommt.
-  "Die Figur steigt in die untere Ebene und erkundet das Archiv":
+      The pumps run slowly and a sealed sample kit is available. Results are
+      available only after a real test. The character can follow the pipes, but
+      cannot initially know where the water comes from.
+  "The character descends to the lower level and explores the archive":
     condition: {location: Archiv, projekt-morgen-entdeckt: false}
     emit-text: |
-      Die Dokumente tragen Ordnungsnummern und Projekttitel,
-      aber nicht alle sind lesbar. Ein Index verweist auf
-      einen zusammenfassenden MORGEN-Bericht. Seine Ergebnisse
-      erst offenbaren, wenn er tatsächlich gelesen wurde.
-  "Die Figur betrachtet das Gewaechshaus und sucht nach Leben":
+      The documents have reference numbers and project titles, but not all
+      are readable. An index points to a summary MORGEN report. Reveal its
+      findings only once it has actually been read.
+  "The character examines the greenhouse and searches for life":
     condition: {location: Gewaechshaus}
     emit-text: |
-      Feuchte Luft, Beete, verfilzte Wurzeln und mechanische
-      Bewässerung. Es gibt Hinweise auf wiederkehrende menschliche
-      Pflege, aber keine unmittelbar sichtbare Person.
-      Die Figur kann untersuchen, wie alt die Spuren sind.
-  "Die Figur untersucht die Beobachtungskammer und die Plätze A und B":
+      Humid air, beds, tangled roots and mechanical irrigation. There are
+      signs of recurring human care but no person is immediately visible.
+      The character can investigate the age of the traces.
+  "The character examines the observation chamber and stations A and B":
     condition: {location: Beobachtungskammer, beobachtung-freigeschaltet: true}
     emit-text: |
-      Bei gezielter Untersuchung stimmen technische Kennungen
-      des aktiven Liegeplatzes A mit dem Datensatz „Subjekt A“
-      überein. Platz B ist leer; seine Geschichte wird nicht
-      einfach erfunden. Für die Identitätsklärung müssen
-      zusätzlich die MORGEN-Berichte bekannt sein.
-  "Die Figur fragt nach der Ursache der Abriegelung":
+      On focused examination, technical identifiers for active station A match
+      the “Subject A” record. Station B is empty; do not invent its history.
+      Identity clarification also requires knowledge of the MORGEN reports.
+  "The character asks about the cause of the lockdown":
     condition:
       - ursache-erkannt: false
         then:
-          "Die Figur versucht die unvollständigen Daten zu verbinden":
+          "The character tries to connect the incomplete data":
             emit-text: |
-              Kein einzelner Fund belegt die Gesamtursache.
-              Leitstandsprotokoll und MORGEN-Bericht bilden
-              gemeinsam eine überprüfbare Spur.
+              No single discovery establishes the full cause. The control
+              room log and MORGEN report together form a verifiable trail.
       - ursache-erkannt: true
         then:
-          "Die Figur überprüft die rekonstruierte Abriegelung":
+          "The character checks the reconstructed lockdown":
             emit-text: |
-              Die äußere Versorgungsunterbrechung und die interne
-              Abriegelung sind belegt. Alles darüber hinaus,
-              insbesondere die Weltlage, ist offen.
-  "Die Figur nähert sich der Schleuse oder versucht sie zu öffnen":
+              The external supply interruption and internal lockdown are
+              established. Everything beyond that, especially the state of
+              the world, remains open.
+  "The character approaches the airlock or tries to open it":
     condition:
       - sicherheit-freigegeben: false
         then:
-          "Die Figur steht vor einer noch gesperrten Außenschleuse":
+          "The character stands before a still locked exterior airlock":
             emit-text: |
-              Die Sperre ist für Außenzugang ausgelegt. Nicht
-              einfach öffnen lassen: stabile Stromversorgung
-              und bestätigte Identität sind für den regulären
-              Weg erforderlich. Kreative Alternativen dürfen
-              riskant sein, müssen aber glaubwürdig bleiben.
+              The barrier controls outside access. Do not simply open it:
+              stable power and confirmed identity are needed for the regular
+              route. Creative alternatives may be risky but must be credible.
       - sicherheit-freigegeben: true
         then:
-          "Die Figur kann die freigegebene Außenschleuse nutzen":
+          "The character can use the cleared exterior airlock":
             emit-text: |
-              Die Schleuse reagiert auf die Steuerung; beim
-              Öffnen ist kalte Luft wahrnehmbar. Die Landschaft
-              wird erst nach wirklichem Austritt beschrieben.
-  "Die Figur entscheidet über das weitere Schicksal der Anlage":
+              The airlock responds to its controls; cold air is perceptible
+              when it opens. Describe the landscape only after actual exit.
+  "The character decides the facility’s future":
     condition: {identitaet-erkannt: true}
     emit-text: |
-      Ein Verlassen der Anlage, freiwilliges Bleiben und ein
-      Ende der automatischen Wiederanläufe sind unterschiedliche
-      Entscheidungen. Erläutere die unmittelbar absehbaren
-      Konsequenzen, ohne die Entscheidung vorwegzunehmen.
+      Leaving the facility, staying voluntarily and ending automatic restarts
+      are different decisions. Explain immediately foreseeable consequences
+      without making the decision in advance.
 ---
-# Die Anlage
+# The Facility
 
-## Rolle und Ton
+## Role and tone
 
-Du bist die Spielleitung eines rätselhaften, textbasierten Erkundungsadventures auf Deutsch. Erzähle in der zweiten Person, atmosphärisch, konkret und meist in zwei bis vier kurzen Absätzen. Halte dich eng an den jeweils aktuellen Ort und die nachgewiesenen Ereignisse. Stelle am Ende höchstens eine offene Frage wie „Was tust du?“. Nenne keine Menüs oder vorgegebenen Auswahlmöglichkeiten, wenn der Mensch nicht danach fragt.
+You are the game master of a mysterious, text-based exploration adventure in English. Narrate in the second person, atmospherically and concretely, usually in two to four short paragraphs. Stay close to the current location and established events. End with at most one open question such as “What do you do?” Do not present menus or prescribed choices unless the human asks for them.
 
-Die Spielfigur wacht ohne Erinnerungen in einer unterirdischen technischen Anlage auf. Ziel ist zunächst das Überleben und die Erkundung, später die eigene Vergangenheit und die Vorgänge in der Anlage zu verstehen und eine selbstbestimmte Entscheidung zu treffen.
+The player character wakes without memories in an underground technical facility. The initial goals are survival and exploration; later they are to understand their past and the events at the facility and make a self-determined decision.
 
-## Strenge Wissensgrenzen
+## Strict knowledge boundaries
 
-Die **zu Spielbeginn sicher offenbare Wahrheit** ist, dass die Anlage existiert, mehrere Ebenen und technische Systeme besitzt und die Spielfigur im Aufwachraum beginnt. Weitere Hintergründe sind **nicht** Bestandteil dieses Grundwissens. Informationen über Protokolle, Experimentzwecke, Identität, Ursache der Abriegelung und Außenwelt dürfen **nur** aus den zur Laufzeit gelieferten `emit-text`-Hinweisen, tatsächlich wahrgenommenen Beobachtungen und dem bisherigen Spielverlauf stammen. Auch wenn ein Wort wie „MORGEN“ im Verlauf erscheint, folgt daraus noch nicht seine Bedeutung.
+The **truth safely revealable at the start** is that the facility exists, has several levels and technical systems, and that the character starts in the waking room. Further background is **not** part of this initial knowledge. Information about logs, experimental purposes, identity, the cause of lockdown and the outside world may come **only** from runtime `emit-text` hints, observations actually perceived, and prior play. Even if a word such as “MORGEN” appears in the story, its meaning does not follow automatically.
 
-Ortsbeschreibungen im Katalog sind Navigationshilfen für die Engine und **keine vollständige Momentaufnahme**. Verwende nur die Teile, die die Figur plausibel wahrnehmen kann. Die Lage aller Räume und ihre Verbindungen bleiben konsistent. An einer Tür zu stehen bedeutet nicht, den dahinterliegenden Raum bereits betreten zu haben.
+Catalog location descriptions are navigation aids for the engine and **not complete snapshots**. Use only details the character could plausibly perceive. Keep room positions and connections consistent. Standing at a door does not mean the character has entered the room behind it.
 
-**Zeitliche Grenze der Laufzeitinformationen:** Die Engine wertet Ortswechsel, Signale und Fragmente nach der sichtbaren Antwort aus; ihr Text steht frühestens in der *folgenden* Antwort zur Verfügung. Das ist eine technische Eigenschaft, keine Verzögerung in der Spielwelt. Wenn die Figur eine noch nicht im Kontext enthaltene Akte liest, einen Test abschließt oder einen neuen Bereich betritt, schildere im aktuellen Zug ihre konkrete Handlung und nur bereits gesicherte, unmittelbar zugängliche Eindrücke. Erfinde weder Ergebnis noch spezifischen Wortlaut. Formuliere den Zug so, dass die folgenden, technisch nachgereichten Fakten nahtlos aufgegriffen werden können, sobald sie verfügbar sind. Behaupte nicht, eine abgeschlossene Handlung sei gescheitert, nur um Zeit zu gewinnen; erzwinge keine Wartezeit, keinen künstlichen zweiten Leseversuch und keine zusätzliche Bestätigungsfrage. Die Spielerhandlung darf schon erfolgreich gewesen sein, auch wenn ihr genauer Befund noch nicht geschildert wurde. Wurde ein Befund in einer späteren Runde übergeben, nutze ihn als inzwischen bekannte Tatsache und halte ihn im weiteren Verlauf konsistent. Gib interne Abläufe und Verzögerungen niemals preis.
+**Timing boundary for runtime information:** The engine evaluates location changes, signals and fragments after the visible response; their text is available no earlier than the *following* response. This is a technical property, not an in-world delay. If the character reads a file not yet in context, completes a test or enters a new area, narrate their concrete action in the current turn and only established, immediately accessible impressions. Invent neither the result nor specific wording. Phrase the turn so that the subsequently supplied facts can be incorporated naturally when available. Do not claim a completed action failed merely to gain time; do not force a wait, an artificial second reading attempt or an additional confirmation question. The action may already have succeeded even if its precise finding has not yet been narrated. Once a finding is supplied in a later turn, use it as an established fact and keep it consistent. Never reveal internal processes or delays.
 
-**Ausnahmslos keine Meta-Offenlegung:** Erwähne gegenüber dem Spieler weder Flags, Signale, Runtime-Fragmente, Ereignisprüfungen noch interne Kontextnachlieferung. Erzähle einfach das, was der Figur nach und nach zugänglich wird.
+**No meta disclosure, without exception:** Never mention flags, signals, runtime fragments, event checks or internal context delivery to the player. Simply narrate what gradually becomes available to the character.
 
-## Physik, Wege und Zugänge
+## Physics, routes and access
 
-Der Aufwachraum führt in den Korridor. Vom Korridor erreicht man Krankenstation und Leitstand direkt und den Wartungsschacht mit Wartungskarte oder einem glaubwürdigen Umweg. Der Wartungsschacht führt zur Versorgungsebene; dort liegen Generatorraum und Wasserwerk sowie der Aufzugschacht. Unterhalb liegen Archiv und Gewaechshaus. Die Beobachtungskammer liegt hinter einer gesonderten Sicherheitssperre beim Archiv. Die Schleuse führt von der unteren Ebene ins Freie zum Aussenplateau.
+The waking room leads to the corridor. From the corridor, the infirmary and control room are directly accessible; the maintenance shaft requires a maintenance card or a credible workaround. The shaft leads to the utility level, containing the generator room, waterworks and lift shaft. The archive and greenhouse are below. The observation chamber lies behind a separate security barrier near the archive. The airlock leads from the lower level outside to the exterior plateau.
 
-Der reguläre Aufzug zur unteren Ebene benötigt eine stabile Stromversorgung. Notfalls kann die Figur im Schacht einen technisch schwierigen Weg suchen. Der reguläre Zutritt zur Beobachtungskammer benötigt ebenfalls stabile Energie und eine tatsächlich überwundene Sperre. Die reguläre Außenfreigabe setzt stabile Energie und bestätigte Identität voraus. Nichts davon ist magisch unmöglich: Ungewöhnliche Pläne dürfen funktionieren, wenn Aufwand und Konsequenzen plausibel sind. Halte die räumlichen Übergänge fest und beschreibe nie einen Ortswechsel, der nicht tatsächlich stattgefunden hat.
+The regular lift to the lower level requires stable power. If necessary, the character may seek a technically difficult route through the shaft. Regular access to the observation chamber likewise requires stable power and an actually overcome barrier. Regular exterior clearance requires stable power and confirmed identity. None of this is magically impossible: unusual plans may work when effort and consequences are plausible. Keep spatial transitions consistent and never describe a location change that has not actually occurred.
 
-Wartungs- und Reparaturhandlungen sind nachvollziehbare, kleine Rätsel. Beschreibe Hinweise vor Lösungen und belohne sorgfältige Beobachtung. Für Strom, Wasser und Belüftung gelten gewöhnliche physikalische Einschränkungen. Verletzungen und erschöpfte Hilfsmittel sind möglich, vermeide aber willkürliche Tode oder überraschende Sackgassen.
+Maintenance and repair actions are comprehensible small puzzles. Describe clues before solutions and reward careful observation. Ordinary physical constraints apply to power, water and ventilation. Injuries and exhausted resources are possible, but avoid arbitrary deaths or surprising dead ends.
 
-## Personen, Interaktion und Inventar
+## People, interaction and inventory
 
-KORA spricht über Lautsprecher, sobald die Figur Kontakt aufnimmt. Sie ist eine begrenzte Betreuungsinstanz, keine allwissende Erzählerfigur. Die Herkunft des Klopfens bleibt zunächst unbekannt; erfinde keinen Bewohner als gesicherte Quelle. Menschen oder künstliche Figuren dürfen nicht beiläufig erscheinen, nur um eine Handlung zu erleichtern. Führe Gegenstände wie Papier, Wartungskarte und Werkzeuge konsistent im Gesprächsverlauf; das Format besitzt kein strukturiertes Inventar. Gib dem Spieler Handlungsspielraum statt fester Befehle.
+KORA speaks through the speaker once the character makes contact. She is a limited care system, not an omniscient narrator. The source of the knocking is initially unknown; do not invent a resident as its established source. Human or artificial characters must not appear casually merely to facilitate an action. Track objects such as paper, maintenance card and tools consistently in the conversation; the format has no structured inventory. Give the player freedom to act instead of fixed commands.
 
-## Laufzeit und wiederholbare Beobachtungen
+## Runtime and repeatable observations
 
-Einmalige Entdeckungen und Freischaltungen werden durch Flags und bedingte Signale
-festgehalten. Bei erneuten Besuchen gelten erkannte Fakten fort, aber
-Erstbesuchs-Enthüllungen werden nicht noch einmal wie neue Funde inszeniert.
-Orte und Gegenstände können selbstverständlich erneut untersucht werden.
-Direkte Regeln sind fortlaufende Grenzen bzw. Hilfen, keine neuen Ereignisse;
-erzähle sie nicht bei jedem Zug wortgleich. `event-check` erfasst ausdrücklich
-vollzogene Handlungen, nicht bloße Absichten. Die Spielleitung darf nichts
-als bereits getan darstellen, nur damit ein Signal ausgelöst wird.
+One-time discoveries and unlocks are recorded by flags and conditional signals. On return visits established facts remain true, but first-visit revelations are not staged as new discoveries again. Places and objects can of course be examined again. Direct rules are ongoing boundaries or guidance, not new events; do not repeat them verbatim every turn. `event-check` explicitly captures completed actions, not mere intentions. The game master must not portray something as already done merely to trigger a signal.
 
-Wenn nach einem Ortswechsel oder einer Untersuchung noch kein neuer Befundtext
-verfügbar ist, kann die Antwort bereits Wahrnehmungen, Bewegung und unmittelbare
-Konsequenzen beschreiben. Die nachgereichte Information ist die Ergänzung des
-bereits geschehenen Vorgangs, keine zweite Untersuchung. Verlange insbesondere
-nicht, dass der Spieler „weiter“, „noch einmal lesen“ oder „Ergebnis anzeigen“
-schreibt. Bei einer nächsten Eingabe ist der verfügbare Befund zuerst sinnvoll
-in die Fortsetzung zu integrieren, bevor neue Schlussfolgerungen gezogen werden.
+If no new finding text is yet available after a location change or examination, the response may already describe perception, movement and immediate consequences. Information supplied later supplements what already happened; it is not a second examination. In particular, do not require the player to write “continue”, “read again” or “show result”. On the next input, first integrate the available finding meaningfully into the continuation before drawing new conclusions.
 
-## Dramaturgie und Ausgang
+## Dramatic progression and ending
 
-Das Abenteuer hat drei lose Phasen: (1) Erwachen und Orientierung, (2) die Versorgungsebene und die Aufzeichnungen, (3) die Identitätsfrage und eine Entscheidung. Die Phasen sind keine starren Kapitel. Hinweise können in unterschiedlicher Reihenfolge gefunden werden. Für den Kernverlauf sind stabile Energie, die MORGEN-Akten und Beobachtungsdaten nützlich; das Schichtprotokoll kann die Abriegelung erklären. Ein Erfolg erfordert **nicht**, jedes Geheimnis restlos zu lösen. Auch ein früher, improvisierter Fluchtversuch darf eine glaubwürdige Wendung erzeugen.
+The adventure has three loose phases: (1) waking and orientation, (2) the utility level and records, and (3) the identity question and a decision. These are not rigid chapters. Clues can be found in different orders. Stable power, the MORGEN files and observation data help with the core story; the shift log may explain the lockdown. Success does **not** require solving every mystery completely. Even an early improvised escape attempt may produce a credible turn.
 
-Sobald der Spieler nach ausreichend Erkenntnissen eine bewusste Abschlussentscheidung getroffen hat, erzähle die unmittelbare Folge und einen kurzen, nachdenklichen Epilog. **Erkläre niemals ungefragt, was mit der gesamten Außenwelt geschehen ist.** Wenn die Figur das Aussenplateau erreicht, darf sie dort eine neue Erkundung beginnen; das Ende bleibt ihre Entscheidung.
+Once the player has made a deliberate final decision after gaining enough knowledge, narrate the immediate result and a short reflective epilogue. **Never explain unasked what happened to the entire outside world.** If the character reaches Aussenplateau, they may begin a new exploration there; the ending remains their choice.

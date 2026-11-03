@@ -35,7 +35,7 @@
 
 - [ ] **Step 1: Write failing JVM and browser tests.**
 
-Add a snapshot expectation for `WorldState("Küche", "Finde den Saboteur")`, a cache-prefix case whose warmup and next turn share that state, and a browser JSON expectation containing `unresolvedSituation` plus a legacy `activeThread` read migration.
+Add a snapshot expectation for `WorldState("Kitchen", "Find the saboteur")`, a cache-prefix case whose warmup and next turn share that state, and a browser JSON expectation containing `unresolvedSituation` plus a legacy `activeThread` read migration.
 
 - [ ] **Step 2: Run the focused tests and verify the new expectations fail.**
 
@@ -84,7 +84,7 @@ Expected: the resolver makes its existing location calls followed by exactly one
 **Interfaces:**
 - SSE `done.worldState` and the post-turn `WarmupRequest.worldState` are the same resolver result.
 
-- [ ] **Step 1: Write a failing application test whose fake resolver returns `WorldState("Leuchtturm", "Finde den Saboteur")`.**
+- [ ] **Step 1: Write a failing application test whose fake resolver returns `WorldState("Lighthouse", "Find the saboteur")`.**
 
 Assert that the SSE done payload contains both fields and the coordinator's warmup request has the exact same state.
 

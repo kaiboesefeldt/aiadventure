@@ -48,7 +48,7 @@
 
 **Interfaces:** `WorldStateResolutionRequest.locations: List<String>` and `WorldStateAnalysis.currentLocationSchema(locations, previousLocation)`.
 
-- [ ] Write failing tests that accept `Leuchtturm` after `Du betrittst den Leuchtturm.`, reject a non-catalogued name, and retain `Kai` when narration only says `Der Leuchtturm bleibt verschlossen.`.
+- [ ] Write failing tests that accept `Leuchtturm` after `You enter Leuchtturm.`, reject a non-catalogued name, and retain `Kai` when narration only says `Leuchtturm remains locked.`.
 - [ ] Run `./gradlew :server:test --tests '*WorldStateResolverTest*'`; verify failure.
 - [ ] Replace the free movement/location chain with one structured current-location request. Build its enum from the unique catalog plus the prior location; preserve focus resolution, retained slot, cache prompt, and warmup order.
 - [ ] Assert in the gateway test that the completion uses the retained slot, `cache_prompt=true`, and a schema enum containing `Kai` and `Leuchtturm`.

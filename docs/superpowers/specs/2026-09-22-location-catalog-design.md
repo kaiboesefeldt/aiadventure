@@ -1,10 +1,8 @@
-# Kanonischer Ortskatalog
+# Canonical Location Catalog
 
-## Ziel
+## Goal
 
-Ein Szenario benennt spielbare Orte in der YAML-Frontmatter. Die Ortsauflösung
-speichert ausschließlich diese kanonischen Namen. Freie oder zusammengesetzte
-Modellantworten wie `Turm Gegenstand` bleiben ohne Wirkung.
+A scenario names playable locations in YAML frontmatter. Location resolution stores only these canonical names. Free or combined model responses such as `Turm Gegenstand` have no effect.
 
 ## Frontmatter
 
@@ -12,37 +10,21 @@ Modellantworten wie `Turm Gegenstand` bleiben ohne Wirkung.
 world-state:
   location: Kai
 locations:
-  Kai: "Umschlagplatz am Hafen mit Pollern und Tauwerk."
-  Leuchtturm: "Alter Steinturm am Ende der Mole."
-  Hafenkneipe: "Gasthaus am Wasser, in dem Seeleute verkehren."
+  Kai: "Harbor loading area with bollards and ropes."
+  Leuchtturm: "Old stone tower at the end of the pier."
+  Hafenkneipe: "Waterfront inn frequented by sailors."
 ```
 
-`world-state` ist der initiale Zustand einer neuen Sitzung. `locations` ist
-optional; wenn vorhanden, ist es eine nichtleere Map eindeutiger, nichtleerer
-Schlüssel auf String-Beschreibungen. Beschreibungen dürfen leer sein. Ein
-gesetzter Startort muss Mitglied der Map-Schlüssel sein. Ohne Katalog bleibt
-eine Ortsauflösung fail-closed unverändert.
+`world-state` is the initial state of a new session. `locations` is optional; when present, it is a nonempty map of unique nonempty keys to string descriptions. Descriptions may be empty. A specified starting location must be among the map keys. Without a catalog, location resolution fails closed and leaves the state unchanged.
 
-Der Browser entfernt Frontmatter weiterhin aus dem Szenariotext und reicht den
-Katalog in Turn-, Prefill- und Warmup-Anfragen weiter. Alle serverseitig
-aufgebauten Prompts erhalten denselben stabil sortierten Katalog. Jeder Eintrag
-enthält den Schlüssel und, falls nicht leer, seine Beschreibung. Das gilt für
-Spielerturns, Warmups, Recaps, World-State-Auflösung und Fragmentbewertung.
+The browser continues to remove frontmatter from scenario text and passes the catalog in turn, prefill and warmup requests. All server-generated prompts receive the same stably sorted catalog. Each entry contains its key and, if nonempty, its description. This applies to player turns, warmups, recaps, world-state resolution and fragment evaluation.
 
-## Auflösung
+## Resolution
 
-Nach dem sichtbaren Turn erzeugt der Primary-Server eine strukturierte Antwort
-für den aktuellen Ort. Das Schema erlaubt nur Katalogschlüssel und den bisherigen
-Ort. Der Auftrag verlangt den Ort, an dem die Figur nach der Antwort tatsächlich
-ist; bei verweigerter, geplanter oder unklarer Bewegung bleibt der bisherige Ort.
-Kotlin übernimmt einen veränderten Namen nur, wenn er ein Katalogschlüssel ist und als
-vollständiger Textbestandteil in der Spielleiterantwort vorkommt.
+After the visible turn, the primary server generates a structured response for the current location. The schema permits only catalog keys and the previous location. The instruction asks for the location where the character actually is after the response; refused, planned or unclear movement retains the previous location. Kotlin accepts a changed name only if it is a catalog key and appears as a complete text element in the game master's response.
 
-Die freie `movement`- plus `location`-Kette entfällt. Narrative-Focus, der
-retained Slot und der nachfolgende kanonische Warmup bleiben unverändert.
+The free `movement` plus `location` chain is removed. Narrative focus, the retained slot and the subsequent canonical warmup remain unchanged.
 
 ## Tests
 
-Tests decken Katalog-Parsing, Startort-Mitgliedschaft, die Browser-zu-Server-
-Weitergabe, das Orts-Enum, `Kai` nach `Leuchtturm` und die Beibehaltung bei
-unbestätigten Ortsnennungen ab. Die Cache-Vertragstests bleiben erhalten.
+Tests cover catalog parsing, starting location membership, browser-to-server forwarding, the location enum, `Kai` to `Leuchtturm`, and retention when location mentions are unconfirmed. The cache contract tests remain.

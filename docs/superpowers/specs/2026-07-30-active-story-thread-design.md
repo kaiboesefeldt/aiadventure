@@ -1,52 +1,21 @@
-# Erzählerischer Fokus im WorldState
+# Narrative Focus in WorldState
 
-## Ziel
+## Goal
 
-Der persistierte WorldState erhält neben dem kanonischen Ort einen einzelnen
-erzählerischen Fokus. Er hält für das Primary-Modell das Element sichtbar, auf
-dem die Geschichte nach dem letzten Turn gerade ruht: etwa einen Ort, ein
-Objekt, ein Rätsel, eine Gefahr, eine Beziehung oder ein Vorhaben. Er ist eine
-weiche Erzählhilfe, keine zusätzliche harte Weltwahrheit.
+In addition to the canonical location, the persisted WorldState gains one narrative focus. It keeps the element on which the story rests after the last turn visible to the primary model: for example, a place, object, puzzle, danger, relationship or undertaking. It is a soft narrative aid, not another hard world fact.
 
-## Datenvertrag
+## Data contract
 
-`WorldState` besitzt `location: String` und `narrativeFocus: String`, beide mit
-leerem Standardwert. Das llama.cpp-Schema empfiehlt für einen neuen nichtleeren
-Fokus höchstens 160 Zeichen; Kotlin übernimmt aber jede valide, vollständige
-Modellantwort unabhängig von ihrer Länge. Beide Felder sind unabhängig: Eine
-Handlung kann einen Fokus setzen oder fortführen, obwohl der Ort unbestimmt bleibt.
-Der Browser persistiert sie wie den Ort und migriert den bisherigen JSON-Namen
-`activeThread` und `unresolvedSituation` beim Lesen. Szenario-Frontmatter
-initialisiert weiterhin nur `location` und darf keinen Fokus vorgeben.
+`WorldState` has `location: String` and `narrativeFocus: String`, both defaulting to empty. The llama.cpp schema recommends at most 160 characters for a new nonempty focus, but Kotlin accepts any valid complete model response regardless of length. The fields are independent: an action can set or continue a focus even when the location remains unknown. The browser persists them like the location and migrates the former JSON names `activeThread` and `unresolvedSituation` when reading. Scenario frontmatter continues to initialize only `location` and cannot specify a focus.
 
-Der Primary-Snapshot rendert den Ort unverändert als autoritativen Fakt und
-den nichtleeren Fokus getrennt als `NARRATIVE FOCUS`. Der Warmup und der
-nächste Turn erhalten denselben akzeptierten Snapshot, damit der Warmup ein
-exakter Prefix des Turn-Prompts bleibt.
+The primary snapshot renders the location unchanged as an authoritative fact and the nonempty focus separately as `NARRATIVE FOCUS`. Warmup and the next turn receive the same accepted snapshot so warmup remains an exact prefix of the turn prompt.
 
-## Secondary-Auflösung
+## Secondary resolution
 
-Nach dem sichtbaren Turn liefert die Ortsauflösung zuerst einen Zwischenstand;
-auch bei leerem bisherigen Ort kehrt sie nicht vorzeitig aus dem Resolver
-zurück. Anschließend folgt genau ein weiterer, kurzer Secondary-Aufruf mit dem
-vorherigen Fokus, der letzten Spieleraktion und der letzten GM-Antwort. Seine
-Schema-Antwort lautet ausschließlich `{"narrativeFocus":"..."}`; der leere
-String bedeutet, dass kein erzählerischer Fokus besteht.
+After the visible turn, location resolution first returns an intermediate state; even with an empty previous location it does not return early from the resolver. Exactly one further short secondary call follows, using the previous focus, last player action and last GM response. Its schema response is only `{"narrativeFocus":"..."}`; the empty string means no narrative focus exists.
 
-Der feste Prompt aktualisiert den Fokus retrospektiv aus vorherigem Fokus,
-Spieleraktion und GM-Antwort. Er verlangt eine kurze Phrase für das eine jetzt
-zentrale Story-Element; sie darf eine reine Erkundung ausdrücken und muss weder
-Konflikt noch Aufgabe sein. Die 160 Zeichen begrenzen nur die gewünschte
-Generierung, nicht die Kotlin-Übernahme. Bei Schema-, Transport- oder
-Validierungsfehlern bleibt der vorherige Fokus erhalten. Ein erfolgreicher
-Fokus-Call aktualisiert ihn auch dann, wenn die
-Ortsauflösung keinen neuen Ort ergeben hat. Im lokalen TRACE-Modus werden die
-vollständigen Secondary-Antworten für die Diagnose geloggt.
+The fixed prompt retrospectively updates the focus from the previous focus, player action and GM response. It requests a short phrase for the one currently central story element; that may describe exploration alone and need not be a conflict or task. The 160 characters limit only the requested generation, not Kotlin's acceptance. On schema, transport or validation errors, the previous focus remains. A successful focus call updates it even when location resolution found no new location. Local TRACE mode logs complete secondary responses for diagnosis.
 
-## Ablauf und Tests
+## Flow and tests
 
-Die beiden Aufrufe bleiben sequenziell: Ortsentscheidung und gegebenenfalls
-Ortsextraktion, danach erzählerischer Fokus. Erst der daraus resultierende State
-wird in SSE `done` und den anschließenden Warmup übernommen. Tests prüfen die
-Schema-Grenze, Übernahme, Fehler-Fallback, Snapshot-Darstellung, Browser-
-Serialisierung samt Altwert-Migration sowie die Cache-Prefix-Beziehung.
+The calls remain sequential: location decision and, if necessary, location extraction, followed by narrative focus. Only the resulting state enters SSE `done` and the subsequent warmup. Tests check the schema limit, acceptance, error fallback, snapshot rendering, browser serialization and legacy value migration, and the cache prefix relationship.

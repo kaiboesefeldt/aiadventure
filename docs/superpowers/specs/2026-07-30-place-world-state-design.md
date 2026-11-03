@@ -1,9 +1,9 @@
-# Ortsbezogener WorldState
+# Location-Based WorldState
 
-Der persistierte WorldState besteht ausschließlich aus `location: String` und ist leer, solange kein Ort kanonisch festgestellt wurde. Die alte generische Entitaets- und Faktenkartei entfällt vollstaendig. Szenarien initialisieren ihn mit `world-state.location`.
+The persisted WorldState consists solely of `location: String` and is empty until a location has been established canonically. The old generic entity and facts registry is removed entirely. Scenarios initialize it with `world-state.location`.
 
-Nach einem abgeschlossenen sichtbaren Turn fragt das Secondary-Modell zuerst mit festen Beispielen, ob die Spielerfigur den Szenenort wirklich verlassen hat. Es darf nur einen letzten `FINAL: move` oder `FINAL: stay` liefern. Bei `stay`, fehlendem oder mehrdeutigem Ergebnis bleibt der State unverändert.
+After a completed visible turn, the secondary model first uses fixed examples to ask whether the player character actually left the scene location. It may return only a final `FINAL: move` or `FINAL: stay`. For `stay`, a missing result or an ambiguous result, the state remains unchanged.
 
-Bei `move` fragt ein zweiter Prompt nach dem Zielort. Der Server übernimmt nur den letzten `FINAL: <name>`, wenn der normalisierte Name als vollstaendiger Textbestandteil in der Spielleiter-Antwort vorkommt. Das erlaubt neue Orte ohne Modell-IDs; bekannte und neue Namen werden gleich behandelt. Der alte Ort wird keiner LLM-Abfrage vorgelegt.
+For `move`, a second prompt asks for the destination. The server accepts only the last `FINAL: <name>` if the normalized name occurs as a complete text element in the game master's response. This permits new locations without model IDs; known and new names receive equal treatment. The old location is not presented to either LLM query.
 
-Die feste Prompt-Anleitung und Beispiele bilden den gecachten Prefix. Die Begruendung wird nie geloggt und nicht persistiert. Der Server bleibt zustandslos; der Browser persistiert den `location`-State wie bisher.
+The fixed prompt instruction and examples form the cached prefix. The reasoning is never logged or persisted. The server remains stateless; the browser persists the `location` state as before.

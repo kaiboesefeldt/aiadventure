@@ -27,8 +27,9 @@
 - Prompt caching is a release-blocking playability requirement. Any change to prompt construction, warmup/prefill/turn flow, coordinator lifecycle, leases, or slots must preserve the local cache-contract tests for new games, resumed games, and following turns. Those tests require both an exact prompt-prefix relationship and one retained warm llama.cpp slot; do not weaken or remove them without an equivalent proof.
 - Treat every LLM response as untrusted text.
 - Browser IndexedDB owns scenarios and sessions; the server remains stateless.
-- A prefill and its turn must use the same `sessionId`; only llama.cpp's returned
-  `tokens_cached` and `tokens_evaluated` metrics prove cache reuse.
+- A prefill and its turn must use the same `sessionId`. Cache metric semantics
+  depend on the llama.cpp version; use verified reuse and evaluation counts as
+  described in the README and do not infer reuse from elapsed time alone.
 - Log operational gateway/model failures with request IDs only. The explicitly local,
   loopback-only `TRACE` diagnostic mode is the exception: it may log scenario,
   history, actions, and complete LLM responses, including structured World-State

@@ -1,13 +1,53 @@
 # AI Adventure
 
-A local-LLM interactive adventure application using a local
-[llama.cpp](https://github.com/ggml-org/llama.cpp) server. The JVM server
-provides the API and serves the Kotlin/JS React client.
+AI Adventure is a locally hosted, single-player interactive fiction app. A
+Kotlin/JS browser client streams narrative turns from a Kotlin/JVM server, which
+connects to a local [llama.cpp](https://github.com/ggml-org/llama.cpp) model.
+Scenarios and saved sessions stay in the browser's IndexedDB; the server keeps
+temporary coordination and model-slot state while sessions are active.
+
+The project explores how to make long-running LLM adventures more reliable:
+
+- Stream responses and action suggestions into the browser.
+- Author scenarios in Markdown with YAML frontmatter for locations, flags,
+  signals, and conditional runtime guidance.
+- Track structured world state and apply deterministic scenario rules alongside
+  optional model-based event checks.
+- Resume browser-stored sessions and compact long histories into recaps when the
+  model context approaches its configured budget.
+- Reuse llama.cpp prompt-cache slots across prefill and turns, with tests for
+  prompt-prefix and slot-retention contracts.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Browser[React and Kotlin/JS client] -->|same-origin HTTP and SSE| Server[Kotlin/JVM Ktor server]
+    Browser -->|scenarios and sessions| Store[(Browser IndexedDB)]
+    Server -->|local model API| Llama[llama.cpp server]
+```
+
+The browser owns scenario and session data. The application server coordinates
+requests and model work, while llama.cpp owns model execution and prompt-cache
+slots. The default server binding is loopback-only.
+
+## Project status
+
+This is a local-first project that requires a separately installed model server
+and model. It is intended to demonstrate application architecture, streaming,
+scenario parsing, browser persistence, and tests around LLM lifecycle behavior.
+Model quality and performance depend on the model, llama.cpp build, hardware,
+and configuration; this repository does not claim a universal benchmark.
 
 ## Prerequisites
 
-- Java (a JVM capable of producing Java 21 bytecode)
+- JDK 21 or newer, Bash, and a supported desktop browser
 - A local `llama-server` from [llama.cpp](https://github.com/ggml-org/llama.cpp)
+- A compatible GGUF model and enough memory to run it; requirements depend on the model
+
+The exact llama.cpp version, model and hardware combination has not yet been
+documented as a reproducible reference setup. The required server endpoints are
+listed under [Long adventures](#long-adventures).
 
 ## Start
 
@@ -111,20 +151,17 @@ The browser still sends the full archive so the stateless server can verify chec
 coverage. Request safety limits are 100,000 history entries and 20 million history
 characters, independently of the much smaller effective model prompt.
 
-## Test-Spiel laden
+## Load an example
 
-Der deutsche [Guide zum Erstellen eines Spiels](docs/Spiel-Erstellen.md)
-beschreibt alle unterstützten Szenariofelder und Varianten, mit vollständiger
-Vorlage, Locations, Flags, Signalen und Runtime-Fragmenten.
+The [scenario authoring guide](docs/Spiel-Erstellen.md) describes supported
+fields and variants, including locations, flags, signals and runtime fragments.
+Import an example in the browser:
 
-Importiere ein Beispiel in der Browser-Oberfläche:
-
-- [`examples/test-game.md`](examples/test-game.md): komplexes Leuchtturm-Spiel
-  mit bedingten Runtime-Fragmenten und älteren Signalzuordnungen.
-- [`examples/signal-test-game.md`](examples/signal-test-game.md): **Signal-Test:
-  Der Leuchtturm von Nebelhafen**, mit drei Flags und vier unabhängigen
-  Ereignisprüfungen. Die [manuelle Prüfanleitung](examples/signal-test-game-testing.md)
-  beschreibt Ereignisse, Gegenchecks, Zustandswechsel und Debug-Metriken.
+- [`examples/test-game.md`](examples/test-game.md): a lighthouse adventure with
+  conditional runtime fragments and signal references.
+- [`examples/signal-test-game.md`](examples/signal-test-game.md): a signal test
+  with three flags and four independent event checks. The [manual test guide](examples/signal-test-game-testing.md)
+  describes checks, counterchecks, state changes and debug metrics.
 
 ## Verify
 
@@ -133,9 +170,26 @@ Importiere ein Beispiel in der Browser-Oberfläche:
 ```
 
 The command compiles both modules and runs their test suites.
+Browser tests use headless Chromium; install Chromium or Chrome and set
+`CHROME_BIN` if it is not found automatically. The build downloads its Gradle,
+Kotlin, Node.js and npm dependencies on first use.
 
 Run `bash scripts/test-server-launcher.sh` for isolated launcher regression tests
 (requires Python 3; does not start actual models or modify your `.env`).
+
+The repository includes a Woodpecker CI configuration for Codeberg. It requires
+the repository to be enabled in a Woodpecker instance; configuration alone does
+not establish that a hosted run has occurred.
+
+### Troubleshooting
+
+- If `./server.sh` cannot find the model, check `PRIMARY_MODEL_PATH` and file
+  permissions in `.env`; if using a wrapper, check that it is executable.
+- If the page cannot connect, check the application health endpoint below and
+  confirm that the configured port matches the browser URL. A successful health
+  response does not establish that the model server is available.
+- If a saved game exceeds the model context, use a larger configured llama.cpp
+  context. The application reports a limit rather than silently dropping history.
 
 ### Local smoke test
 
@@ -146,13 +200,14 @@ Create a scenario file named `harbor.md`:
 You are investigating a missing lighthouse keeper.
 ```
 
-With the API running, check that it can reach local llama.cpp:
+With the application server running, check that its HTTP endpoint is reachable:
 
 ```bash
 curl -fsS http://localhost:8080/api/health
 ```
 
-The command returns `{"status":"ok"}`.
+The command returns `{"status":"ok"}`. This health endpoint confirms that the
+application server responds; it does not verify llama.cpp connectivity.
 
 A successful `POST /api/turn` is an SSE response: it sends one or more `token`
 frames followed by a terminal `done` frame:
@@ -163,7 +218,7 @@ curl -N -X POST http://localhost:8080/api/turn \
   --data '{"sessionId":"manual-check","scenarioMarkdown":"# Fog Harbor","history":[],"playerAction":"look"}'
 ```
 
-With `./gradlew :server:run` running, open http://127.0.0.1:8080/, import
+With `./server.sh` running, open http://127.0.0.1:8080/, import
 `harbor.md`, open **Fog Harbor**, and start a session. Send a short action,
 reload the page, reopen the scenario, resume the saved session, then send a
 second short action without changing the scenario.
@@ -172,9 +227,9 @@ across a reload of the same browser profile; the server has no session storage.
 
 For a request-level check, use the browser's Network panel: both `POST
 /api/turn` requests contain the same `scenarioMarkdown`; the second request's
-`history` contains the first completed turn. The server uses the scenario
-Markdown directly as the system message, followed by history and the new player
-action. A location catalog, when present, is appended to the scenario text.
+`history` contains the first completed turn. The server constructs the prompt
+from its instructions, scenario, history and the new player action. A location
+catalog, when present, is included in the scenario context.
 
 ### Cache metrics
 
@@ -208,8 +263,8 @@ signals:
 ```
 
 A nonblank `event-check` describes an actual event, rather than
-an intention or a relevant fragment. `condition` optionally requires one or more
-declared flag values; all entries must match (AND). Explicit event checks use only this signal condition, regardless
+an intention or a relevant fragment. `condition` optionally requires declared
+flag values and/or a location; all entries must match (AND). Explicit event checks use only this signal condition, regardless
 of conditions on fragments referencing the signal. Checks run after the completed
 exchange, using flags from the start of the turn; successful assignments apply in
 declaration order without triggering further checks in that same turn.
@@ -276,8 +331,8 @@ there and are not inherited by these children. Text and signal inheritance withi
 named fragment groups remains supported. Direct rule text and
 selected fragments supply hidden context for following responses: direct rule
 texts first, triggered signal texts next, and the selected fragment last. The
-fragment must still be eligible after flag assignments. Declare `flags`
+selected fragment remains effective even if its own actions change flags. Declare `flags`
 or `signals` to enable metadata names, including at the runtime-fragments root;
 without either declaration these keys keep their legacy meaning as fragment names.
-See [the authoring guide](docs/Spiel-Erstellen.md#7-runtime-fragmente-situationsabhängige-hinweise)
+See [the authoring guide](docs/Spiel-Erstellen.md)
 for nesting, validation, signal behavior, and a complete scenario.
