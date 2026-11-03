@@ -6,7 +6,10 @@ connects to a local [llama.cpp](https://github.com/ggml-org/llama.cpp) model.
 Scenarios and saved sessions stay in the browser's IndexedDB; the server keeps
 temporary coordination and model-slot state while sessions are active.
 
-The project explores how to make long-running LLM adventures more reliable:
+![An adventure in progress with the turn diagnostics panel open](docs/screenshot.png)
+
+The project explores how to efficiently and reliably run long-running LLM adventures with local LLMs
+on resource-constrained hardware:
 
 - Stream responses and action suggestions into the browser.
 - Author scenarios in Markdown with YAML frontmatter for locations, flags,
