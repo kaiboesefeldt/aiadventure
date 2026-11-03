@@ -19,9 +19,9 @@ newlines to form its match text:
 ```yaml
 ---
 runtime-fragments:
-  "Beleidigungen":
-    "Du Mistkerl, du alter Depp, du Arschloch!": "Weise den User darauf hin, dass er seine Zunge zügeln soll"
-  "Der Leuchtturm ist so schön im Abendlicht": "Mira erzählt eine alte Geschichte über den Leuchtturm"
+  "Insults":
+    "You scoundrel, you old fool, you asshole!": "Tell the user to mind their language"
+  "The lighthouse is beautiful in the evening light": "Mira tells an old story about the lighthouse"
 ---
 ```
 

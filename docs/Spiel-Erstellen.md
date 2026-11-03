@@ -1,237 +1,233 @@
-# Guide: Ein Spiel erstellen
+# Guide: Creating a Game
 
-Dieser Guide beschreibt das aktuell unterstützte Szenarioformat von AI Adventure.
-Ein Spiel besteht aus einer Markdown-Datei mit optionalem YAML-Frontmatter.
-Der Markdown-Text beschreibt Welt, Regeln und Spielleitung; das Frontmatter
-konfiguriert Start, Orte, dauerhafte Flags, Ereignissignale und situationsabhängige
-Runtime-Fragmente. Die Beispiele zeigen gültige Formen und ihre Grenzen.
+This guide describes the scenario format currently supported by AI Adventure.
+A game consists of a Markdown file with optional YAML frontmatter. The Markdown
+text describes the world, rules and game master; the frontmatter configures the
+start, locations, persistent flags, event signals and situational runtime
+fragments. The examples show valid forms and their limits.
 
-## 1. Der schnellste Einstieg
+## 1. Quick start
 
-Speichere diese Datei als `mein-spiel.md`, importiere sie in der Oberfläche,
-öffne das Szenario und starte eine neue Sitzung:
+Save this file as `mein-spiel.md`, import it in the interface, open the
+scenario and start a new session:
 
 ```markdown
-# Das verschwundene Licht
+# The Missing Light
 
-Du bist die Spielleitung eines geheimnisvollen Hafenabenteuers.
-Die Spielfigur sucht nach der verschwundenen Leuchtturmwärterin.
-Beginne am Kai in einer nebligen Nacht.
-Antworte auf Deutsch in kurzen Abschnitten. Beschreibe konkrete Konsequenzen,
-lasse die Entscheidungen der Spielfigur aber beim Menschen.
+You are the game master of a mysterious harbor adventure.
+The player character is looking for the missing lighthouse keeper.
+Begin at the quay on a foggy night.
+Respond in English in short paragraphs. Describe concrete consequences, but
+leave decisions for the player character to the human.
 ```
 
-Frontmatter ist optional. Ohne Konfiguration gibt es keine deklarierten Orte,
-Flags, Signale oder Runtime-Fragmente; der strukturierte Startort ist leer.
-Die Anwendung erzeugt beim Spielstart automatisch eine kurze Einführung in der
-Sprache des Szenarios. Der Mensch muss dafür keine erste Aktion eingeben.
+Frontmatter is optional. Without configuration there are no declared locations,
+flags, signals or runtime fragments; the structured starting location is empty.
+At the start of a game the application automatically generates a short
+introduction in the scenario's language. The player need not enter a first
+action to obtain it.
 
-Importiert werden nichtleere Dateien mit `.md` oder `.markdown` als Endung,
-auch mit anderer Groß-/Kleinschreibung. Szenarien und Spielstände liegen im
-IndexedDB-Speicher des verwendeten Browserprofils. Identischer Dateiname und
-identischer Inhalt werden als dasselbe Szenario erkannt. Eine bearbeitete Datei
-hat einen anderen Fingerabdruck und wird als neues Szenario importiert; sie
-überschreibt nicht automatisch das bisherige Spiel.
+Nonempty files ending in `.md` or `.markdown` are accepted, regardless of
+extension case. Scenarios and saved games are stored in the current browser
+profile's IndexedDB. An identical filename and content identify the same
+scenario. An edited file has a different fingerprint and is imported as a new
+scenario; it does not automatically overwrite the existing game.
 
-## 2. Aufbau und vollständige Feldübersicht
+## 2. Structure and complete field reference
 
 ```markdown
 ---
 initial-situation:
   world-state:
     location: Kai
-  setting: Du stehst nachts am Kai. Der Leuchtturm ist dunkel.
+  setting: You stand on the quay at night. The lighthouse is dark.
 locations:
-  Kai: Hafenplatz mit Blick auf den Leuchtturm.
-  Leuchtturm: Alter Steinturm am Ende der Mole.
+  Kai: Harbor square overlooking the lighthouse.
+  Leuchtturm: Old stone tower at the end of the breakwater.
 flags:
   turm-besucht: false
 signals:
   turm-betreten:
-    event-check: Die Figur hat in diesem Austausch den Leuchtturm tatsächlich betreten.
+    event-check: The character actually entered the lighthouse during this exchange.
     condition: {turm-besucht: false}
     triggers:
       - set-flag: {turm-besucht: true}
 runtime-fragments:
-  "Die Figur untersucht den Leuchtturm von außen": >
-    Beschreibe eine klemmende Tür und einen zweiten möglichen Zugang.
+  "The character examines the lighthouse from outside": >
+    Describe a stuck door and a second possible entrance.
 ---
-# Das verschwundene Licht
+# The Missing Light
 
-Du bist die Spielleitung. Erzähle ein rätselhaftes Hafenabenteuer auf Deutsch.
-Die Wärterin ist verschwunden; im Turm liegt eine Nachricht von ihr.
-Gib Hinweise schrittweise und akzeptiere plausible Lösungswege.
+You are the game master. Tell a mysterious harbor adventure in English.
+The keeper has disappeared; a message from her lies in the tower.
+Give clues gradually and accept plausible solutions.
 ```
 
-| Feld | Typ und Bedeutung | Optional / Vorgabe bei Weglassen |
+| Field | Type and meaning | Optional / default when omitted |
 | --- | --- | --- |
-| `initial-situation` | Mapping mit `world-state` und/oder `setting` | Ja; keine zusätzliche Startsituation |
-| `initial-situation.world-state` | Mapping mit genau `location` | Ja; Rückgriff auf oberstes `world-state` |
-| `initial-situation.world-state.location` | Nichtleerer String, strukturierter Startort | Erforderlich, wenn dieses `world-state` angegeben wird |
-| `initial-situation.setting` | Nichtleerer String, einmaliger Kontext für die Einführung | Ja |
-| `world-state` | Ältere Startort-Schreibweise mit genau `location` | Ja; leerer Startort |
-| `locations` | Mapping von kanonischen Ortsnamen auf Beschreibungen | Ja; kein Ortskatalog |
-| `flags` | Mapping von Flag-Namen auf `true` oder `false` | Ja; keine Flags |
-| `signals` | Mapping oder Liste benannter Signale | Ja; keine Ereignisprüfungen |
-| `signals.<name>.event-check` | String mit Ereignisbeschreibung; `null` oder leer deaktiviert die Modellprüfung | Ja; keine automatische Prüfung ohne dieses Feld |
-| `signals.<name>.condition` | Nichtleeres Mapping mit deklarierten Flags auf boolesche Sollwerte und/oder `location` auf einen Ortsnamen (UND) | Ja; keine zusätzliche Flag-Schranke |
-| `signals.<name>.triggers` | Nichtleere Liste von `set-flag`- und/oder `emit-text`-Aktionen | Pflicht je Signal |
-| Signalaktion `set-flag` | Nichtleeres Mapping deklarierter Flags auf boolesche Zielwerte | Optional je Signal |
-| Signalaktion `emit-text` | Nichtleerer fester Text für den verborgenen Kontext der nächsten Runde | Optional je Signal |
-| `runtime-fragments` | Mapping mit benannten Fragmenten und optionalen direkten Regeln | Ja; keine Zusatzhinweise |
-| Fragmentfeld `emit-text` | Nichtleerer Zusatztext, an Nachfahren vererbt | Ja |
-| Fragmentfeld `signal` | Name eines deklarierten Signals, an Nachfahren vererbt | Ja |
-| Fragmentfeld `set-flag` | Nichtleeres Mapping deklarierter Flags auf boolesche Zielwerte, an benannte Nachfahren vererbt | Ja |
-| Fragmentfeld `condition` | Bedingungs-Mapping (Flags und/oder `location`, UND) oder Liste unabhängiger `then`-Zweige mit optionalem abschließendem `else` | Ja |
+| `initial-situation` | Mapping with `world-state` and/or `setting` | Yes; no additional initial situation |
+| `initial-situation.world-state` | Mapping containing exactly `location` | Yes; falls back to top-level `world-state` |
+| `initial-situation.world-state.location` | Nonempty string; structured starting location | Required if this `world-state` is specified |
+| `initial-situation.setting` | Nonempty string; one-time context for the introduction | Yes |
+| `world-state` | Legacy starting location form containing exactly `location` | Yes; empty starting location |
+| `locations` | Mapping from canonical location names to descriptions | Yes; no location catalog |
+| `flags` | Mapping from flag names to `true` or `false` | Yes; no flags |
+| `signals` | Mapping or list of named signals | Yes; no event checks |
+| `signals.<name>.event-check` | Event description string; `null` or empty disables the model check | Yes; no automatic check without this field |
+| `signals.<name>.condition` | Nonempty mapping from declared flags to desired Boolean values and/or `location` to a location name (AND) | Yes; no additional flag restriction |
+| `signals.<name>.triggers` | Nonempty list of `set-flag` and/or `emit-text` actions | Required per signal |
+| Signal action `set-flag` | Nonempty mapping from declared flags to Boolean target values | Optional per signal |
+| Signal action `emit-text` | Nonempty fixed text for the next turn's hidden context | Optional per signal |
+| `runtime-fragments` | Mapping containing named fragments and optional direct rules | Yes; no additional guidance |
+| Fragment field `emit-text` | Nonempty additional text inherited by descendants | Yes |
+| Fragment field `signal` | Name of a declared signal, inherited by descendants | Yes |
+| Fragment field `set-flag` | Nonempty mapping from declared flags to Boolean target values, inherited by named descendants | Yes |
+| Fragment field `condition` | Condition mapping (flags and/or `location`, AND), or list of independent `then` branches with optional final `else` | Yes |
 
-Die letzten vier Fragmentfelder haben eine besondere Kompatibilitätsregel:
-Sie sind nur bei vorhandenem obersten `flags`- oder `signals`-Feld Metadaten,
-auch direkt unter `runtime-fragments`. Ohne beide Felder sind sie normale
-Fragmentnamen. Siehe Abschnitt 7.
+The last four fragment fields have a special compatibility rule: they are
+metadata only when a top-level `flags` or `signals` field exists, including
+directly under `runtime-fragments`. Without either field they are ordinary
+fragment names. See section 7.
 
-Frontmatter muss unmittelbar am Dateianfang mit einer eigenen `---`-Zeile
-beginnen und durch eine weitere eigene `---`-Zeile enden. Leerzeilen davor
-oder ein fehlender Abschluss verhindern die Erkennung; der Text wird dann als
-gewöhnliches Markdown behandelt. Zeilenenden mit LF oder CRLF sind unterstützt.
+Frontmatter must begin at the very start of the file with a separate `---` line
+and end with another separate `---` line. Leading blank lines or a missing
+closing delimiter prevent recognition; the text is then treated as ordinary
+Markdown. LF and CRLF line endings are supported.
 
-Der YAML-Block wird nicht unverändert an die Spielleitung geschickt. Die Anwendung
-verarbeitet seine Felder getrennt. Der Markdown-Haupttext bildet den dauerhaften
-Szenariokontext; der Ortskatalog wird zusätzlich in den Modellkontext aufgenommen.
-Startsetting und aktueller World-State werden gesondert übergeben. Flags steuern
-Bedingungen und Signalprüfungen; sie werden nicht als allgemeine Flag-Liste in den
-Spielleitungs-Prompt geschrieben. Soll eine Flag-Änderung erzählerisch wirken,
-formuliere dafür passende bedingte Fragmente oder eine `emit-text`-Signalaktion.
+The YAML block is not sent unchanged to the game master. The application
+processes its fields separately. The Markdown body forms the persistent
+scenario context; the location catalog is also included in the model context.
+The initial setting and current world state are passed separately. Flags
+control conditions and signal checks; they are not written into the game-master
+prompt as a general flag list. To give a flag change a narrative effect, write
+appropriate conditional fragments or an `emit-text` signal action.
 
-## 3. Die Welt und Spielregeln im Markdown
+## 3. The world and game rules in Markdown
 
-Im Haupttext kannst du beliebige Markdown-Abschnitte verwenden, beispielsweise:
+You can use any Markdown sections in the body, for example:
 
 ```markdown
-# Das verschwundene Licht
+# The Missing Light
 
-## Rolle und Erzählstil
-Du leitest ein spannendes Abenteuer auf Deutsch. Antworte knapp und anschaulich.
-Beschreibe keine Entscheidungen oder Gedanken der Spielfigur ohne ihre Vorgabe.
+## Role and Narrative Style
+Lead an exciting adventure in English. Answer concisely and vividly.
+Do not describe the character’s decisions or thoughts without player input.
 
-## Welt und Personen
-Nebelhafen lebt vom Seehandel. Die Hafenmeisterin möchte einen Skandal vermeiden.
-Die Wärterin hat den Turm verlassen, um eine Schmugglergruppe zu verfolgen.
+## World and Characters
+Nebelhafen depends on maritime trade. The harbor master wants to avoid a scandal.
+The keeper left the tower to pursue a group of smugglers.
 
-## Geheimnisse und Hinweise
-Eine versteckte Nachricht führt zum Lagerschuppen. Das Hafenbuch enthält
-eine falsche Abfahrtszeit. Beide Hinweise können unabhängig gefunden werden.
+## Secrets and Clues
+A hidden message leads to the storage shed. The harbor ledger contains
+a false departure time. Either clue can be discovered independently.
 
-## Regeln und Ziel
-Plausible Handlungen können gelingen. Gefährliche Versuche haben Konsequenzen.
-Das Abenteuer endet, wenn die Wärterin gefunden und die Lichtsignale erklärt sind.
+## Rules and Goal
+Plausible actions can succeed. Dangerous attempts have consequences.
+The adventure ends when the keeper is found and the light signals are explained.
 ```
 
-Diese Überschriften sind Schreibkonventionen, keine speziellen Engine-Felder.
-Auch Inventar, Personenwerte, Kampfregeln, Rätsel, Zeitdruck, Dialoge und Enden
-kannst du hier beschreiben. Sie sind dann erzählerische Regeln für das Modell.
-Es gibt dafür derzeit keine eigenen strukturierten YAML-Systeme oder eine
-garantierte regelbasierte Ausführung. Für binäre Fortschritte nutze Flags.
+These headings are writing conventions, not special engine fields. You can
+also describe inventory, character statistics, combat rules, puzzles, time
+pressure, dialogue and endings here. These become narrative rules for the
+model. They currently have no dedicated structured YAML systems or guaranteed
+rule-based execution. Use flags for binary progress.
 
-## 4. Startsituation und World-State
+## 4. Initial situation and world state
 
-### Empfohlene Form
+### Recommended form
 
 ```yaml
 initial-situation:
   world-state:
     location: Kai
   setting: |
-    Du bist gerade in Nebelhafen angekommen.
-    Die Hafenmeisterin bittet dich, nach der Wärterin zu suchen.
-    Vor dir liegen die Mole und der dunkle Leuchtturm.
+    You have just arrived in Nebelhafen.
+    The harbor master asks you to look for the keeper.
+    The breakwater and dark lighthouse lie ahead.
 ```
 
-`setting` wird einmal beim Erzeugen der Einführung übergeben. Es ist keine
-ständige Anweisung, jede spätere Szene wieder an den Start zu versetzen.
-`world-state.location` initialisiert den strukturierten Aufenthaltsort.
+`setting` is passed once when the introduction is generated. It is not a
+standing instruction to return every later scene to the start.
+`world-state.location` initializes the structured current location.
 
-Beide Unterfelder sind einzeln optional: Nur `setting`, nur `world-state` oder
-das leere Mapping `initial-situation: {}` sind zulässig. Wenn du ein Unterfeld
-angibst, muss sein Inhalt die jeweilige Form erfüllen.
+Both subfields are individually optional: only `setting`, only `world-state`,
+or the empty mapping `initial-situation: {}` are valid. If a subfield is
+specified, its content must conform to the required form.
 
-### Weiterhin unterstützte Startort-Form
+### Also supported: legacy starting location form
 
 ```yaml
 world-state:
   location: Kai
 ```
 
-Diese Form kann auch mit `initial-situation.setting` kombiniert werden.
-Wenn beide Startort-Formen angegeben sind, gewinnt
-`initial-situation.world-state.location`. Für neue Spiele verwende eine Form,
-damit die Datei eindeutig bleibt.
+This form can also be combined with `initial-situation.setting`. If both
+starting location forms are specified, `initial-situation.world-state.location`
+takes precedence. For new games, use one form to keep the file unambiguous.
 
-Der aktuelle strukturierte World-State enthält `location` und den automatisch
-ermittelten `narrativeFocus` als kurzen Satz zur gegenwärtigen Handlung.
-Im Frontmatter darfst du für den World-State nur `location` setzen;
-`narrativeFocus`, `entities`, `facts` und weitere Zustandsfelder sind dort ungültig.
-Nach einem Austausch aktualisiert die Anwendung Ort und Erzählfokus anhand der
-tatsächlich beschriebenen Ereignisse. Ungültige Ergebnisse ersetzen keinen
-gültigen bisherigen Ort.
+The current structured world state contains `location` and an automatically
+determined `narrativeFocus`, a short sentence about the current action. In
+frontmatter only `location` may be set for the world state; `narrativeFocus`,
+`entities`, `facts` and other state fields are invalid there. After an exchange
+the application updates the location and narrative focus based on the events
+actually described. Invalid results do not replace a previously valid location.
 
-## 5. Locations: Orte definieren
+## 5. Locations: defining places
 
 ```yaml
 locations:
-  Kai: Umschlagplatz mit Pollern und Blick auf die Mole.
+  Kai: Working quay with bollards and a view of the breakwater.
   Leuchtturm: |
-    Steinturm am Ende der Mole.
-    Innen führen eine Wendeltreppe und eine Leiter zur Laternenkammer.
-  Hafenkneipe: "Zum schiefen Mast: Gasthaus der Seeleute."
+    Stone tower at the end of the breakwater.
+    Inside, a spiral staircase and ladder lead to the lantern room.
+  Hafenkneipe: "The Crooked Mast: a sailors’ tavern."
   Lagerschuppen: ""
   Steg:
 ```
 
-Einfacher Text, mehrzeiliger Text, zitierter Text, leerer String und ausgelassene
-Beschreibung (`null`) bleiben gültig. Die beiden letzten Formen erzeugen eine
-leere Beschreibung. Für Betretungsaktionen kann ein Ort stattdessen ein Mapping
-mit `description` und `triggers` verwenden:
+Plain, multiline and quoted text, an empty string, and an omitted description
+(`null`) are valid. The last two produce an empty description. For entry
+actions, a location can instead use a mapping with `description` and
+`triggers`:
 
 ```yaml
 locations:
   Kai:
-    description: Umschlagplatz am Hafen mit Blick auf die Mole.
+    description: Working quay overlooking the breakwater.
     triggers:
       - set-flag: {hafen-betreten: true}
-      - emit-text: Die Glocken am Kai läuten zur Begrüßung.
+      - emit-text: The quay bells ring in welcome.
       - signals: [trifft-hafenmeisterin]
 ```
 
-`triggers` verwendet dieselben `set-flag`- und `emit-text`-Aktionen wie ein
-Signal. Die zusätzliche Aktion `signals` erwartet eine Liste deklarierter
-Signalnamen. Beim Betreten werden Ortsaktionen in Reihenfolge ausgeführt;
-genannte Signale gelten dabei als ausgelöst und führen ihre eigenen Aktionen
-aus, ohne eine Ereignisprüfung durch das Modell. Das gilt auch für den
-konfigurierten Startort. Bei späteren Zügen lösen nur tatsächliche Ortswechsel
-die Aktionen aus; Warmup und Wiederaufnahme wiederholen sie nicht.
+`triggers` uses the same `set-flag` and `emit-text` actions as a signal. The
+additional `signals` action expects a list of declared signal names. On entry,
+location actions execute in order; referenced signals are triggered and run
+their own actions without a model event check. This also applies to the
+configured starting location. On later turns only actual location changes
+trigger the actions; warmup and resume do not repeat them.
 
-Ortswerte dürfen neben Text oder `null` nur dieses Mapping verwenden; Listen,
-Zahlen und boolesche Werte sind ungültig. `triggers` muss, falls angegeben,
-mindestens eine gültige Aktion enthalten.
+Apart from text or `null`, location values may use only this mapping; lists,
+numbers and Boolean values are invalid. If specified, `triggers` must contain
+at least one valid action.
 
-Die Schlüssel sind die kanonischen Ortsnamen. Ortsnamen dürfen nicht leer sein
-und nicht nur durch Groß-/Kleinschreibung voneinander abweichen. Ein angegebener
-Katalog muss mindestens einen Ort enthalten; `locations: {}` ist ungültig.
-Ein konfigurierter Startort muss bei vorhandenem Katalog exakt als Schlüssel
-enthalten sein, einschließlich seiner Groß-/Kleinschreibung.
+The keys are canonical location names. Names must be nonempty and cannot
+differ only in case. A specified catalog must contain at least one location;
+`locations: {}` is invalid. If a catalog exists, a configured starting
+location must exactly match a key, including case.
 
-Mit Katalog kann der strukturierte Aufenthaltsort nur einer der deklarierten Orte
-sein. Die Beschreibung hilft, Aufenthalte von Erwähnungen, Reiseabsichten und
-gescheiterten Zugangsversuchen zu unterscheiden. Ohne Katalog wird kein neuer
-strukturierter Ort durch diese Ortsanalyse angenommen; ein gesetzter Startort
-bleibt dabei erhalten. Für verlässliche Ortswechsel deklariere alle spielbaren Orte.
+With a catalog, the structured current location can only be one of the declared
+locations. Descriptions help distinguish presence from mentions, travel
+intentions and failed entry attempts. Without a catalog, this location analysis
+does not accept a new structured location; a configured starting location
+remains in place. Declare all playable locations for reliable location changes.
 
-Der Katalog definiert keine Wege, Nachbarschaft oder Zugangssperren. Beschreibe
-diese im Markdown bzw. in Fragmenten. Ein gleichnamiger Fragmentknoten ist
-auch nicht automatisch an einen Ort gebunden: Sein Name dient der semantischen
-Auswahl, nicht einer exakten `location`-Bedingung.
+The catalog does not define paths, adjacency or access restrictions. Describe
+these in Markdown or fragments. A fragment node with the same name is not
+automatically bound to a location: its name supports semantic selection, not
+an exact `location` condition.
 
-## 6. Flags und Signale: dauerhafte Fortschritte
+## 6. Flags and signals: persistent progress
 
 ### Flags
 
@@ -242,25 +238,24 @@ flags:
   hafenmeisterin-misstrauisch: true
 ```
 
-Flags sind benannte boolesche Werte pro Spielstand. Sie können mit `true` oder
-`false` starten, durch Signale gesetzt oder zurückgesetzt werden und Bedingungen
-für Fragmente oder Ereignisprüfungen bilden. Namen müssen nichtleer sein;
-verwende eindeutige, gut lesbare Strings. `flags: {}` ist zulässig.
-Strings wie `"false"`, Zahlen, `null` und `yes`/`no` sind keine gültigen Flag-Werte.
+Flags are named Boolean values per saved game. They may start as `true` or
+`false`, be set or reset by signals, and form conditions for fragments or
+event checks. Names must be nonempty; use unique, readable strings.
+`flags: {}` is valid. Strings such as `"false"`, numbers, `null`, and
+`yes`/`no` are not valid flag values.
 
-Eine neue Sitzung übernimmt die Startwerte. Eine fortgesetzte Sitzung verwendet
-ihre gespeicherten Werte. Eine Aussage der Spielleitung allein beweist keine
-Flag-Änderung: Maßgeblich ist der von der Engine zurückgegebene und gespeicherte
-Flag-Zustand.
+A new session takes the initial values. A resumed session uses its saved
+values. A game-master statement alone does not prove a flag change: the
+authoritative state is the flag state returned and stored by the engine.
 
-### Signale als Mapping
+### Signals as a mapping
 
 ```yaml
 signals:
   nachricht-entdeckt:
     event-check: >
-      Die Figur hat in diesem Austausch die versteckte Nachricht tatsächlich
-      gefunden oder gelesen. Bloßes Suchen oder die Absicht zu suchen zählt nicht.
+      The character actually found or read the hidden message during this
+      exchange. Searching or intending to search alone does not count.
     condition: {nachricht-gefunden: false}
     triggers:
       - set-flag:
@@ -270,311 +265,298 @@ signals:
           turm-besucht: true
 ```
 
-Jedes Signal hat eine nichtleere `triggers`-Liste. Unterstützt werden `set-flag`
-und `emit-text`; jeder Listeneintrag enthält genau einen dieser Aktionstypen.
-Eine `set-flag`-Aktion darf mehrere bereits deklarierte Flags setzen; mehrere
-Zuweisungen werden der Reihe nach angewendet. `false` setzt einen Zustand zurück.
-Ein mehrfach gesetztes Flag erhält den letzten zugewiesenen Wert.
+Each signal has a nonempty `triggers` list. Supported actions are `set-flag`
+and `emit-text`; each list item contains exactly one action type. A
+`set-flag` action can set several already declared flags; assignments apply in
+order. `false` resets a state. A flag assigned repeatedly receives the last
+assigned value.
 
-`event-check` beschreibt ein Ereignis im zuletzt abgeschlossenen Austausch.
-Formuliere sie als überprüfbare Tatsache und grenze Absicht, Versuch und Erfolg
-ab. Sie ist kein Befehl, das Ereignis herbeizuerzählen. Die zusätzliche `condition`
-schränkt die Prüfung auf deklarierte Flag-Sollwerte und/oder den aktuellen Ort ein. Mehrere Einträge
-im selben Mapping müssen alle erfüllt sein (UND), etwa
+`event-check` describes an event in the most recently completed exchange.
+Phrase it as a verifiable fact and distinguish intention, attempt and success.
+It is not an instruction to narrate the event. The optional `condition`
+restricts the check to declared flag values and/or the current location. All
+entries in the same mapping must match (AND), for example
 `condition: {location: Leuchtturm, nachricht-gefunden: true, turm-besucht: false}`.
-Für `location` gelten die Namens- und Katalogregeln aus Abschnitt 7 D.
-Ohne `condition` entfällt diese Schranke.
+The naming and catalog rules in section 7 D apply to `location`.
+Without `condition` there is no such restriction.
 
-### Signalaktionen mit `emit-text`
+### Signal actions with `emit-text`
 
 ```yaml
 flags: {nachricht-gefunden: false}
 signals:
   nachricht-entdeckt:
-    event-check: Die Figur hat die Nachricht der Wärterin tatsächlich gefunden.
+    event-check: The character actually found the keeper’s message.
     condition: {nachricht-gefunden: false}
     triggers:
       - set-flag: {nachricht-gefunden: true}
       - emit-text: >
-          Die Nachricht nennt die Abfahrt zur dritten Glocke.
-          Nutze diesen Hinweis in der nächsten Antwort.
+          The message mentions the departure at the third bell.
+          Use this clue in the next response.
 ```
 
-`emit-text` übernimmt einen festen, nichtleeren Text in den verborgenen
-Laufzeitkontext für die nächste Runde. Er wird nicht unmittelbar als sichtbare
-Antwort ausgegeben und verändert die bereits abgeschlossene Antwort nicht.
-Anders als Runtime-Fragmente durchlaufen diese Texte keine semantische
-Fragmentauswahl: Ein erfolgreich geprüftes Signal gibt seine Texte aus.
+`emit-text` adds fixed, nonempty text to the hidden runtime context for the
+next turn. It is not immediately emitted as a visible answer and does not
+change the completed answer. Unlike runtime fragments, these texts do not
+undergo semantic fragment selection: a successful signal check emits its texts.
 
-Ein Signal darf ausschließlich `emit-text`-Aktionen enthalten und benötigt dann
-keine `flags`-Deklaration:
+A signal may contain only `emit-text` actions, in which case it does not
+require a `flags` declaration:
 
 ```yaml
 signals:
   glocke-gehoert:
-    event-check: Die Figur hat in diesem Austausch die Hafenglocke gehört.
+    event-check: The character heard the harbor bell during this exchange.
     triggers:
-      - emit-text: Erinnere in der nächsten Antwort an die bevorstehende Abfahrt.
+      - emit-text: Mention the upcoming departure in the next response.
 ```
 
-Texte erfolgreicher Signale werden in Signal- und Triggerreihenfolge gesammelt.
-Danach folgt gegebenenfalls das ausgewählte, weiterhin berechtigte
-Runtime-Fragment. Leerzeilen trennen die Texte in einem gemeinsamen Kontexteintrag.
-Dieser wird mit dem Spielstand gespeichert und bleibt beim Neuladen erhalten,
-ohne dadurch doppelt eingefügt zu werden.
+Texts from successful signals are collected in signal and trigger order,
+followed by any selected runtime fragment. Blank lines separate the texts in a
+single context entry. It is saved with the game and survives reload without
+being inserted twice.
 
-Textausgebende Signale können bei späteren passenden Ereignissen erneut auslösen,
-auch wenn ihre Flag-Zuweisungen nichts mehr ändern würden. Soll ein Ereignis nur
-einmal auslösen, kombiniere wie im ersten Beispiel eine Bedingung auf `false`
-mit einer Zuweisung auf `true`.
+Signals emitting text can fire again on later matching events even when their
+flag assignments would no longer change anything. For a one-shot event, combine
+a `false` condition with a `true` assignment, as in the first example.
 
-### Signale als geordnete Liste
+### Signals as an ordered list
 
 ```yaml
 signals:
   - turm-betreten:
-      event-check: Die Figur hat den Turm tatsächlich betreten.
+      event-check: The character actually entered the tower.
       triggers:
         - set-flag: {turm-besucht: true}
   - nachricht-entdeckt:
-      event-check: Die Figur hat die versteckte Nachricht tatsächlich gefunden.
+      event-check: The character actually found the hidden message.
       triggers:
         - set-flag: {nachricht-gefunden: true}
 ```
 
-Jeder Listeneintrag enthält genau ein benanntes Signal. Signalnamen müssen
-nichtleer und eindeutig sein. Die Liste macht die Reihenfolge ausdrücklich
-sichtbar. Bei Mappings mit gewöhnlichen Textnamen gilt die Deklarationsreihenfolge;
-vermeide rein numerische Signalnamen, da JavaScript numerische Objektschlüssel
-anders sortieren kann. Leere Signal-Mappings und leere Signallisten sind zulässig.
+Each list item contains exactly one named signal. Signal names must be nonempty
+and unique. The list makes ordering explicit. For mappings with ordinary text
+names, declaration order applies; avoid purely numeric signal names because
+JavaScript may sort numeric object keys differently. Empty signal mappings and
+lists are valid.
 
-### Ablauf und Konflikte
+### Execution and conflicts
 
-Nach der sichtbaren Antwort, der World-State-/Fokus-Aktualisierung und der
-Fragmentprüfung werden die relevanten ereignisbasierten Signale nacheinander
-vom Modell geprüft. Direkte Runtime-Regeln werden bereits vor der Embedding-Suche
-ausgewählt. Ihre Signalaktionen werden anschließend zusammen mit den übrigen
-Signalaktionen angewendet, benötigen aber keine Modellprüfung (Abschnitt 7 G).
-Die Prüfung verlangt genau `Y` oder `N`; nur ein exaktes `Y` löst das Signal aus.
-Eine fehlgeschlagene oder ungültige Prüfung setzt dessen Flags nicht und gibt
-keine Signaltexte aus.
+After the visible answer, world-state/focus update and fragment check, the model
+checks relevant event-based signals sequentially. Direct runtime rules are
+selected before embedding search. Their signal actions are then applied with
+the other signal actions but do not require a model check (section 7 G). The
+check requires exactly `Y` or `N`; only an exact `Y` triggers the signal. A
+failed or invalid check neither sets its flags nor emits its signal texts.
 
-Die Flag-Bedingungen der ereignisbasierten Signalprüfungen verwenden den
-Flag-Schnappschuss **zu Beginn des Spielzugs**. Ortsbedingungen verwenden dagegen
-den akzeptierten World-State nach der sichtbaren Antwort und ihrer
-World-State-Auswertung. Erst nach den Prüfungen werden die Zuweisungen
-erfolgreicher Signale in Signalreihenfolge angewendet. Es gibt keine Kettenreaktion innerhalb
-desselben Zugs: Ein Signal, das `turm-besucht: true` setzt, aktiviert dadurch keine
-vorher ineligible Prüfung mit dieser Bedingung im selben Zug.
+Flag conditions for event-based signal checks use the flag snapshot **at the
+start of the turn**. Location conditions instead use the accepted world state
+after the visible answer and its world-state evaluation. Assignments from
+successful signals are applied in signal order only after the checks. There is
+no same-turn cascade: a signal setting `turm-besucht: true` does not thereby
+activate a previously ineligible check with that condition in the same turn.
 
-Eine automatische Ereignisprüfung ohne `emit-text` wird übersprungen, wenn alle effektiven
-Flag-Zielwerte bereits erreicht sind. Signale mit `emit-text` bleiben unter
-ihren jeweiligen Bedingungen prüfberechtigt, auch ohne Flag-Änderung.
-Konfliktbeispiel: Beginnt `alarm` mit `false`, wird ein Signal,
-das ausschließlich `alarm: false` setzen würde, gar nicht geprüft, auch wenn ein
-anderes Signal in diesem Zug `alarm: true` setzen könnte. Sind dagegen zwei
-konfligierende Signale beide prüfberechtigt und erfolgreich, gewinnt bei der
-Anwendung die spätere Zuweisung. Vermeide solche Konflikte im Spieldesign.
+An automatic event check without `emit-text` is skipped when all effective
+target flag values have already been reached. Signals with `emit-text` remain
+eligible under their conditions even without a flag change. For example, if
+`alarm` begins as `false`, a signal that would only set `alarm: false` is
+not checked, even if another signal could set `alarm: true` this turn. If two
+conflicting signals are both eligible and succeed, the later assignment wins.
+Avoid such conflicts in game design.
 
-### Signale ohne `event-check`
+### Signals without `event-check`
 
-Ohne `event-check` erfolgt keine automatische Ereignisprüfung durch das Modell.
-Auch `null`, leerer Text oder nur Leerzeichen deaktivieren diese Prüfung.
-Weder Signalname noch Fragmentpfad dienen als Ersatz. Das Signal kann weiterhin
-über `signal: <name>` in einem ausgewählten Runtime-Fragment, einer passenden
-direkten Regel oder einem Ortstrigger ausgelöst werden. Dabei müssen die
-Bedingungen des jeweiligen Fragments und des Signals erfüllt sein.
+Without `event-check`, no automatic model event check occurs. `null`, empty
+text and whitespace also disable it. Neither the signal name nor fragment path
+acts as a fallback. The signal can still be triggered by `signal: <name>` in
+a selected runtime fragment, a matching direct rule or a location trigger.
+The applicable fragment and signal conditions must be satisfied.
 
-Mit `event-check` kann das Ereignis zusätzlich unabhängig von der Fragmentauswahl
-erkannt werden. Diese Modellprüfung verwendet die Signalbedingung; Bedingungen
-referenzierender Fragmente begrenzen nur deren eigene Auswahl und Auslösung.
-Bereits deterministisch ausgelöste Signale werden im selben Durchlauf nicht
-nochmals vom Modell geprüft. Ein Signal benötigt kein Runtime-Fragment.
-Das frühere Signalfeld `description` wird nicht als Alias unterstützt; verwende
-für Ereignisprüfungen `event-check`. Ortsbeschreibungen heißen weiterhin `description`.
+With `event-check`, the event can also be detected independently of fragment
+selection. This model check uses the signal condition; conditions of referencing
+fragments constrain only their own selection and triggering. Signals already
+triggered deterministically are not checked again by the model in the same
+evaluation. A signal does not require a runtime fragment. The former signal
+field `description` is not supported as an alias; use `event-check` for event
+checks. Location descriptions are still called `description`.
 
-## 7. Runtime-Fragmente: situationsabhängige Hinweise
+## 7. Runtime fragments: situational guidance
 
-Runtime-Fragmente liefern der Spielleitung zusätzliche, im normalen Transcript
-verborgene Hinweise. Benannte Schlüssel beschreiben die Situation; ihre Textwerte
-beschreiben, wie die Spielleitung darauf reagieren soll. Daneben können direkte
-Regeln anhand von Flags und/oder dem aktuellen Ort Text ausgeben und Signale auslösen (Abschnitt G).
+Runtime fragments provide additional guidance to the game master, hidden from
+the normal transcript. Named keys describe the situation; their text values
+describe how the game master should respond. Direct rules can also emit text
+and trigger signals based on flags and/or the current location (section G).
 
-Nach einem Austausch werden zuerst direkte Regeln ausgewertet. Anschließend
-sucht die Anwendung unter den durch Bedingungen freigegebenen benannten Fragmenten
-semantisch einen Kandidaten anhand des aktuellen Erzählfokus bzw. des letzten
-sichtbaren Austauschs und des aktuellen Orts. Eine weitere Modellprüfung kann
-den Kandidaten ablehnen. Pro Auswahl wird höchstens ein Fragment übernommen.
-Ein übernommener Hinweis kommt in den Kontext für folgende Antworten; er verändert
-nicht rückwirkend die bereits sichtbare Antwort. Die Auswahl erfolgt vor der
-abschließenden Signalprüfung und berücksichtigt deren neue Flag-Werte in dieser
-Auswahl noch nicht. Benannte Fragmente sind deshalb keine synchronen Sofort-Trigger.
+After an exchange, direct rules are evaluated first. The application then
+semantically searches named fragments eligible under their conditions for a
+candidate, using the current narrative focus or latest visible exchange and
+current location. A further model check can reject the candidate. At most one
+fragment is selected per evaluation. Selected guidance enters the context for
+subsequent answers; it does not retroactively alter the visible answer.
+Selection precedes the final signal checks and does not yet take their new
+flag values into account. Named fragments are therefore not synchronous
+immediate triggers.
 
-### A. Direkte Textblätter
+### A. Direct text leaves
 
 ```yaml
 runtime-fragments:
-  "Die Figur untersucht die Turmtür": >
-    Beschreibe Rost am Schloss und frische Kratzspuren am Türrahmen.
-  "Die Figur befragt die Hafenmeisterin": |
-    Sie weicht Fragen zur letzten Abfahrt aus.
-    Gib einen überprüfbaren Widerspruch, aber verrate das Geheimnis noch nicht.
+  "The character examines the tower door": >
+    Describe rust on the lock and fresh scratches on the doorframe.
+  "The character questions the harbor master": |
+    She evades questions about the last departure.
+    Give a verifiable contradiction, but do not reveal the secret yet.
 ```
 
-Einfache, zitierte und mehrzeilige nichtleere Strings sind zulässig.
-`>` faltet YAML-Zeilen zu Fließtext; `|` erhält Zeilenumbrüche. Diese YAML-Formen
-kannst du auch für Ortsbeschreibungen, `setting`, `event-check` und `emit-text` nutzen.
+Plain, quoted and multiline nonempty strings are valid. YAML `>` folds lines
+into flowing text; `|` preserves line breaks. These forms can also be used
+for location descriptions, `setting`, `event-check` and `emit-text`.
 
-### B. Beliebig verschachtelte Gruppen
+### B. Arbitrarily nested groups
 
 ```yaml
 runtime-fragments:
-  "Die Figur erkundet den Leuchtturm":
-    "Die Figur untersucht die Treppe":
-      "Die Figur sucht unter den Stufen": >
-        Lass sie eine lose Stufe mit einem eingeritzten Zeichen entdecken.
-    "Die Figur betrachtet die Lampe": >
-      Beschreibe frisches Öl und eine verstellte Abdeckung.
+  "The character explores the lighthouse":
+    "The character examines the stairs":
+      "The character searches under the steps": >
+        Let them discover a loose step bearing a scratched mark.
+    "The character examines the lamp": >
+      Describe fresh oil and a displaced cover.
 ```
 
-Nur Blätter werden zu Fragmenten. Der vollständige Schlüsselpfad bildet den
-Suchtext, hier etwa „Die Figur erkundet den Leuchtturm“, „Die Figur untersucht
-die Treppe“, „Die Figur sucht unter den Stufen“, durch Zeilenumbrüche verbunden.
-Gruppenüberschriften sind Teil des Suchkontexts, kein automatisch ausgegebener Text.
+Only leaves become fragments. The complete key path forms the search text,
+with its components joined by line breaks. Group headings are part of the
+search context, not automatically emitted text.
 
-### C. `emit-text` und geerbter Text
+### C. `emit-text` and inherited text
 
-Die folgenden Metadaten-Beispiele setzen ein oberstes `flags`- oder
-`signals`-Feld voraus. `flags: {}` reicht, wenn keine Flags benötigt werden.
+The following metadata examples require a top-level `flags` or `signals`
+field. `flags: {}` is enough when no flags are needed.
 
 ```yaml
 flags: {}
 runtime-fragments:
-  "Die Figur erkundet den Leuchtturm":
-    emit-text: Halte Wind, Feuchtigkeit und die Enge des Turms präsent.
-    "Die Figur untersucht die Lampe":
-      emit-text: Die Abdeckung wurde kürzlich verstellt.
-    "Die Figur sucht unter der Treppe": Ein Brief steckt hinter einer losen Stufe.
+  "The character explores the lighthouse":
+    emit-text: Keep the wind, damp and cramped tower in view.
+    "The character examines the lamp":
+      emit-text: The cover was moved recently.
+    "The character searches under the stairs": A letter is tucked behind a loose step.
 ```
 
-Jedes Blatt bekommt den Text seiner Vorfahren plus seinen eigenen Text in
-Reihenfolge von außen nach innen, durch Zeilenumbrüche verbunden.
-Eine Gruppe mit Kindern wird nicht zusätzlich als eigenes Fragment angelegt.
-Ein Knoten mit nur `emit-text` ist selbst ein gültiges Blatt.
+Each leaf receives its ancestors' text plus its own, ordered from outermost to
+innermost and joined by line breaks. A group with children is not additionally
+created as its own fragment. A node containing only `emit-text` is a valid leaf.
 
-### D. Flag- und Ortsbedingungen mit UND
+### D. Flag and location conditions with AND
 
 ```yaml
 flags: {nachricht-gefunden: false}
 runtime-fragments:
-  "Die Figur untersucht den Brief":
+  "The character examines the letter":
     condition: {nachricht-gefunden: true}
-    emit-text: Erinnere an die bereits entzifferte Abfahrtszeit.
+    emit-text: Recall the departure time already deciphered.
 ```
 
-Die Bedingung filtert die Verfügbarkeit des Fragments. Sie setzt keine Flags.
-Sie enthält deklarierte Flags mit `true` oder `false` und/oder `location` mit einem
-Ortsnamen, etwa `condition: {location: Leuchtturm, nachricht-gefunden: true}`.
-Alle Einträge müssen
-erfüllt sein (UND). Nachfahren erben die Bedingungen ihrer Vorfahren; auch
-zwischen verschachtelten Gruppen gilt UND.
-Widersprüchliche Bedingungen erzeugen ein unerreichbares Fragment.
+The condition filters fragment eligibility. It does not set flags. It contains
+declared flags with `true` or `false` and/or `location` with a location
+name, for example `condition: {location: Leuchtturm, nachricht-gefunden: true}`.
+All entries must match (AND). Descendants inherit their ancestors' conditions;
+AND also applies across nested groups. Contradictory conditions make a fragment
+unreachable.
 
-`location` vergleicht den aktuellen Wert von `world-state.location` exakt,
-inklusive Groß-/Kleinschreibung. Der Name muss nichtleer sein und bei einem
-nichtleeren `locations`-Katalog dort deklariert sein; ohne Katalog ist jeder
-nichtleere Ortsname erlaubt. Eine Ortsbedingung benötigt kein gleichnamiges Flag.
-Der Werttyp unterscheidet die beiden Formen: `condition: {location: Leuchtturm}`
-prüft den Ort, während `condition: {location: true}` bzw. `false` weiterhin ein
-unter `flags` deklariertes boolesches Flag namens `location` prüft. Ohne diese
-Flag-Deklaration ist die boolesche Form ungültig.
-Ortsbedingungen gelten überall, wo Bedingungen möglich sind: in Signalen, direkten Regeln,
-benannten Fragmenten, geerbten Bedingungen und `then`-Zweigen. `else` greift nur,
-wenn keiner der vorausgehenden Geschwisterzweige mit seinen gesamten Flag- und
-Ortsbedingungen passt. Die Bedingungen werden gemeinsam am jeweiligen
-Auswertungspunkt geprüft; für Signalprüfungen gelten die in Abschnitt 6
-beschriebenen Zustände. Eine Ortsbedingung löst selbst keinen Ortswechsel aus.
+`location` compares the current `world-state.location` exactly, including
+case. The name must be nonempty and declared in a nonempty `locations`
+catalog; without a catalog any nonempty name is allowed. A location condition
+does not require a flag of the same name. The value type distinguishes the two:
+`condition: {location: Leuchtturm}` checks location, while
+`condition: {location: true}` or `false` checks a Boolean flag named
+`location` declared under `flags`. Without that flag declaration the Boolean
+form is invalid. Location conditions apply wherever conditions are allowed:
+signals, direct rules, named fragments, inherited conditions and `then`
+branches. `else` applies only if no preceding sibling branch matches all its
+flag and location conditions. Conditions are checked together at the relevant
+evaluation point; signal checks use the states described in section 6. A
+location condition does not itself cause a location change.
 
-Für ausschließlich ortsabhängige Fragmentregeln ohne Signale aktiviert ein
-oberstes `flags: {}` die Metadaten-Syntax (siehe Abschnitt H):
+For location-only fragment rules without signals, top-level `flags: {}`
+enables metadata syntax (see section H):
 
 ```yaml
 flags: {}
 runtime-fragments:
   condition:
     - location: Leuchtturm
-      then: {emit-text: Beschreibe den Wind im Turm.}
-    - else: {emit-text: Die Küste bleibt in der Ferne.}
+      then: {emit-text: Describe the wind in the tower.}
+    - else: {emit-text: The coast remains in the distance.}
 ```
 
-### E. Bedingte Zweige mit `then`
+### E. Conditional branches with `then`
 
 ```yaml
 flags: {nachricht-gefunden: false, turm-besucht: false}
 runtime-fragments:
-  "Die Figur fragt nach der Wärterin":
-    emit-text: Die Hafenmeisterin antwortet vorsichtig.
+  "The character asks about the keeper":
+    emit-text: The harbor master answers cautiously.
     condition:
       - nachricht-gefunden: false
         then:
-          "Die Figur fragt ohne Kenntnis des Briefs": >
-            Verweise auf einen möglichen Hinweis im Leuchtturm.
+          "The character asks without knowing about the letter": >
+            Point to a possible clue in the lighthouse.
       - nachricht-gefunden: true
         then:
-          "Die Figur fragt mit Kenntnis des Briefs":
+          "The character asks knowing about the letter":
             condition: {turm-besucht: true}
-            emit-text: Lass die Hafenmeisterin die genannte Abfahrtszeit erklären.
+            emit-text: Have the harbor master explain the mentioned departure time.
 ```
 
-`condition` als Liste benötigt mindestens einen bedingten Zweig. Jeder solche
-Zweig enthält mindestens eine Flag- oder Ortsbedingung
-(UND) und genau ein `then`. `then` ist ein nichtleeres Mapping und darf direkt
-`emit-text`, `signal`, `set-flag`, eine weitere `condition` sowie benannte Kinder enthalten.
-Verschachtelung ist auch ohne zusätzlichen Situationsnamen möglich.
-Ein einzelner Text oder eine Liste als `then` ist ungültig.
+A list-valued `condition` requires at least one conditional branch. Each
+branch has at least one flag or location condition (AND) and exactly one
+`then`. `then` is a nonempty mapping that may directly contain `emit-text`,
+`signal`, `set-flag`, another `condition`, and named children. Nesting is
+possible without another situation name. A single text or list as `then` is
+invalid.
 
-Alle passenden Zweige gelten unabhängig voneinander: Bei mehreren erfüllten
-Bedingungen werden alle entsprechenden `then`-Inhalte berücksichtigt. Ein
-optionaler letzter Eintrag `- else: ...` greift ausschließlich dann, wenn kein
-bedingter Geschwisterzweig passt. `else` enthält wie `then` ein nichtleeres
-Mapping; es hat weder eigene Bedingungseinträge noch ein zusätzliches `then`.
+All matching branches apply independently: when several conditions match, all
+corresponding `then` contents are considered. An optional final
+`- else: ...` applies only when no conditional sibling branch matches. Like
+`then`, `else` contains a nonempty mapping; it has no conditions of its own
+and no additional `then`.
 
 ```yaml
 flags: {nachricht-gefunden: false, turm-besucht: false}
 runtime-fragments:
-  "Die Figur fragt nach weiteren Spuren":
+  "The character asks about further leads":
     condition:
       - nachricht-gefunden: true
         turm-besucht: true
         then:
-          "Die Figur verbindet Nachricht und Turmspuren":
-            emit-text: Verknüpfe die Nachricht mit den Spuren im Turm.
+          "The character connects the message and tower clues":
+            emit-text: Connect the message with the traces in the tower.
       - turm-besucht: true
         then:
-          "Die Figur erinnert sich an die Treppe":
-            emit-text: Erinnere an die lose Treppenstufe.
+          "The character remembers the stairs":
+            emit-text: Recall the loose stair.
       - else:
-          "Die Figur fragt ohne passenden Turmhinweis":
-            emit-text: Verweise zunächst auf den Leuchtturm.
+          "The character asks without a relevant tower clue":
+            emit-text: First point to the lighthouse.
 ```
 
-Sind beide Flags `true`, passen die ersten beiden Zweige; `else` entfällt.
-Ist nur `turm-besucht` wahr, passt der zweite Zweig. Ist `turm-besucht` falsch,
-passt keiner und `else` gilt. Bei diesem benannten Fragment bleiben die
-Zweiginhalte Kandidaten für die semantische Auswahl; sie werden dadurch nicht
-alle automatisch ausgegeben.
+If both flags are `true`, the first two branches match and `else` does not
+apply. If only `turm-besucht` is true, the second branch matches. If
+`turm-besucht` is false, neither matches and `else` applies. In this named
+fragment, branch contents remain candidates for semantic selection; they are
+not all automatically emitted.
 
-Bedingungen oberhalb der Liste bleiben bestehen. Zusätzliche gewöhnliche Kinder
-am Elternknoten erben dessen Kontext, aber keine Bedingung eines Geschwisterzweigs.
-Gemeinsamen Zusatztext setzt du per `emit-text` am Elternknoten.
+Conditions above the list remain in force. Additional ordinary children on the
+parent node inherit its context, but no sibling branch condition. Put shared
+additional text in `emit-text` on the parent node.
 
-Die Zweigmarker `condition`, `then`, `else` und Bedingungseinträge werden nicht Teil
-des Suchpfads. Benannte Blätter benötigen deshalb unterschiedliche vollständige
-Suchpfade, auch bei gegensätzlichen Bedingungen. Die Beispiele verwenden
-unterschiedliche Blattnamen. Direkte Regelaktionen ohne Suchpfad sind hiervon
-nicht betroffen.
+Branch markers `condition`, `then`, `else` and condition entries do not form
+part of the search path. Named leaves therefore need distinct complete search
+paths, even with opposite conditions. The examples use distinct leaf names.
+Direct rule actions without a search path are unaffected.
 
-### F. `signal` am Blatt oder an einer Gruppe
+### F. `signal` on a leaf or group
 
 ```yaml
 flags: {turm-besucht: false}
@@ -583,50 +565,48 @@ signals:
     triggers:
       - set-flag: {turm-besucht: true}
 runtime-fragments:
-  "Die Figur hat den Leuchtturm tatsächlich betreten":
+  "The character actually entered the lighthouse":
     signal: turm-betreten
-    emit-text: Beschreibe die enge Wendeltreppe.
+    emit-text: Describe the narrow spiral staircase.
 ```
 
-`signal` ist genau ein nichtleerer Name eines deklarierten Signals. An einer
-Gruppe wird der Verweis an alle Blattfragmente vererbt; mehrere Verweise können
-durch Verschachtelung zusammenkommen. Eine Liste von Signalnamen im Feld
-`signal` wird nicht unterstützt.
+`signal` is exactly one nonempty name of a declared signal. On a group, the
+reference is inherited by all leaf fragments; nesting can accumulate several
+references. A list of signal names in `signal` is not supported.
 
-Auch ein Knoten mit ausschließlich `signal` und optionaler einfacher Bedingung
-ist gültig: Er definiert einen auswählbaren Ereignispfad ohne eigenen Zusatztext.
-**Ein ausgewähltes benanntes Fragment löst seine referenzierten Signale aus.**
-Die Auswahl samt erfolgreicher Relevanzprüfung genügt als Beleg; eine weitere
-Ereignisfrage ist dafür nicht nötig. Geerbte Bedingungen, `else`-Ausschlüsse und
-die eigene Signalbedingung müssen mit den Flags vom Zugbeginn und dem aktuellen
-World-State-Ort erfüllt sein. Ein abgelehntes oder gesperrtes Fragment löst nichts aus.
-Ein eigenes `event-check` erlaubt außerdem eine unabhängige automatische Prüfung,
-wenn das Signal nicht bereits durch Fragment, direkte Regel oder Ort ausgelöst wurde.
+A node with only `signal` and an optional simple condition is valid: it defines
+a selectable event path without additional text. **A selected named fragment
+triggers its referenced signals.** Selection with a successful relevance check
+is sufficient; no additional event question is needed. Inherited conditions,
+`else` exclusions and the signal's own condition must match the flags from
+turn start and the current world-state location. A rejected or ineligible
+fragment triggers nothing. An `event-check` also allows an independent
+automatic check if the signal was not already triggered by a fragment, direct
+rule or location.
 
-Ein ausgewähltes Fragment kann Flags auch ohne separates Signal setzen:
+A selected fragment can also set flags without a separate signal:
 
 ```yaml
 flags: {friedhelm-bekannt: false}
 runtime-fragments:
-  "Die Figur begegnet Friedhelm erstmals":
+  "The character meets Friedhelm for the first time":
     condition: {friedhelm-bekannt: false}
-    emit-text: Stelle Friedhelm vor.
+    emit-text: Introduce Friedhelm.
     set-flag: {friedhelm-bekannt: true}
 ```
 
-`set-flag` ist ein nichtleeres Mapping bereits deklarierter Flags auf `true`
-oder `false`. Das Fragment darf auch ausschließlich Flags setzen. Die Zuweisungen
-werden erst bei bestätigter Auswahl des berechtigten Fragments ausgeführt;
-ein bloßer Suchkandidat setzt keine Flags. Benannte Nachfahren erben die
-Zuweisungen ihrer Gruppen; bei mehrfacher Zuweisung gilt der letzte Wert.
-Ein Fragment bleibt für diesen Durchlauf ausgewählt, auch wenn seine eigenen
-Zuweisungen seine Bedingung für spätere Durchläufe aufheben.
+`set-flag` is a nonempty mapping from previously declared flags to `true` or
+`false`. A fragment may exclusively set flags. Assignments execute only on
+confirmed selection of an eligible fragment; a mere search candidate sets no
+flags. Named descendants inherit their groups' assignments; the last value
+wins for repeated assignments. A fragment remains selected for this evaluation
+even if its own assignments make its condition false for later evaluations.
 
-### G. Direkte Regeln ohne semantische Suche
+### G. Direct rules without semantic search
 
-Direkt unter `runtime-fragments` darf ebenfalls `condition` stehen. Ein `then`
-kann sofort Text ausgeben, Flags setzen oder ein deklariertes Signal auslösen, ohne einen
-Situationsnamen, Suchtext oder eine Modellprüfung zu benötigen:
+A `condition` may also appear directly under `runtime-fragments`. A `then`
+can immediately emit text, set flags or trigger a declared signal without a
+situation name, search text or model check:
 
 ```yaml
 flags: {nachricht-gefunden: false, turm-besucht: false, spur-erklaert: false}
@@ -634,113 +614,108 @@ signals:
   spur-bereit:
     triggers:
       - set-flag: {spur-erklaert: true}
-      - emit-text: Die nächste Spur führt zum Zeugen in der Hafenkneipe.
+      - emit-text: The next lead points to the witness in the harbor tavern.
 runtime-fragments:
   condition:
     - nachricht-gefunden: true
       turm-besucht: true
       spur-erklaert: false
       then:
-        emit-text: Die Figur kann jetzt Nachricht und Turmspuren verbinden.
+        emit-text: The character can now connect the message with the tower clues.
         signal: spur-bereit
     - nachricht-gefunden: true
       then:
         condition:
           - turm-besucht: false
             then:
-              emit-text: Die Nachricht liefert einen Anlass, den Turm zu besuchen.
+              emit-text: The message gives a reason to visit the tower.
           - else:
-              emit-text: Halte den Zusammenhang zwischen Nachricht und Turm präsent.
+              emit-text: Keep the connection between the message and tower in view.
     - else:
-        emit-text: Die Nachricht der Wärterin ist noch nicht bekannt.
-  "Die Figur fragt den Seemann nach der Abfahrt": >
-    Er hat zur dritten Glocke ein kleines Boot an der Mole gesehen.
+        emit-text: The keeper’s message is not yet known.
+  "The character asks the sailor about the departure": >
+    He saw a small boat at the breakwater at the third bell.
 ```
 
-Die Regeln werden vor der Embedding-Suche anhand eines gemeinsamen
-Schnappschusses von Flags und aktuellem Ort ausgewertet; auch die Berechtigung zur Fragmentauswahl
-verwendet diese Ausgangswerte. Alle passenden Zweige gelten, auch in
-verschachtelten Listen. Hier greifen bei drei passenden Voraussetzungen beide
-äußeren `then`-Zweige; der zweite enthält wiederum eine eigene Entscheidung.
-Direkte Aktionen benötigen keinen passenden Erzählfokus und keine
-Relevanzbestätigung durch das Modell. Der benannte Seemann-Hinweis bleibt ein
-gewöhnlicher Kandidat für die semantische Auswahl.
+Rules are evaluated before embedding search using a shared snapshot of flags
+and the current location; fragment eligibility uses these initial values too.
+All matching branches apply, including in nested lists. Here both outer
+`then` branches apply when the three requirements match; the second contains
+another decision. Direct actions require neither matching narrative focus nor
+model relevance confirmation. The named sailor hint remains an ordinary
+candidate for semantic selection.
 
-Ein direktes `signal` führt die deklarierten Signalaktionen aus; für diese
-Auslösung wird keine Ereignisfrage an das Modell gestellt. Eine eigene
-`condition` der Signaldefinition muss ebenfalls im Ausgangszustand erfüllt sein.
-Verwende die Flag- und Ortsbedingungen der Regel und des Signals, um die Voraussetzungen
-eindeutig festzulegen. Ein Signal ohne `event-check` wird nicht zusätzlich unabhängig als Ereignis geprüft.
-Auch ein `then: {set-flag: {spur-erklaert: true}}` ohne Text oder Signal
-ist eine gültige direkte Regel. Root-Zuweisungen werden nicht nochmals an
-benannte Kinder vererbt. Nach Orts-Eintrittsaktionen folgen die Zuweisungen
-direkter Regeln, dann die des ausgewählten Fragments und schließlich die
-übrigen Signalaktionen. Bei Konflikten gewinnt die zuletzt ausgeführte Zuweisung.
-Es gibt keine Kettenreaktion zwischen Regeln desselben Durchlaufs: Ein dabei
-neu gesetztes Flag macht einen vorher unpassenden Zweig erst bei einer
-späteren Auswertung passend.
+A direct `signal` executes the declared signal actions without an event
+question to the model. A signal definition's own `condition` must also match
+the initial state. Use rule and signal flag and location conditions to define
+requirements precisely. A signal without `event-check` is not additionally
+checked independently as an event. A `then: {set-flag: {spur-erklaert: true}}`
+without text or signal is also a valid direct rule. Root assignments are not
+inherited again by named children. Location-entry actions are followed by
+assignments from direct rules, then the selected fragment, then remaining
+signal actions. In a conflict the last executed assignment wins. There is no
+cascade among rules in the same evaluation: a newly set flag only makes a
+previously nonmatching branch eligible on a later evaluation.
 
-Direkte Texte werden bei jedem passenden Durchlauf erneut ausgegeben.
-Im Beispiel verhindert `spur-erklaert: false` zusammen mit der gleichnamigen
-Flag-Zuweisung die Wiederholung des ersten Zweigs. Der zweite Zweig hat keinen
-solchen Schutz und bleibt wiederholbar. Alle Hinweise gelten für folgende
-Antworten; sie ändern keine bereits sichtbare Erzählung. Im verborgenen Kontext
-stehen zuerst direkte Regeltexte in Deklarations-/Durchlaufreihenfolge, dann
-Texte ausgelöster Signale in Signal- und Triggerreihenfolge und zuletzt das
-semantisch ausgewählte Fragment. Die Berechtigung dieses Fragments wird anhand des gemeinsamen
-Ausgangszustands geprüft; spätere Zuweisungen ändern diese Auswahl nicht.
+Direct texts are emitted again on every matching evaluation. In the example,
+`spur-erklaert: false` together with the flag assignment prevents repetition
+of the first branch. The second has no such protection and can repeat. All
+guidance applies to following answers; it does not change visible narration.
+The hidden context contains direct rule texts first in declaration/evaluation
+order, then triggered signal texts in signal and trigger order, and finally the
+semantically selected fragment. Its eligibility is checked against the shared
+initial state; later assignments do not change that selection.
 
-Auch `then` mit benannten Kindern ist erlaubt. Diese Kinder bleiben
-retrievalbasierte Fragmente und erben die Flag- und Ortsbedingungen der Regel. Direkte
-`emit-text`-, `signal`- und `set-flag`-Aktionen ohne benannten Pfad werden dagegen dort
-verarbeitet und nicht nochmals an die benannten Kinder vererbt. Innerhalb
-benannter Fragmentgruppen gilt weiterhin die Text-, Signal- und Flag-Zuweisungsvererbung aus
-Abschnitt C und F. Ein direktes `emit-text` ohne benannten Pfad ist eine
-Regelaktion; ein `emit-text` unter einem benannten Fragment ist dessen
-Auswahlkontext.
+A `then` with named children is also allowed. These remain retrieval-based
+fragments and inherit the rule's flag and location conditions. Direct
+`emit-text`, `signal` and `set-flag` actions without a named path are
+processed there and are not inherited again by named children. Within named
+fragment groups, the text, signal and flag assignment inheritance in sections
+C and F still applies. Direct `emit-text` without a named path is a rule
+action; `emit-text` beneath a named fragment is its selection context.
 
-### H. Kompatibilitätsregel für Metadaten-Namen
+### H. Compatibility rule for metadata names
 
 ```yaml
 runtime-fragments:
   Leuchtturm:
-    condition: Die Tür ist verschlossen.
-    emit-text: Die Stufen sind nass.
-    signal: Eine Glocke ertönt.
+    condition: The door is locked.
+    emit-text: The steps are wet.
+    signal: A bell rings.
 ```
 
-Ohne oberstes `flags` oder `signals` sind das drei gewöhnliche Textblätter
-mit den Pfaden `Leuchtturm / condition`, `Leuchtturm / emit-text` und
-`Leuchtturm / signal`. Sobald eines dieser obersten Felder existiert,
-werden diese Namen sowie `set-flag` als Metadaten interpretiert, auch direkt auf der obersten
-Ebene unter `runtime-fragments`. Andere Schlüssel bleiben Fragmentnamen.
-Verwende für neue Spiele aussagekräftige Situationsnamen und deklariere
-`flags: {}`, wenn du Metadaten ohne tatsächliche Flags nutzen möchtest.
+Without top-level `flags` or `signals`, these are three ordinary text leaves
+with paths `Leuchtturm / condition`, `Leuchtturm / emit-text` and
+`Leuchtturm / signal`. Once either top-level field exists, these names and
+`set-flag` are interpreted as metadata, including directly at the top level
+under `runtime-fragments`. Other keys remain fragment names. For new games,
+use descriptive situation names and declare `flags: {}` if you want metadata
+without actual flags.
 
-### I. Leere und ungültige Fragmente
+### I. Empty and invalid fragments
 
-`runtime-fragments: {}` ist zulässig. Jede sonstige Gruppe braucht mindestens
-ein gültiges Blatt oder passende eigene Metadaten. Ungültig sind insbesondere:
+`runtime-fragments: {}` is valid. Every other group needs at least one valid
+leaf or suitable metadata of its own. In particular, these are invalid:
 
-- Leere Texte, Zahlen, boolesche Werte und Listen als Fragmentwerte.
-- Leere Untergruppen und Knoten mit ausschließlich einer einfachen Bedingung.
-- Unbekannte Flag- oder Signalverweise.
-- Leere Bedingungs-Mappings, unbekannte Flags und nichtboolesche Flag-Sollwerte.
-- Leere oder nichttextuelle Ortsbedingungen sowie unbekannte Orte bei vorhandenem `locations`-Katalog.
-- Leere Zweiglisten oder leere `then`-/`else`-Mappings.
-- Bedingte Zweige ohne Bedingungen oder ohne `then`.
-- Mehrere `else`-Einträge, `else` vor dem Listenende oder ein `else` ohne vorherigen bedingten Zweig.
-- Zusätzliche Felder neben `else` oder unzulässige Felder statt Flag- oder Ortseinträgen in einem bedingten Zweig.
-- Doppelte vollständige Suchpfade benannter Blätter, auch zwischen bedingten Zweigen.
+- Empty text, numbers, Boolean values and lists as fragment values.
+- Empty subgroups and nodes containing only a simple condition.
+- Unknown flag or signal references.
+- Empty condition mappings, unknown flags and non-Boolean flag target values.
+- Empty or nontext location conditions, or unknown locations when a `locations` catalog exists.
+- Empty branch lists or empty `then`/`else` mappings.
+- Conditional branches without conditions or without `then`.
+- Multiple `else` entries, `else` before the end of the list, or `else` without a preceding conditional branch.
+- Additional fields beside `else`, or invalid fields in place of flag or location entries in a conditional branch.
+- Duplicate complete search paths for named leaves, including across conditional branches.
 
-Eine besondere Objektform `{fragment: Text}` gibt es derzeit nicht. Als
-verschachteltes Mapping kann sie zwar geparst werden, aber `fragment` wird dann
-ein gewöhnlicher zusätzlicher Suchpfad-Abschnitt. Verwende direkte Textblätter
-oder `emit-text`, wenn du den Text eines benannten Fragments angeben möchtest.
+There is currently no special object form `{fragment: Text}`. It can be
+parsed as a nested mapping, but `fragment` then becomes an ordinary additional
+search-path segment. Use direct text leaves or `emit-text` to specify the text
+of a named fragment.
 
-## 8. Komplettes Spiel zum Kopieren
+## 8. Complete game to copy
 
-Speichere den gesamten folgenden Block als `das-verschwundene-licht.md`:
+Save the entire block below as `das-verschwundene-licht.md`:
 
 ```markdown
 ---
@@ -748,12 +723,12 @@ initial-situation:
   world-state:
     location: Kai
   setting: |
-    Du stehst am Kai von Nebelhafen. Nebel verhüllt die Mole.
-    Die Hafenmeisterin bittet dich, nach der verschwundenen Wärterin zu suchen.
+    You stand on the quay at Nebelhafen. Fog shrouds the breakwater.
+    The harbor master asks you to look for the missing keeper.
 locations:
-  Kai: Hafenplatz mit Zugang zu Mole und Hafenkneipe.
-  Leuchtturm: Steinturm mit Treppe und Laternenkammer am Ende der Mole.
-  Hafenkneipe: Gasthaus, in dem Seeleute die nächtlichen Abfahrten beobachten.
+  Kai: Harbor square with access to the breakwater and tavern.
+  Leuchtturm: Stone tower with stairs and a lantern room at the end of the breakwater.
+  Hafenkneipe: Tavern where sailors observe nighttime departures.
 flags:
   turm-besucht: false
   nachricht-gefunden: false
@@ -762,35 +737,35 @@ flags:
 signals:
   turm-betreten:
     event-check: >
-      Die Figur hat in diesem Austausch den Leuchtturm tatsächlich betreten.
-      Eine Absicht, Außenansicht oder ein gescheiterter Versuch genügt nicht.
+      The character actually entered the lighthouse during this exchange.
+      Intention, viewing from outside or a failed attempt is insufficient.
     condition: {turm-besucht: false}
     triggers:
       - set-flag: {turm-besucht: true}
   nachricht-entdeckt:
     event-check: >
-      Die Figur hat in diesem Austausch die Nachricht der Wärterin tatsächlich
-      gefunden oder gelesen. Bloßes Suchen genügt nicht.
+      The character actually found or read the keeper’s message during this
+      exchange. Searching alone is insufficient.
     condition: {nachricht-gefunden: false}
     triggers:
       - set-flag: {nachricht-gefunden: true}
       - emit-text: >
-          Die Figur kennt jetzt die Nachricht der Wärterin.
-          Verknüpfe ihre nächsten Nachfragen mit der Abfahrt zur dritten Glocke.
+          The character now knows the keeper’s message.
+          Connect their next questions to the departure at the third bell.
   misstrauen-geweckt:
-    event-check: Die Hafenmeisterin ist durch das Verhalten der Figur tatsächlich misstrauisch geworden.
+    event-check: The harbor master actually became suspicious because of the character’s behavior.
     condition: {hafenmeisterin-misstrauisch: false}
     triggers:
       - set-flag: {hafenmeisterin-misstrauisch: true}
   misstrauen-abgebaut:
-    event-check: Die zuvor misstrauische Hafenmeisterin hat sich durch das Verhalten der Figur tatsächlich beruhigt.
+    event-check: The previously suspicious harbor master actually calmed down because of the character’s behavior.
     condition: {hafenmeisterin-misstrauisch: true}
     triggers:
       - set-flag: {hafenmeisterin-misstrauisch: false}
   spur-bereit:
     triggers:
       - set-flag: {spur-erklaert: true}
-      - emit-text: Verknüpfe die bekannte Abfahrtszeit mit dem Zeugen in der Hafenkneipe.
+      - emit-text: Connect the known departure time with the witness in the harbor tavern.
 runtime-fragments:
   condition:
     - nachricht-gefunden: true
@@ -799,126 +774,123 @@ runtime-fragments:
       then:
         signal: spur-bereit
     - else:
-        emit-text: Gib weitere Hinweise passend zum bisherigen Wissensstand.
-  "Die Figur sucht einen Zugang zum Leuchtturm": >
-    Die Tür klemmt. Nenne Rost am Schloss und einen erreichbaren Seiteneingang.
-  "Die Figur untersucht das Innere des Leuchtturms":
-    emit-text: Halte Wind, feuchten Stein und das Knarren der Treppe präsent.
+        emit-text: Give further clues suited to what is known so far.
+  "The character looks for a way into the lighthouse": >
+    The door is stuck. Mention rust on the lock and an accessible side entrance.
+  "The character examines the lighthouse interior":
+    emit-text: Keep the wind, damp stone and creaking stairs in view.
     condition:
       - nachricht-gefunden: false
         then:
-          "Die Figur sucht unter der Treppe nach Hinweisen": >
-            Lass sie hinter einer losen Stufe die Nachricht der Wärterin finden.
+          "The character searches under the stairs for clues": >
+            Let them find the keeper’s message behind a loose step.
       - nachricht-gefunden: true
         then:
-          "Die Figur verfolgt die Spur aus der gefundenen Nachricht": >
-            Verknüpfe die erwähnte Abfahrtszeit mit einem Zeugen in der Hafenkneipe.
-  "Die Figur spricht mit der Hafenmeisterin":
+          "The character follows the lead from the discovered message": >
+            Connect the mentioned departure time to a witness in the harbor tavern.
+  "The character speaks with the harbor master":
     condition:
       - hafenmeisterin-misstrauisch: false
         then:
-          "Die Hafenmeisterin ist gesprächsbereit": Sie beantwortet sachliche Fragen offen.
+          "The harbor master is willing to talk": She answers factual questions openly.
       - hafenmeisterin-misstrauisch: true
         then:
-          "Die Hafenmeisterin ist misstrauisch": >
-            Lass sie zurückhaltend antworten; eine glaubhafte Entschuldigung kann helfen.
+          "The harbor master is suspicious": >
+            Have her answer cautiously; a credible apology can help.
 ---
-# Das verschwundene Licht
+# The Missing Light
 
-## Spielleitung
-Leite ein geheimnisvolles Hafenabenteuer auf Deutsch.
-Antworte knapp, beschreibe konkrete Folgen und akzeptiere plausible Lösungswege.
-Entscheidungen der Spielfigur trifft der Mensch.
+## Game Master
+Lead a mysterious harbor adventure in English.
+Answer concisely, describe concrete consequences, and accept plausible solutions.
+The human makes the character’s decisions.
 
-## Welt und Geheimnis
-Der Leuchtturm von Nebelhafen ist seit drei Nächten dunkel.
-Die Wärterin hat eine Schmugglergruppe verfolgt und sich versteckt.
-Ihre Nachricht unter der Treppe lautet: „Fragt im schiefen Mast nach der
-Abfahrt zur dritten Glocke.“ Ein Seemann in der Hafenkneipe kennt ihr Versteck.
-Die Hafenmeisterin möchte helfen, fürchtet aber einen Skandal.
+## World and Mystery
+The Nebelhafen lighthouse has been dark for three nights.
+The keeper pursued a group of smugglers and went into hiding.
+Her message under the stairs reads: “Ask at the Crooked Mast about the
+departure at the third bell.” A sailor in the tavern knows where she is hiding.
+The harbor master wants to help but fears a scandal.
 
-## Verlauf und Ende
-Gib Hinweise schrittweise. Eine passende Suche kann den Brief auch ohne
-genau vorgegebene Formulierung finden. Die Figur darf kreative Zugänge nutzen.
-Beende das Abenteuer, wenn die Wärterin gefunden und das dunkle Licht erklärt ist.
+## Progress and Ending
+Give clues gradually. A suitable search can find the letter even without
+a prescribed wording. The character may use creative approaches.
+End the adventure when the keeper is found and the dark light is explained.
 ```
 
-Dieses Beispiel kombiniert strukturierte Ortswechsel, einmalige Fortschritte,
-einen reversiblen sozialen Zustand, eigenständige Ereignisprüfungen und eine
-einmalige direkte Regel mit mehreren UND-Voraussetzungen sowie ein `else` als
-Fallback. Dazu kommen geerbte und bedingte Hinweise. Das Signal `spur-bereit`
-wird durch die direkte Regel ausgelöst; die übrigen Signale prüfen Ereignisse. Das Ende bleibt eine erzählerische Regel;
-ein eigenes Engine-Feld `ending` oder ein automatischer Abschluss-Trigger existiert nicht.
+This example combines structured location changes, one-shot progress, a
+reversible social state, independent event checks, and a one-shot direct rule
+with multiple AND requirements and an `else` fallback. It also includes
+inherited and conditional guidance. The direct rule triggers `spur-bereit`;
+the other signals check events. The ending remains a narrative rule: there is
+no dedicated `ending` engine field or automatic completion trigger.
 
-## 9. Grenzen des Formats und häufige Fehler
+## 9. Format limits and common mistakes
 
-| Wunsch oder Schreibweise | Aktuell unterstützter Weg / Grenze |
+| Desired behavior or syntax | Currently supported approach / limit |
 | --- | --- |
-| Mehrere Voraussetzungen gleichzeitig | Mehrere Flag- und/oder Ortseinträge im `condition`-Mapping oder im bedingten Listeneintrag vor `then` gelten als UND; auch geerbte Bedingungen müssen erfüllt sein |
-| Alternativen | Alle passenden `condition`-/`then`-Zweige gelten; optionales abschließendes `else` nur ohne Treffer; Ereignisalternativen als Text in einer Signalbeschreibung |
-| `and`, `or`, `not` als YAML-Operatoren | Keine solchen Operatoren; UND durch mehrere Bedingungen, Alternativen durch Zweige, Flag-Negation durch `false`, Orts-Fallbacks durch Zweige/`else` |
-| Flag umschalten oder zählen | Nur feste `set-flag`-Zuweisungen; für Rücksetzen eigenes Signal, keine `toggle`-/Zähleraktion |
-| Gegenstand vergeben, teleportieren, Dialog öffnen | Kein solcher strukturierter Trigger; erzählerisch beschreiben |
-| Ortsbedingung wie `condition: {location: Kai}` | Exakter Vergleich mit dem aktuellen `world-state.location`; auch mit Flag-Bedingungen kombinierbar |
-| Hinweise anhand von Flags und/oder Ort ausführen | Direkte Regeln unter `runtime-fragments.condition`; benannte Fragmente bleiben semantisch ausgewählte Kandidaten |
-| Inventar, Personen, Fakten als `world-state`-Felder | Im Frontmatter ungültig; im Markdown beschreiben, binäre Fortschritte als Flags |
-| Signal mit leerem `triggers` | Ungültig; mindestens eine `set-flag`- oder `emit-text`-Aktion erforderlich |
-| `set-flag: {}` | Ungültig; eine `set-flag`-Aktion muss mindestens ein deklariertes Flag zuweisen |
-| `setting` oder `emit-text` als leerer Text | Ungültig, wenn angegeben; weglassen, wenn nicht benötigt |
-| Unbekannte oberste YAML-Felder wie `title` oder `inventory` | Der Parser ignoriert sie; sie konfigurieren kein Spielsystem |
+| Multiple requirements | Multiple flag and/or location entries in a `condition` mapping or conditional list entry before `then` mean AND; inherited conditions must also match |
+| Alternatives | All matching `condition`/`then` branches apply; optional final `else` only without a match; describe event alternatives as text in a signal |
+| `and`, `or`, `not` as YAML operators | No such operators; use multiple conditions for AND, branches for alternatives, `false` for flag negation and branches/`else` for location fallbacks |
+| Toggle or count a flag | Only fixed `set-flag` assignments; use a separate signal to reset; no `toggle` or counter action |
+| Give an item, teleport, open dialogue | No such structured trigger; describe it narratively |
+| Location condition such as `condition: {location: Kai}` | Exact comparison with current `world-state.location`; can be combined with flag conditions |
+| Run guidance based on flags and/or location | Direct rules under `runtime-fragments.condition`; named fragments remain semantically selected candidates |
+| Inventory, characters, facts as `world-state` fields | Invalid in frontmatter; describe in Markdown, use flags for binary progress |
+| Signal with empty `triggers` | Invalid; at least one `set-flag` or `emit-text` action is required |
+| `set-flag: {}` | Invalid; a `set-flag` action must assign at least one declared flag |
+| Empty `setting` or `emit-text` | Invalid when specified; omit when not needed |
+| Unknown top-level YAML fields such as `title` or `inventory` | Ignored by the parser; they do not configure a game system |
 
-Innerhalb von `initial-situation`, `world-state` und Signaldefinitionen werden
-unbekannte Felder abgelehnt. In Fragmentgruppen werden andere Schlüssel hingegen
-als Kinder interpretiert. Ein Tippfehler kann dort einen neuen Suchpfad erzeugen.
-YAML-Einrückung ist deshalb Teil des Formats: Verwende Leerzeichen und halte
-die gezeigte Hierarchie ein. Namen und Texte mit Doppelpunkten oder anderen
-YAML-Sonderzeichen solltest du zitieren. Doppelte Mapping-Schlüssel vermeiden.
+Unknown fields inside `initial-situation`, `world-state` and signal
+definitions are rejected. In fragment groups, other keys are interpreted as
+children instead. A typo can therefore create a new search path. YAML
+indentation is part of the format: use spaces and preserve the shown hierarchy.
+Quote names and text containing colons or other YAML special characters. Avoid
+duplicate mapping keys.
 
-## 10. Das eigene Spiel prüfen
+## 10. Testing your game
 
-1. Importiere die Datei. Importfehler betreffen oft YAML-Typen, unbekannte
-   Verweise, doppelte Fragmentpfade oder einen Startort außerhalb des Katalogs.
-2. Starte eine neue Sitzung und prüfe Einführung, Startort und Startflags.
-3. Teste erfolgreiche Ereignisse mit verschiedenen natürlichen Formulierungen.
-   Prüfe auch Absicht, gescheiterten Versuch und bloße Erwähnung als Gegenfälle.
-4. Prüfe Ortswechsel und Flag-Zustände im Debug-Panel. Bei Signalen sind die
-   `signal_check`-Ergebnisse, ausgelöste Signale und tatsächlich angewendete
-   Flag-Zuweisungen aussagekräftiger als eine passende Erzählung allein.
-   Eigene Karten zeigen jedes erkannte Signal, jede Flag-Zuweisung mit altem
-   und zugewiesenem Wert sowie jeden emittierten Text mit seiner Herkunft.
-   Auch erneute Zuweisungen desselben Werts bleiben sichtbar. Textkarten
-   unterscheiden Signaltexte, direkte Flag-Regeln und ausgewählte Runtime-Fragmente.
-5. Prüfe bedingte Fragmente vor und nach einer Zustandsänderung. Beachte ihre
-   Auswahl für folgende Antworten und die fehlende Signalkaskade im selben Zug.
-   Prüfe direkte Regeln ohne passenden Erzählfokus, mehrere gleichzeitig passende
-   Zweige und `else` ausschließlich ohne passenden Geschwisterzweig.
-   Prüfe bei `emit-text`-Signalen den verborgenen Kontext der nächsten Runde
-   und bei einmaligen Ereignissen, dass Bedingung und Flag-Zuweisung eine
-   Wiederholung verhindern.
-6. Lade die Seite neu und setze den Spielstand fort. Orte, Flags und Verlauf
-   sollen erhalten bleiben. Teste anschließend auch eine frische Sitzung.
+1. Import the file. Import errors often concern YAML types, unknown references,
+   duplicate fragment paths or a starting location outside the catalog.
+2. Start a new session and check the introduction, starting location and flags.
+3. Test successful events using different natural phrasings. Also check intention,
+   failed attempts and mere mentions as negative cases.
+4. Check location changes and flag states in the debug panel. For signals,
+   `signal_check` results, triggered signals and applied flag assignments are
+   stronger evidence than matching narration alone. Separate cards show each
+   detected signal, each flag assignment with old and assigned values, and each
+   emitted text with its source. Reassignments of the same value remain visible.
+   Text cards distinguish signal text, direct flag rules and selected fragments.
+5. Check conditional fragments before and after a state change. Note their
+   selection for later responses and the absence of same-turn signal cascades.
+   Check direct rules without matching narrative focus, multiple matching
+   branches, and `else` only without a matching sibling. For `emit-text`
+   signals check the next turn's hidden context; for one-shot events check that
+   the condition and flag assignment prevent repetition.
+6. Reload and resume the saved game. Locations, flags and history should
+   persist. Also test a fresh session.
 
-Eine gültige Datei garantiert keine perfekte Ereigniserkennung durch jedes
-lokale Modell. Klare, breit formulierte Ereignisbeschreibungen und gut
-unterscheidbare Suchpfade machen das Spiel leichter prüfbar.
+A valid file does not guarantee perfect event detection by every local model.
+Clear, broadly phrased event descriptions and distinct search paths make the
+game easier to test.
 
-Weitere Vorlagen:
+More examples:
 
-- [Komplexes Leuchtturm-Spiel](../examples/test-game.md) mit verschachtelten
-  Fragmenten und Signalverweisen ohne explizite Ereignisbeschreibungen.
-- [Signal-Test-Spiel](../examples/signal-test-game.md) mit eigenständigen Signalen.
-- [Manuelle Signal-Prüfanleitung](../examples/signal-test-game-testing.md).
+- [Complex lighthouse game](../examples/test-game.md) with nested fragments and
+  signal references without explicit event descriptions.
+- [Signal test game](../examples/signal-test-game.md) with independent signals.
+- [Manual signal test guide](../examples/signal-test-game-testing.md).
 
-## 11. Grundlage dieser Referenz
+## 11. Basis of this reference
 
-Die beschriebenen Varianten stammen aus dem aktuellen Parser und der Laufzeit,
-nicht aus geplanten Erweiterungen:
+The described forms come from the current parser and runtime:
 
-- [Szenario-Parser](../web/src/jsMain/kotlin/de/aidadventure/web/persistence/ScenarioFrontmatter.kt)
-  und [Parser-Tests](../web/src/jsTest/kotlin/de/aidadventure/web/persistence/ScenarioFrontmatterTest.kt).
-- [Dateiimport](../web/src/jsMain/kotlin/de/aidadventure/web/persistence/ScenarioImport.kt).
-- [Signalprüfung](../server/src/main/kotlin/de/aidadventure/server/runtimefragments/SignalChecks.kt)
-  und [Bedingungsfilter und Flag-Zuweisungen](../server/src/main/kotlin/de/aidadventure/server/runtimefragments/RuntimeSignalState.kt).
-- [Fragmentauswahl](../server/src/main/kotlin/de/aidadventure/server/runtimefragments/RuntimeFragmentResolver.kt),
-  [World-State-Auswertung](../server/src/main/kotlin/de/aidadventure/server/worldstate/WorldStateResolver.kt)
-  und [Prompt-Aufbau](../server/src/main/kotlin/de/aidadventure/server/game/PromptFactory.kt).
+- [Scenario parser](../web/src/jsMain/kotlin/de/aidadventure/web/persistence/ScenarioFrontmatter.kt)
+  and [parser tests](../web/src/jsTest/kotlin/de/aidadventure/web/persistence/ScenarioFrontmatterTest.kt).
+- [File import](../web/src/jsMain/kotlin/de/aidadventure/web/persistence/ScenarioImport.kt).
+- [Signal checks](../server/src/main/kotlin/de/aidadventure/server/runtimefragments/SignalChecks.kt)
+  and [condition filtering and flag assignments](../server/src/main/kotlin/de/aidadventure/server/runtimefragments/RuntimeSignalState.kt).
+- [Fragment selection](../server/src/main/kotlin/de/aidadventure/server/runtimefragments/RuntimeFragmentResolver.kt),
+  [world-state evaluation](../server/src/main/kotlin/de/aidadventure/server/worldstate/WorldStateResolver.kt)
+  and [prompt construction](../server/src/main/kotlin/de/aidadventure/server/game/PromptFactory.kt).

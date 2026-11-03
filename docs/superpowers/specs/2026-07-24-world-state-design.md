@@ -1,22 +1,22 @@
-# Weltzustand
+# World State
 
-## Ziel
+## Goal
 
-Eine Browser-Session besitzt einen kleinen, persistierten und versionsfähigen Weltzustand. Er gibt dem Primary-Modell vor jeder Spieleraktion eine kompakte, verständliche Ausgangslage. Ein separates Secondary-Modell wertet nach der sichtbaren Antwort den vorherigen Zustand, die Aktion und die Antwort aus und schlägt einen JSON-Patch vor.
+A browser session has a small, persisted and versioned world state. It gives the primary model a compact, understandable starting point before each player action. After the visible response, a separate secondary model evaluates the previous state, action and response and proposes a JSON patch.
 
-## Vertrag
+## Contract
 
-- Der kanonische Zustand besteht aus einer Entitätskartei und aktuellen Fakten. Entitäten können während des Spiels entstehen; IDs sind intern, Namen und Kurzbeschreibungen stehen im Prompt.
-- Das Secondary-Modell erzeugt ausschließlich einen begrenzten Patch. JSON-Schema/GBNF erzwingt dessen Form; Kotlin prüft Revision, Referenzen, Grenzen und widersprüchliche Änderungen vor dem Commit.
-- Neue Entitäten brauchen eine explizite Create-Operation. Unklare Referenzen ändern den Zustand nicht.
-- State-Auflösung läuft nach vollständigem Primary-Stream. Der nächste Warmup/Prefill wartet im ersten Experiment auf ihren Abschluss; gemessen werden Dauer, Patch-Ergebnis und Snapshot-Größe, ohne Spieltext zu loggen.
-- Der Primary-Prompt enthält stets Instruction, Szenario, kanonische Historie, deterministischen State-Snapshot und neue Aktion. Warmup ist exakt der Prefix desselben Turns.
-- IndexedDB bleibt Eigentümer des States. Der Server bleibt zustandslos.
+- The canonical state consists of an entity registry and current facts. Entities can arise during play; IDs are internal, while names and short descriptions appear in the prompt.
+- The secondary model generates only a bounded patch. JSON Schema/GBNF enforces its shape; Kotlin checks revision, references, bounds and conflicting changes before commit.
+- New entities require an explicit create operation. Ambiguous references do not change state.
+- State resolution runs after the primary stream completes. In the first experiment the next warmup/prefill waits for it; duration, patch result and snapshot size are measured without logging game text.
+- The primary prompt always contains instruction, scenario, canonical history, deterministic state snapshot and new action. Warmup is exactly the prefix of the same turn.
+- IndexedDB owns the state. The server remains stateless.
 
-## Umfang der ersten Lieferung
+## First delivery scope
 
-Entity-Kartei, Ort, Besitz, Status, kurze offene Fakten und begrenzte Entitätsanlage. Keine Kampfregeln, Zeituhren, Memory-Retrieval oder automatische Reparatur sichtbarer Prosa.
+Entity registry, location, possessions, status, short open facts and bounded entity creation. No combat rules, clocks, memory retrieval or automatic repair of visible prose.
 
-## Laufzeit
+## Runtime
 
-`server.sh` startet Primary- und Secondary-`llama-server` mit getrennten Modellpfaden, Ports und Thread-Budgets. Der Sekundärport wird als Server-Option weitergegeben. Beide Kinder werden bei Ende des Launchers beendet.
+`server.sh` starts primary and secondary `llama-server` processes with separate model paths, ports and thread budgets. The secondary port is passed as a server option. Both children terminate when the launcher ends.
