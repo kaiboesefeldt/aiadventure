@@ -1,6 +1,7 @@
 package de.aidadventure.server.runtimefragments
 
 import de.aidadventure.server.EmbeddingService
+import de.aidadventure.server.embedding.BoundedTextEmbedding
 import de.aidadventure.server.VectorStore
 import de.aidadventure.server.llamacpp.escapeForLlmTrace
 import de.aidadventure.server.model.RuntimeFragmentDefinition
@@ -117,7 +118,7 @@ class RuntimeFragmentIndexRegistry private constructor(
                                 MATCH_TEXT_FIELD to definition.matchText,
                                 FRAGMENT_FIELD to definition.fragment,
                             ),
-                            vector = embedding.embed(definition.matchText),
+                            vector = BoundedTextEmbedding(embedding).embedPassage(definition.matchText),
                         )
                     }
             }

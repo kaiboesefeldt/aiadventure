@@ -59,6 +59,12 @@ cp .env.example .env
 
 Open [http://127.0.0.1:8080/](http://127.0.0.1:8080/). See the [running guide](docs/running.md) for configuration, model wrappers, diagnostics and context management.
 
+Runtime-fragment matching downloads the ONNX conversion of
+[`intfloat/multilingual-e5-small`](https://huggingface.co/intfloat/multilingual-e5-small)
+on first use. Its limit is 512 tokens. Text is split into chunks of at most
+512 characters, but particularly token-dense chunks can still be truncated
+by the tokenizer, including the model's input prefix and special tokens.
+
 ## Load an example
 
 The [scenario authoring guide](docs/authoring-scenarios.md) describes supported

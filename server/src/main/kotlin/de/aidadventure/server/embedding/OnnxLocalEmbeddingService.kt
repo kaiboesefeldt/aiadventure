@@ -19,7 +19,11 @@ class OnnxLocalEmbeddingService private constructor(
 
     override val dimension: Int by lazy { runBlocking { embed("determine embedding size").size } }
 
-    override suspend fun embed(text: String): FloatArray = predictorMutex.withLock { predictor.predict(text) }
+    override suspend fun embed(text: String): FloatArray = predict("query: $text")
+
+    override suspend fun embedPassage(text: String): FloatArray = predict("passage: $text")
+
+    private suspend fun predict(text: String): FloatArray = predictorMutex.withLock { predictor.predict(text) }
 
     override fun close() {
         runBlocking {
@@ -35,7 +39,7 @@ class OnnxLocalEmbeddingService private constructor(
     }
 
     companion object {
-        const val DEFAULT_MODEL_URL = "djl://ai.djl.huggingface.rust/efederici/multilingual-e5-small-4096"
+        const val DEFAULT_MODEL_URL = "djl://ai.djl.huggingface.onnxruntime/intfloat/multilingual-e5-small"
 
         var embeddingServiceFactory: Factory? = null
 
