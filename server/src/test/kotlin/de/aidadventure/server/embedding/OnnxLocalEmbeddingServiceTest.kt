@@ -31,6 +31,7 @@ class OnnxLocalEmbeddingServiceTest {
 
                 // act
                 val result = service.embed("hello world")
+                service.embedPassage("hello world")
 
                 service.close()
 
@@ -39,15 +40,16 @@ class OnnxLocalEmbeddingServiceTest {
                 assertContentEquals(floatArrayOf(0.1f, 0.2f, 0.3f), result)
                 verify(exactly = 1) { Criteria.builder() }
                 verify(exactly = 1) { criteriaBuilder.optModelUrls("custom-model") }
-                verify(exactly = 1) { predictor.predict("determine embedding size") }
-                verify(exactly = 1) { predictor.predict("hello world") }
+                verify(exactly = 1) { predictor.predict("query: determine embedding size") }
+                verify(exactly = 1) { predictor.predict("query: hello world") }
+                verify(exactly = 1) { predictor.predict("passage: hello world") }
                 verify(exactly = 1) { predictor.close() }
                 verify(exactly = 1) { model.close() }
             }
         }
 
     @Test
-    fun `uses supported huggingface rust zoo by default`() =
+    fun `uses supported huggingface onnx zoo by default`() =
         mockkStatic(Criteria::class, ModelZoo::class) {
             runTest {
                 val criteria = mockk<Criteria<String, FloatArray>>()
@@ -80,7 +82,10 @@ class OnnxLocalEmbeddingServiceTest {
                 2.0f,
                 3.0f,
             )
+        every { predictor.predict("query: determine embedding size") } returns floatArrayOf(1.0f, 2.0f, 3.0f)
         every { predictor.predict("hello world") } returns floatArrayOf(0.1f, 0.2f, 0.3f)
+        every { predictor.predict("query: hello world") } returns floatArrayOf(0.1f, 0.2f, 0.3f)
+        every { predictor.predict("passage: hello world") } returns floatArrayOf(0.1f, 0.2f, 0.3f)
         every { predictor.close() } just Runs
         return predictor
     }

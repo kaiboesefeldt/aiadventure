@@ -11,13 +11,17 @@ class BoundedTextEmbedding(
         require(maxEmbeddingCharacters >= 1) { "maxEmbeddingCharacters must be positive" }
     }
 
-    suspend fun embed(text: String): FloatArray {
+    suspend fun embed(text: String): FloatArray = embed(text, false)
+
+    suspend fun embedPassage(text: String): FloatArray = embed(text, true)
+
+    private suspend fun embed(text: String, passage: Boolean): FloatArray {
         require(text.isNotEmpty()) { "text must not be empty" }
-        if (text.length <= maxEmbeddingCharacters) return embedding.embed(text)
+        if (text.length <= maxEmbeddingCharacters) return if (passage) embedding.embedPassage(text) else embedding.embed(text)
 
         val (left, right) = split(text)
-        val leftVector = embed(left)
-        val rightVector = embed(right)
+        val leftVector = embed(left, passage)
+        val rightVector = embed(right, passage)
         require(leftVector.size == rightVector.size) { "Embedding vector dimensions differ" }
 
         val totalLength = left.length + right.length

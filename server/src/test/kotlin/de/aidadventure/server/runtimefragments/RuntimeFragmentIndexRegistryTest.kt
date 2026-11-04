@@ -12,6 +12,25 @@ import kotlin.time.Duration.Companion.minutes
 
 class RuntimeFragmentIndexRegistryTest {
     @Test
+    fun `index embeds passages in bounded chunks`() = runTest {
+        val registry = RuntimeFragmentIndexRegistry()
+        val chunks = mutableListOf<String>()
+        val embedding = object : EmbeddingService {
+            override val dimension = 2
+            override suspend fun embed(text: String): FloatArray = error("index used query embedding")
+            override suspend fun embedPassage(text: String): FloatArray {
+                chunks.add(text)
+                return floatArrayOf(1f, 0f)
+            }
+        }
+        val input = "a".repeat(600)
+        registry.prepare(listOf(RuntimeFragmentDefinition(input, "fragment")), embedding)
+        assertEquals(input, chunks.joinToString(""))
+        assertEquals(listOf(300, 300), chunks.map { it.length })
+        registry.close()
+    }
+
+    @Test
     fun `query preserves conditions and signals from selected definition`() = runTest {
         val registry = RuntimeFragmentIndexRegistry()
         val embedding = CountingEmbeddingService()
